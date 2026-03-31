@@ -1225,46 +1225,97 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   void _showAlbumStory(String albumName) {
-    final story = _albumStories[albumName] ?? "No story has been written for this album yet.";
-    final artUrl = _albums[albumName]?['artUrl'] as String? ?? '';
+    final album = _albums[albumName];
+    if (album == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Album data not found")),
+      );
+      return;
+    }
+
+    final story = _albumStories[albumName] ?? "Story coming soon for $albumName...";
     final themeColor = _getAlbumThemeColor(albumName);
+
+    // Use artUrl as you specified
+    final artUrl = album['artUrl'] as String? ?? '';
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.92,
+        height: MediaQuery.of(context).size.height * 0.88,
         decoration: BoxDecoration(
           color: Colors.black,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [themeColor.withOpacity(0.18), Colors.black]),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [themeColor.withOpacity(0.15), Colors.black],
+          ),
         ),
         child: Column(
           children: [
             const SizedBox(height: 12),
-            Container(width: 50, height: 5, decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(10))),
-            const SizedBox(height: 20),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: CachedNetworkImage(
-                imageUrl: artUrl,
-                width: 260,
-                height: 260,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => Container(width: 260, height: 260, color: Colors.grey[900], child: const Center(child: CircularProgressIndicator())),
+            Container(
+              width: 50,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(10),
               ),
             ),
+            const SizedBox(height: 20),
+
+            // Album Art using artUrl
+            if (artUrl.isNotEmpty)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: CachedNetworkImage(
+                  imageUrl: artUrl,
+                  width: 240,
+                  height: 240,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => Container(
+                    width: 240,
+                    height: 240,
+                    color: Colors.grey[900],
+                    child: const Center(child: CircularProgressIndicator()),
+                  ),
+                  errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 100, color: Colors.white54),
+                ),
+              )
+            else
+              const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
+
             const SizedBox(height: 24),
-            Text(albumName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white), textAlign: TextAlign.center),
+
+            Text(
+              albumName,
+              style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.bold,
+                color: themeColor,
+              ),
+              textAlign: TextAlign.center,
+            ),
+
             const SizedBox(height: 28),
+
+            // Story Text
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Text(story, style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70)),
+                child: Text(
+                  story,
+                  style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
+                  textAlign: TextAlign.center,
+                ),
               ),
             ),
+
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
               child: ElevatedButton(
                 onPressed: () => Navigator.pop(context),
                 style: ElevatedButton.styleFrom(
