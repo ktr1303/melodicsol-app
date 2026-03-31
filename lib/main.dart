@@ -843,7 +843,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               // FIXED: Tappable Rotating Album Art
               GestureDetector(
                 onTap: () {
-                  final albumToUse = _currentAlbum ?? "Unknown";
+                 final albumToUse = _currentAlbum ?? _selectedAlbum ?? "Unknown";
                   _showAlbumStory(albumToUse);
                 },
                 behavior: HitTestBehavior.opaque,
