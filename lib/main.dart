@@ -840,15 +840,52 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     ),
                   ),
                 ),
-              RotationTransition(
-                turns: _vinylController,
-                child: ClipOval(
-                  child: CachedNetworkImage(
-                    imageUrl: rotatingArtUrl,
-                    width: 200,
-                    height: 200,
-                    fit: BoxFit.cover,
-                  ),
+              // FIXED: Tappable Rotating Album Art
+              GestureDetector(
+                onTap: () {
+                  final albumToUse = _currentAlbum ?? "Unknown";
+                  _showAlbumStory(albumToUse);
+                },
+                behavior: HitTestBehavior.opaque,
+                child: AnimatedBuilder(
+                  animation: Listenable.merge([_vinylController, _albumGlowControllers[_currentAlbum ?? ""] ?? _logoGlowController]),
+                  builder: (context, child) {
+                    final themeColor = _getAlbumThemeColor(_currentAlbum);
+                    final glowController = _albumGlowControllers[_currentAlbum ?? ""] ?? _logoGlowController;
+
+                    return Container(
+                      width: 215,
+                      height: 215,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: themeColor.withOpacity(0.65 + 0.25 * glowController.value),
+                            blurRadius: 20,
+                            spreadRadius: 3,
+                          ),
+                          BoxShadow(
+                            color: themeColor.withOpacity(0.25),
+                            blurRadius: 40,
+                            spreadRadius: -10,
+                          ),
+                        ],
+                      ),
+                      child: RotationTransition(
+                        turns: _vinylController,
+                        child: ClipOval(
+                          child: CachedNetworkImage(
+                            imageUrl: rotatingArtUrl,
+                            width: 200,
+                            height: 200,
+                            fit: BoxFit.cover,
+                            placeholder: (context, url) => const CircularProgressIndicator(color: Colors.white70),
+                            errorWidget: (context, url, error) => const Icon(Icons.broken_image, size: 80, color: Colors.white54),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
