@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+    <!-- Or be more restrictive if you prefer -->
+    <!-- 
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">dhufx08tsdp2a.cloudfront.net</domain>
+        <domain includeSubdomains="true">melodicsol-music.s3.us-east-2.amazonaws.com</domain>
+    </domain-config>
+    -->
+</network-security-config>
