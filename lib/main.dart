@@ -1102,27 +1102,41 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 child: ListView.builder(
                   itemCount: (_albums[_selectedAlbum]!['songs'] as List).length,
                   itemBuilder: (context, index) {
-                    final song = (_albums[_selectedAlbum]!['songs'] as List)[index] as Map<String, dynamic>;
-                    final title = song['Title'] as String? ?? path.basename(song['url'] as String? ?? '');
-                    final isCurrent = _currentAlbum == _selectedAlbum && _currentSongIndex == index;
+  final song = (_albums[_selectedAlbum]!['songs'] as List)[index] as Map<String, dynamic>;
+  final title = song['Title'] as String? ?? path.basename(song['url'] as String? ?? '');
+  final isCurrent = _currentAlbum == _selectedAlbum && _currentSongIndex == index;
 
-                    return GestureDetector(
-                      onLongPress: () => _showSongOptions(song, _selectedAlbum!, index),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-                        dense: true,
-                        leading: ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: CachedNetworkImage(imageUrl: staticArtUrl, width: 36, height: 36, fit: BoxFit.cover),
-                        ),
-                        title: Text(
-                          title,
-                          style: TextStyle(fontSize: 16.5, fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal, color: isCurrent ? albumThemeColor : null),
-                        ),
-                        onTap: () => _playSong(_selectedAlbum!, index),
-                      ),
-                    );
-                  },
+  return GestureDetector(
+    onLongPress: () => _showSongOptions(song, _selectedAlbum!, index),
+    child: ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      dense: true,
+      leading: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: CachedNetworkImage(
+          imageUrl: song['artUrl'] as String? ?? 
+                    song['songArtUrl'] as String? ?? 
+                    song['coverUrl'] as String? ?? 
+                    _albums[_selectedAlbum]?['artUrl'] as String? ?? '',
+          width: 40,
+          height: 40,
+          fit: BoxFit.cover,
+          placeholder: (context, url) => const Icon(Icons.music_note, size: 40, color: Colors.white38),
+          errorWidget: (context, url, error) => const Icon(Icons.broken_image, size: 40, color: Colors.white38),
+        ),
+      ),
+      title: Text(
+        title,
+        style: TextStyle(
+          fontSize: 16.5,
+          fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+          color: isCurrent ? albumThemeColor : null,
+        ),
+      ),
+      onTap: () => _playSong(_selectedAlbum!, index),
+    ),
+  );
+},
                 ),
               ),
             ),
@@ -1504,6 +1518,104 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             const SizedBox(height: 28),
 
             // Story Text
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text(
+                  story,
+                  style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: themeColor,
+                  minimumSize: const Size(double.infinity, 56),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  void _showSongStory(String albumName, int songIndex) {
+    final album = _albums[albumName];
+    if (album == null) return;
+
+    final songs = album['songs'] as List<dynamic>? ?? [];
+    if (songIndex < 0 || songIndex >= songs.length) return;
+
+    final song = songs[songIndex] as Map<String, dynamic>;
+    final title = song['title'] as String? ?? 'Unknown Song';
+    final story = song['story'] as String? ?? "Story coming soon for $title...";
+    final themeColor = _getAlbumThemeColor(albumName);
+
+    final songArtUrl = song['artUrl'] as String? ?? 
+                       song['songArtUrl'] as String? ?? 
+                       song['coverUrl'] as String? ?? 
+                       album['artUrl'] as String? ?? '';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.88,
+        decoration: BoxDecoration(
+          color: Colors.black,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [themeColor.withOpacity(0.15), Colors.black],
+          ),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 50,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            if (songArtUrl.isNotEmpty)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: CachedNetworkImage(
+                  imageUrl: songArtUrl,
+                  width: 240,
+                  height: 240,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => const CircularProgressIndicator(),
+                  errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 100),
+                ),
+              )
+            else
+              const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
+
+            const SizedBox(height: 24),
+
+            Text(
+              title,
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: themeColor),
+              textAlign: TextAlign.center,
+            ),
+
+            const SizedBox(height: 28),
+
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
