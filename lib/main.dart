@@ -821,14 +821,38 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   width: double.infinity,
                                   padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
                                   child: Text(
-                                    albumName,
-                                    style: (customStyle ?? GoogleFonts.inter()).copyWith(
-                                      fontSize: 17.5,
-                                      color: Colors.black,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
+  albumName,
+  style: _albumFonts[albumName]?.copyWith(
+    fontSize: 17.5,
+    fontWeight: FontWeight.w700,
+    letterSpacing: 0.4,
+    shadows: [
+      Shadow(
+        offset: const Offset(1.5, 1.5),
+        blurRadius: 6,
+        color: Colors.black.withOpacity(0.9),
+      ),
+      Shadow(
+        offset: const Offset(0, 0),
+        blurRadius: 12,
+        color: (_albumFonts[albumName]?.color ?? _getAlbumThemeColor(albumName)).withOpacity(0.5),
+      ),
+    ],
+  ) ?? GoogleFonts.inter(
+    fontSize: 17.5,
+    fontWeight: FontWeight.w700,
+    color: Colors.white,
+    letterSpacing: 0.4,
+    shadows: [
+      Shadow(
+        offset: const Offset(1.5, 1.5),
+        blurRadius: 6,
+        color: Colors.black.withOpacity(0.9),
+      ),
+    ],
+  ),
+  textAlign: TextAlign.center,
+),
                                 ),
                               ],
                             ),
