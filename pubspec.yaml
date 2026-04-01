@@ -37,6 +37,7 @@ dependencies:
   just_audio: ^0.10.5
   audio_service: ^0.18.1
   just_audio_background: ^0.0.1-beta.17
+  purchases_flutter: ^9.15.1
   shared_preferences: ^2.3.2
   path: ^1.9.0
   http: ^1.6.0

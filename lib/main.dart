@@ -1,3 +1,4 @@
+import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:just_audio/just_audio.dart';
@@ -17,8 +18,16 @@ final AudioPlayer _globalPlayer = AudioPlayer();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize RevenueCat - REPLACE WITH YOUR ACTUAL PUBLIC KEY
+  await Purchases.setLogLevel(LogLevel.debug);
+  await Purchases.configure(
+    PurchasesConfiguration("test_ZBLCyGBvSMTFCEvmTmrzCwZVBPR"),   // ← Put your RevenueCat public key here
+  );
+
   final session = await AudioSession.instance;
   await session.configure(const AudioSessionConfiguration.music());
+
   runApp(const MelodicSolApp());
 }
 
@@ -196,6 +205,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     "Video 1 - Title": {"url": "https://youtube.com/watch?v=yourvideoid1"},
     "Video 2 - Title": {"url": "https://youtube.com/watch?v=yourvideoid2"},
   };
+
+  // RevenueCat - Premium / Open Access
+  bool _hasOpenAccess = false;           // renamed from premium to "Open"
+  bool _isCheckingSubscription = true;
+  String? _revenueCatError;
 
   @override
   void initState() {
@@ -608,6 +622,37 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
   }
 
+    Future<void> _initializeRevenueCat() async {
+    try {
+      setState(() => _isCheckingSubscription = true);
+
+      final customerInfo = await Purchases.getCustomerInfo();
+      final hasAccess = customerInfo.entitlements.active.containsKey("premium_access");
+
+      setState(() {
+        _hasOpenAccess = hasAccess;
+        _isCheckingSubscription = false;
+      });
+
+      print("✅ RevenueCat: Open Access = $_hasOpenAccess");
+
+      // Listen for future changes
+      Purchases.addCustomerInfoUpdateListener((customerInfo) {
+        final newAccess = customerInfo.entitlements.active.containsKey("premium_access");
+        if (newAccess != _hasOpenAccess) {
+          setState(() => _hasOpenAccess = newAccess);
+          print("🔄 RevenueCat status updated: Open Access = $newAccess");
+        }
+      });
+    } catch (e) {
+      print("❌ RevenueCat error: $e");
+      setState(() {
+        _revenueCatError = e.toString();
+        _isCheckingSubscription = false;
+      });
+    }
+  }
+
   Color _getLogoGlowColor() {
     final hex = _albums[_currentAlbum]?['themeColor'] as String?;
     if (hex != null && hex.startsWith('#') && hex.length == 7) {
@@ -831,7 +876,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   Widget _buildMainAlbumPage(double screenHeight) {
     final logoGlowColor = _getLogoGlowColor();
     final isPlaying = _player.playing;
-
     final sortedAlbums = _albums.keys.toList()
       ..sort((a, b) => (_albums[b]?['order'] as int? ?? 999).compareTo(_albums[a]?['order'] as int? ?? 999));
 
@@ -895,21 +939,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 final index = e.key;
                 final albumName = e.value;
                 final albumTheme = _getAlbumThemeColor(albumName);
-              final customStyle = _albumFonts[albumName] ?? GoogleFonts.inter(
-                fontSize: 16.5,
-                fontWeight: FontWeight.w700,
-                 color: Colors.white,
-              );
-
                 const baseTop = 205.0;
                 const spacing = 57.0;
                 final itemTop = baseTop + (index * spacing);
-
                 final stagger = CurvedAnimation(
                   parent: _boneStaggerController,
                   curve: Interval((index / (sortedAlbums.length * 1.2)).clamp(0.0, 0.95), 1.0, curve: Curves.easeOutCubic),
                 );
-
                 final glowController = _albumGlowControllers[albumName] ?? _logoGlowController;
 
                 return Positioned(
@@ -928,7 +964,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         child: Opacity(
                           opacity: opacity,
                           child: GestureDetector(
-                            onTap: () => setState(() => _selectedAlbum = albumName),
+                            onTap: () {
+                              setState(() => _selectedAlbum = albumName);
+                            },
                             child: Stack(
                               alignment: Alignment.center,
                               children: [
@@ -950,38 +988,38 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   width: double.infinity,
                                   padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
                                   child: Text(
-  albumName,
-  style: _albumFonts[albumName]?.copyWith(
-    fontSize: 17.5,
-    fontWeight: FontWeight.w700,
-    letterSpacing: 0.4,
-    shadows: [
-      Shadow(
-        offset: const Offset(1.5, 1.5),
-        blurRadius: 6,
-        color: Colors.black.withOpacity(0.9),
-      ),
-      Shadow(
-        offset: const Offset(0, 0),
-        blurRadius: 12,
-        color: (_albumFonts[albumName]?.color ?? _getAlbumThemeColor(albumName)).withOpacity(0.5),
-      ),
-    ],
-  ) ?? GoogleFonts.inter(
-    fontSize: 17.5,
-    fontWeight: FontWeight.w700,
-    color: Colors.white,
-    letterSpacing: 0.4,
-    shadows: [
-      Shadow(
-        offset: const Offset(1.5, 1.5),
-        blurRadius: 6,
-        color: Colors.black.withOpacity(0.9),
-      ),
-    ],
-  ),
-  textAlign: TextAlign.center,
-),
+                                    albumName,
+                                    style: _albumFonts[albumName]?.copyWith(
+                                      fontSize: 17.5,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.4,
+                                      shadows: [
+                                        Shadow(
+                                          offset: const Offset(1.5, 1.5),
+                                          blurRadius: 6,
+                                          color: Colors.black.withOpacity(0.9),
+                                        ),
+                                        Shadow(
+                                          offset: const Offset(0, 0),
+                                          blurRadius: 12,
+                                          color: (_albumFonts[albumName]?.color ?? _getAlbumThemeColor(albumName)).withOpacity(0.5),
+                                        ),
+                                      ],
+                                    ) ?? GoogleFonts.inter(
+                                      fontSize: 17.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                      letterSpacing: 0.4,
+                                      shadows: [
+                                        Shadow(
+                                          offset: const Offset(1.5, 1.5),
+                                          blurRadius: 6,
+                                          color: Colors.black.withOpacity(0.9),
+                                        ),
+                                      ],
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
                                 ),
                               ],
                             ),
@@ -997,9 +1035,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         ),
       );
     } else {
+      // Album Detail Page (this is where we will add song-level gating)
       final staticArtUrl = _albums[_selectedAlbum]!['artUrl'] as String;
       final rotatingArtUrl = _albums[_selectedAlbum]!['rotatingArtUrl'] as String? ?? staticArtUrl;
       final albumThemeColor = _getAlbumThemeColor(_selectedAlbum);
+      final songs = _albums[_selectedAlbum]!['songs'] as List<dynamic>;
 
       return Column(
         children: [
@@ -1018,7 +1058,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
             ),
           ),
-
+          // Rotating Art + Album Story (unchanged)
           Stack(
             alignment: Alignment.center,
             children: [
@@ -1049,10 +1089,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     ),
                   ),
                 ),
-              // FIXED: Tappable Rotating Album Art
               GestureDetector(
                 onTap: () {
-                 final albumToUse = _currentAlbum ?? _selectedAlbum ?? "Unknown";
+                  final albumToUse = _currentAlbum ?? _selectedAlbum ?? "Unknown";
                   _showAlbumStory(albumToUse);
                 },
                 behavior: HitTestBehavior.opaque,
@@ -1061,7 +1100,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   builder: (context, child) {
                     final themeColor = _getAlbumThemeColor(_currentAlbum);
                     final glowController = _albumGlowControllers[_currentAlbum ?? ""] ?? _logoGlowController;
-
                     return Container(
                       width: 215,
                       height: 215,
@@ -1072,11 +1110,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                             color: themeColor.withOpacity(0.65 + 0.25 * glowController.value),
                             blurRadius: 20,
                             spreadRadius: 3,
-                          ),
-                          BoxShadow(
-                            color: themeColor.withOpacity(0.25),
-                            blurRadius: 40,
-                            spreadRadius: -10,
                           ),
                         ],
                       ),
@@ -1100,7 +1133,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             ],
           ),
           const SizedBox(height: 6),
-
           Expanded(
             flex: 12,
             child: Padding(
@@ -1108,48 +1140,53 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               child: Container(
                 decoration: BoxDecoration(color: albumThemeColor.withOpacity(0.10), borderRadius: BorderRadius.circular(12)),
                 child: ListView.builder(
-                  itemCount: (_albums[_selectedAlbum]!['songs'] as List).length,
+                  itemCount: songs.length,
                   itemBuilder: (context, index) {
-  final song = (_albums[_selectedAlbum]!['songs'] as List)[index] as Map<String, dynamic>;
-  final title = song['Title'] as String? ?? path.basename(song['url'] as String? ?? '');
-  final isCurrent = _currentAlbum == _selectedAlbum && _currentSongIndex == index;
+                    final song = songs[index] as Map<String, dynamic>;
+                    final title = song['Title'] as String? ?? path.basename(song['url'] as String? ?? '');
+                    final isCurrent = _currentAlbum == _selectedAlbum && _currentSongIndex == index;
 
-  return GestureDetector(
-    onLongPress: () => _showSongOptions(song, _selectedAlbum!, index),
-    child: ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-      dense: true,
-      leading: ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: CachedNetworkImage(
-          imageUrl: song['artUrl'] as String? ?? 
-                    song['songArtUrl'] as String? ?? 
-                    song['coverUrl'] as String? ?? 
-                    _albums[_selectedAlbum]?['artUrl'] as String? ?? '',
-          width: 40,
-          height: 40,
-          fit: BoxFit.cover,
-          placeholder: (context, url) => const Icon(Icons.music_note, size: 40, color: Colors.white38),
-          errorWidget: (context, url, error) => const Icon(Icons.broken_image, size: 40, color: Colors.white38),
-        ),
-      ),
-      title: Text(
-        title,
-        style: TextStyle(
-          fontSize: 16.5,
-          fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-          color: isCurrent ? albumThemeColor : null,
-        ),
-      ),
-      onTap: () => _playSong(_selectedAlbum!, index),
-    ),
-  );
-},
+                    // For now, make all songs playable (we'll add teaser logic next)
+                    final bool canPlay = true;   // Change this later for paid songs
+
+                    return GestureDetector(
+                      onLongPress: () => _showSongOptions(song, _selectedAlbum!, index),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                        dense: true,
+                        leading: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: CachedNetworkImage(
+                            imageUrl: song['artUrl'] as String? ??
+                                      song['songArtUrl'] as String? ??
+                                      song['coverUrl'] as String? ??
+                                      _albums[_selectedAlbum]?['artUrl'] as String? ?? '',
+                            width: 40,
+                            height: 40,
+                            fit: BoxFit.cover,
+                            placeholder: (context, url) => const Icon(Icons.music_note, size: 40, color: Colors.white38),
+                            errorWidget: (context, url, error) => const Icon(Icons.broken_image, size: 40, color: Colors.white38),
+                          ),
+                        ),
+                        title: Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 16.5,
+                            fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                            color: canPlay ? (isCurrent ? albumThemeColor : Colors.white) : Colors.white54,
+                          ),
+                        ),
+                        onTap: canPlay 
+                          ? () => _playSong(_selectedAlbum!, index)
+                          : () => _showPaywall(),   // Show paywall for paid songs
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
           ),
-
+          // Player bar (unchanged)
           Container(
             decoration: BoxDecoration(color: albumThemeColor.withOpacity(0.15), borderRadius: const BorderRadius.vertical(top: Radius.circular(20))),
             padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
@@ -1202,7 +1239,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       );
     }
   }
-
   void _showAddToPlaylistMenu(Map<String, dynamic> song, String albumName) {
     showModalBottomSheet(
       context: context,
@@ -1418,8 +1454,6 @@ Widget _buildSocialPage() {
 
     final story = _albumStories[albumName] ?? "Story coming soon for $albumName...";
     final themeColor = _getAlbumThemeColor(albumName);
-
-    // Use artUrl as you specified
     final artUrl = album['artUrl'] as String? ?? '';
 
     showModalBottomSheet(
@@ -1474,14 +1508,14 @@ Widget _buildSocialPage() {
             const SizedBox(height: 24),
 
             Text(
-  albumName,
-  style: _albumFonts[albumName] ?? GoogleFonts.inter(
-    fontSize: 16.5,
-    fontWeight: FontWeight.w700,
-    color: Colors.white,
-  ),
-  textAlign: TextAlign.center,
-),
+              albumName,
+              style: _albumFonts[albumName] ?? GoogleFonts.inter(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+              textAlign: TextAlign.center,
+            ),
 
             const SizedBox(height: 28),
 
@@ -1514,6 +1548,7 @@ Widget _buildSocialPage() {
       ),
     );
   }
+
   void _showMelodicSolBio() {
     final bio = _melodicSolBio;
     final themeColor = bio["themeColor"] as Color? ?? Colors.greenAccent;
@@ -1607,6 +1642,98 @@ Widget _buildSocialPage() {
     );
   }
 
+  void _showPaywall() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.78,
+        decoration: const BoxDecoration(
+          color: Colors.black,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.music_note, size: 90, color: Colors.greenAccent),
+              const SizedBox(height: 24),
+              const Text(
+                "Open Access",
+                style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                "Support Melodic Sol",
+                style: TextStyle(fontSize: 18, color: Colors.white70),
+              ),
+              const SizedBox(height: 32),
+              const Text(
+                "Unlock every album forever with a one-time purchase.\n\nGet instant access to all tracks, behind-the-scenes stories, and help independent music thrive.",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16.5, color: Colors.white70, height: 1.7),
+              ),
+              const SizedBox(height: 48),
+
+              ElevatedButton(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  try {
+                    final offerings = await Purchases.getOfferings();
+                    if (offerings.current != null) {
+                      final package = offerings.current!.availablePackages.firstWhere(
+                        (p) => p.identifier.toLowerCase().contains("lifetime") || 
+                               p.packageType == PackageType.lifetime,
+                        orElse: () => offerings.current!.availablePackages.first,
+                      );
+
+                      await Purchases.purchasePackage(package);
+
+                      final customerInfo = await Purchases.getCustomerInfo();
+                      final hasAccess = customerInfo.entitlements.active.containsKey("premium_access");
+
+                      if (hasAccess && mounted) {
+                        setState(() => _hasOpenAccess = true);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text("✅ Thank you! Open Access granted."),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Purchase cancelled or failed.")),
+                      );
+                    }
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.greenAccent,
+                  foregroundColor: Colors.black87,
+                  minimumSize: const Size(double.infinity, 68),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                ),
+                child: const Text("Purchase Lifetime Open Access — One Time", 
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+              ),
+
+              const SizedBox(height: 20),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Not now", style: TextStyle(color: Colors.white60, fontSize: 16)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
   void _showSongStory(String albumName, int songIndex) {
     final album = _albums[albumName];
     if (album == null) return;
