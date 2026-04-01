@@ -107,6 +107,15 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     "Sol": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
   };
 
+  final Map<String, dynamic> _melodicSolBio = {
+    "title": "Melodic Sol",
+    "imageUrl": "assets/logo.png",        // Change to a full bio image if you prefer
+    "story": "Melodic Sol is an independent music collective born from late-night basement sessions, raw emotion, and a relentless pursuit of sound that moves the soul. "
+        "We blend genres, break rules, and create moments that feel alive. Every track is a piece of our journey — from the first distorted guitar riff to the final polished master. "
+        "Thank you for being part of the Sol family.",
+    "themeColor": Colors.greenAccent,     // or any color you like
+  };
+
   final Map<String, TextStyle> _albumFonts = {
     "Base": GoogleFonts.rubikBeastly(
       fontSize: 16.5,
@@ -654,9 +663,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           PageView(
             controller: _pageController,
             children: [
-              _buildSocialPage(screenHeight),
+              _buildSocialPage(),
               _buildMainAlbumPage(screenHeight),
-              _buildMusicVideosPage(screenHeight),
               _buildPlaylistsPage(screenHeight),
             ],
           ),
@@ -1291,153 +1299,113 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildSocialPage(double screenHeight) {
-    final logoGlowColor = _getLogoGlowColor();
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
-      child: SizedBox(
-        height: screenHeight * 1.45,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Positioned.fill(
-              child: _videoError != null || !_videoInitialized
-                  ? Image.asset('assets/spine.png', fit: BoxFit.fill)
-                  : (_videoController.value.isInitialized
-                      ? FittedBox(
-                          fit: BoxFit.fill,
-                          child: SizedBox(
-                            width: _videoController.value.size.width,
-                            height: screenHeight,
-                            child: VideoPlayer(_videoController),
-                          ),
-                        )
-                      : Image.asset('assets/spine.png', fit: BoxFit.fill)),
-            ),
-            Positioned(
-              top: 60,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: AnimatedBuilder(
-                  animation: _logoGlowController,
-                  builder: (_, child) => Container(
-                    decoration: BoxDecoration(
-                      boxShadow: [
-                        BoxShadow(
-                          color: logoGlowColor.withOpacity(0.55 + 0.45 * _logoGlowController.value),
-                          blurRadius: 40 + 25 * _logoGlowController.value,
-                          spreadRadius: 12,
-                        )
-                      ],
-                    ),
-                    child: child,
-                  ),
-                  child: Image.asset('assets/logo.png', height: 96),
-                ),
-              ),
-            ),
-            Positioned(
-              top: 220,
-              left: 0,
-              right: 0,
-              child: Column(
-                children: _socialLinks.entries.map((entry) {
-                  final data = entry.value;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 40),
-                    child: ElevatedButton.icon(
-                      onPressed: () => _launchUrl(data["url"] as String),
-                      icon: Icon(data["icon"] as IconData, size: 28),
-                      label: Text(entry.key, style: const TextStyle(fontSize: 18)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white.withOpacity(0.08),
-                        foregroundColor: data["color"] as Color,
-                        minimumSize: const Size(double.infinity, 62),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        elevation: 0,
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-            const Positioned(bottom: 60, left: 0, right: 0, child: Center(child: Text("Connect with Melodic Sol", style: TextStyle(fontSize: 14, color: Colors.white54)))),
-          ],
-        ),
-      ),
-    );
-  }
+Widget _buildSocialPage() {
+  final screenHeight = MediaQuery.of(context).size.height;
 
-  Widget _buildMusicVideosPage(double screenHeight) {
-    final logoGlowColor = _getLogoGlowColor();
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Positioned.fill(
-          child: _videoError != null || !_videoInitialized
-              ? Image.asset('assets/spine.png', fit: BoxFit.fill)
-              : (_videoController.value.isInitialized
-                  ? FittedBox(
-                      fit: BoxFit.fill,
-                      child: SizedBox(
-                        width: _videoController.value.size.width,
-                        height: screenHeight,
-                        child: VideoPlayer(_videoController),
-                      ),
-                    )
-                  : Image.asset('assets/spine.png', fit: BoxFit.fill)),
-        ),
-        Positioned(
-          top: 60,
-          left: 0,
-          right: 0,
-          child: Center(
-            child: AnimatedBuilder(
-              animation: _logoGlowController,
-              builder: (_, child) => Container(
-                decoration: BoxDecoration(
-                  boxShadow: [
-                    BoxShadow(
-                      color: logoGlowColor.withOpacity(0.55 + 0.45 * _logoGlowController.value),
-                      blurRadius: 40 + 25 * _logoGlowController.value,
-                      spreadRadius: 12,
-                    )
-                  ],
-                ),
-                child: child,
-              ),
-              child: Image.asset('assets/logo.png', height: 96),
+  return Stack(
+    children: [
+      // Background Video (same as before)
+      if (_videoInitialized && _videoController.value.isInitialized)
+        SizedBox(
+          width: double.infinity,
+          height: screenHeight,
+          child: FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+              width: _videoController.value.size.width,
+              height: _videoController.value.size.height,
+              child: VideoPlayer(_videoController),
             ),
           ),
-        ),
-        Positioned(
-          top: 220,
-          left: 0,
-          right: 0,
-          child: Column(
-            children: _musicVideos.entries.map((entry) {
+        )
+      else
+        Image.asset('assets/spine.png', fit: BoxFit.cover, width: double.infinity, height: screenHeight),
+
+      // Dark overlay for readability
+      Container(
+        color: Colors.black.withOpacity(0.65),
+      ),
+
+      // Main Content
+      SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 60),
+
+            // MelodicSol Logo (centered at top)
+            // Tappable MelodicSol Logo
+          Center(
+            child: GestureDetector(
+            onTap: () => _showMelodicSolBio(),
+            behavior: HitTestBehavior.opaque,
+            child: Image.asset('assets/logo.png', height: 90),
+            ),
+          ),
+
+            const SizedBox(height: 40),
+
+            const Text(
+              "Connect With Us",
+              style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
+            ),
+            const SizedBox(height: 24),
+
+            // Social Media Links
+            ..._socialLinks.entries.map((entry) {
+              final data = entry.value;
               return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 40),
+                padding: const EdgeInsets.only(bottom: 12),
                 child: ElevatedButton.icon(
-                  onPressed: () => _launchUrl(entry.value["url"] as String),
-                  icon: const Icon(Icons.play_arrow, size: 28),
-                  label: Text(entry.key, style: const TextStyle(fontSize: 18)),
+                  onPressed: () => _launchUrl(data["url"] as String),
+                  icon: Icon(data["icon"] as IconData, color: data["color"] as Color),
+                  label: Text(entry.key),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white.withOpacity(0.08),
+                    backgroundColor: Colors.white10,
                     foregroundColor: Colors.white,
-                    minimumSize: const Size(double.infinity, 62),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    minimumSize: const Size(double.infinity, 56),
+                    alignment: Alignment.centerLeft,
                   ),
                 ),
               );
             }).toList(),
-          ),
+
+            const SizedBox(height: 40),
+
+            // Music Videos Section
+            const Text(
+              "Music Videos",
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
+            ),
+            const SizedBox(height: 16),
+
+            ..._musicVideos.entries.map((entry) {
+              final video = entry.value;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: ElevatedButton.icon(
+                  onPressed: () => _launchUrl(video["url"] as String),
+                  icon: const Icon(Icons.play_circle_fill, color: Colors.redAccent, size: 28),
+                  label: Text(entry.key, style: const TextStyle(fontSize: 16)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white.withOpacity(0.08),
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(double.infinity, 60),
+                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                  ),
+                ),
+              );
+            }).toList(),
+
+            const SizedBox(height: 100), // extra bottom padding
+          ],
         ),
-        const Positioned(bottom: 60, left: 0, right: 0, child: Center(child: Text("Music Videos", style: TextStyle(fontSize: 14, color: Colors.white54)))),
-      ],
-    );
-  }
+      ),
+    ],
+  );
+}
 
   void _showAlbumStory(String albumName) {
     final album = _albums[albumName];
@@ -1546,6 +1514,99 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       ),
     );
   }
+  void _showMelodicSolBio() {
+    final bio = _melodicSolBio;
+    final themeColor = bio["themeColor"] as Color? ?? Colors.greenAccent;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.88,
+        decoration: BoxDecoration(
+          color: Colors.black,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [themeColor.withOpacity(0.15), Colors.black],
+          ),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 50,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Bio Image
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Image.asset(
+                bio["imageUrl"] as String,
+                width: 240,
+                height: 240,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => const Icon(
+                  Icons.image_not_supported,
+                  size: 140,
+                  color: Colors.white38,
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Title
+            Text(
+              bio["title"] as String,
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: themeColor,
+              ),
+              textAlign: TextAlign.center,
+            ),
+
+            const SizedBox(height: 28),
+
+            // Story Text
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text(
+                  bio["story"] as String,
+                  style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: themeColor,
+                  minimumSize: const Size(double.infinity, 56),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showSongStory(String albumName, int songIndex) {
     final album = _albums[albumName];
     if (album == null) return;
