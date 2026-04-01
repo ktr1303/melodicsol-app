@@ -104,20 +104,72 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     "Sol": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
   };
 
-  final Map<String, TextStyle Function()> _albumFonts = {
-    "Base": GoogleFonts.sekuya,
-    "Track": GoogleFonts.bangers,
-    "Gold": GoogleFonts.bebasNeue,
-    "Free": GoogleFonts.indieFlower,
-    "Roger": GoogleFonts.sansation,
-    "609": GoogleFonts.raleway,
-    "Gemini": GoogleFonts.poppins,
-    "Asraya": GoogleFonts.archivoBlack,
-    "Stone": GoogleFonts.bungee,
-    "Central": GoogleFonts.bitcountPropSingleInk,
-    "Central (2)": GoogleFonts.bitcountInk,
-    "Self": GoogleFonts.shizuru,
-    "Sol": GoogleFonts.areYouSerious,
+  final Map<String, TextStyle> _albumFonts = {
+    "Base": GoogleFonts.rubikBeastly(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
+    "Track": GoogleFonts.bungeeInline(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
+    "Gold": GoogleFonts.bungeeSpice(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
+    "Free": GoogleFonts.matemasie(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
+    "Roger": GoogleFonts.kalniaGlaze(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
+    "609": GoogleFonts.boldonse(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
+    "Gemini": GoogleFonts.danfo(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
+    "Asraya": GoogleFonts.foldit(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
+    "Stone": GoogleFonts.bungee(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
+    "Central": GoogleFonts.nabla(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
+    "Central (2)": GoogleFonts.nabla(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
+    "Self": GoogleFonts.fruktur(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
+    "Sol": GoogleFonts.oi(
+      fontSize: 16.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+    ),
   };
 
   final Map<String, Map<String, dynamic>> _socialLinks = {
@@ -714,7 +766,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 final index = e.key;
                 final albumName = e.value;
                 final albumTheme = _getAlbumThemeColor(albumName);
-                final customStyle = _albumFonts[albumName]?.call();
+              final customStyle = _albumFonts[albumName] ?? GoogleFonts.inter(
+                fontSize: 16.5,
+                fontWeight: FontWeight.w700,
+                 color: Colors.white,
+              );
 
                 const baseTop = 205.0;
                 const spacing = 57.0;
@@ -1291,14 +1347,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             const SizedBox(height: 24),
 
             Text(
-              albumName,
-              style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.bold,
-                color: themeColor,
-              ),
-              textAlign: TextAlign.center,
-            ),
+  albumName,
+  style: _albumFonts[albumName] ?? GoogleFonts.inter(
+    fontSize: 16.5,
+    fontWeight: FontWeight.w700,
+    color: Colors.white,
+  ),
+  textAlign: TextAlign.center,
+),
 
             const SizedBox(height: 28),
 
