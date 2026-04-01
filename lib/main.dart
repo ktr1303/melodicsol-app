@@ -75,7 +75,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   int _currentPlayId = 0;
   StreamSubscription<ProcessingState>? _processingSubscription;
   DateTime? _lastPlayCall;
-
+  // NEW: Support for "Play song next" 
+  String? _nextUpAlbum;
+  int? _nextUpIndex;
+  
   // ====================== PLAYLISTS ======================
   List<Map<String, dynamic>> _playlists = [];
   String? _currentPlaylistId;
@@ -302,6 +305,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     try {
       print('>>> TITLE FORCED TO: $title (immediate setState) | PlayID: $thisPlayId');
       setState(() {
+        _nextUpAlbum = null;
+              _nextUpIndex = null;
         _currentSongTitle = title;
         _pendingSongTitle = title;
         _pendingAlbum = albumName;
@@ -354,7 +359,130 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       });
     }
   }
+    // NEW: Queue song to play immediately after current one
+  Future<void> _queueSongNext(Map<String, dynamic> song, String albumName, int songIndex) async {
+    if (songIndex < 0) return;
 
+    if (_currentAlbum == null || _currentSongIndex == -1 || !_player.playing) {
+      await _playSong(albumName, songIndex);
+      return;
+    }
+
+    setState(() {
+      _nextUpAlbum = albumName;
+      _nextUpIndex = songIndex;
+    });
+
+    final title = (song['Title'] as String?) ?? 'Unknown';
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('“$title” queued to play next'),
+          backgroundColor: Colors.greenAccent.withOpacity(0.9),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  // Updated song completion to respect "Play next"
+  void _handleSongCompletion() {
+    if (_nextUpAlbum != null && _nextUpIndex != null) {
+      final album = _nextUpAlbum!;
+      final index = _nextUpIndex!;
+      setState(() {
+        _nextUpAlbum = null;
+        _nextUpIndex = null;
+      });
+      _playSong(album, index);
+      return;
+    }
+
+    // Fall back to original logic (shuffle, loop, album order)
+    if (_currentAlbum == null || _currentSongIndex == -1) return;
+    final songs = _albums[_currentAlbum]?['songs'] as List<dynamic>? ?? [];
+    if (songs.isEmpty) return;
+
+    int nextIndex = _isShuffled 
+        ? Random().nextInt(songs.length) 
+        : (_currentSongIndex + 1) % songs.length;
+
+    if (_loopMode == LoopMode.one) {
+      nextIndex = _currentSongIndex;
+    }
+    _playSong(_currentAlbum!, nextIndex);
+  }
+
+  // NEW: Navigate to Song Story
+  void _navigateToSongStory(Map<String, dynamic> song, String albumName) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SongStoryPage(
+          song: song,
+          albumName: albumName,
+          onPlayNow: () async {
+            final songs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
+            final index = songs.indexWhere((s) =>
+                (s as Map<String, dynamic>)['Title'] == song['Title'] &&
+                (s as Map<String, dynamic>)['url'] == song['url']);
+            if (index != -1) {
+              await _playSong(albumName, index);
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  // NEW: Updated long-press menu with Song Story + Play Next
+  void _showSongOptions(Map<String, dynamic> song, String albumName, int songIndex) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.auto_stories, color: Colors.amberAccent),
+            title: const Text("View Song Story"),
+            onTap: () {
+              Navigator.pop(context);
+              _navigateToSongStory(song, albumName);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.queue_play_next, color: Colors.greenAccent),
+            title: const Text("Play song next"),
+            onTap: () {
+              _queueSongNext(song, albumName, songIndex);
+              Navigator.pop(context);
+            },
+          ),
+          const Divider(color: Colors.grey),
+          ListTile(
+            leading: const Icon(Icons.playlist_add),
+            title: const Text("Add to Playlist"),
+          ),
+          ..._playlists.map((pl) => ListTile(
+            title: Text(pl["name"] as String),
+            onTap: () {
+              _addSongToPlaylist(pl["id"], song, albumName); // use your existing method
+              Navigator.pop(context);
+            },
+          )).toList(),
+          ListTile(
+            leading: const Icon(Icons.close),
+            title: const Text("Cancel"),
+            onTap: () => Navigator.pop(context),
+          ),
+        ],
+      ),
+    );
+  }
   void _setupProcessingListener() {
     _processingSubscription?.cancel();
     _processingSubscription = _player.processingStateStream.listen((state) {
@@ -423,13 +551,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       "${d.inMinutes.remainder(60).toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}";
 
   IconData _getLoopIcon() => _loopMode == LoopMode.off ? Icons.repeat : _loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat_on;
-
-  void _handleSongCompletion() {
-    if (_currentAlbum == null || _currentSongIndex == -1) return;
-    final songs = _albums[_currentAlbum]!['songs'] as List<dynamic>;
-    int next = _isShuffled ? Random().nextInt(songs.length) : (_currentSongIndex + 1) % songs.length;
-    _playSong(_currentAlbum!, next);
-  }
 
   Future<void> _fetchAlbums() async {
     try {
@@ -986,7 +1107,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     final isCurrent = _currentAlbum == _selectedAlbum && _currentSongIndex == index;
 
                     return GestureDetector(
-                      onLongPress: () => _showAddToPlaylistMenu(song, _selectedAlbum!),
+                      onLongPress: () => _showSongOptions(song, _selectedAlbum!, index),
                       child: ListTile(
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
                         dense: true,
@@ -1496,7 +1617,127 @@ class VisualizerPainter extends CustomPainter {
       }
     }
   }
+    @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+// ====================== SONG STORY PAGE ======================
+class SongStoryPage extends StatelessWidget {
+  final Map<String, dynamic> song;
+  final String albumName;
+  final VoidCallback onPlayNow;
+
+  const SongStoryPage({
+    super.key,
+    required this.song,
+    required this.albumName,
+    required this.onPlayNow,
+  });
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  Widget build(BuildContext context) {
+    final title = (song['Title'] as String?) ?? 'Unknown Track';
+    final artUrl = (song['songArtUrl'] as String?)?.trim() ?? '';
+    final story = (song['Story'] as String?)?.isNotEmpty == true
+        ? (song['Story'] as String)
+        : 'No story available for this track yet.\n\nThis beautiful song is part of the "$albumName" collection.';
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        title: Text(albumName),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Large Song Artwork
+            Center(
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.greenAccent.withOpacity(0.4),
+                      blurRadius: 40,
+                      spreadRadius: 8,
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: artUrl.isNotEmpty
+                      ? Image.network(
+                          artUrl,
+                          height: 340,
+                          width: 340,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => Container(
+                            height: 340,
+                            width: 340,
+                            color: Colors.grey[850],
+                            child: const Icon(Icons.music_note, size: 120, color: Colors.grey),
+                          ),
+                        )
+                      : Container(
+                          height: 340,
+                          width: 340,
+                          color: Colors.grey[850],
+                          child: const Icon(Icons.music_note, size: 120, color: Colors.grey),
+                        ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            // Title and Album
+            Text(
+              title,
+              style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              albumName,
+              style: TextStyle(fontSize: 18, color: Colors.grey[400]),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 40),
+
+            // Story Header
+            const Text(
+              "The Story",
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                color: Colors.greenAccent,
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Story Text
+            Text(
+              story,
+              style: const TextStyle(fontSize: 16.5, height: 1.65, color: Color.fromARGB(255, 246, 239, 239)),
+            ),
+            const SizedBox(height: 140), // space for FAB
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: onPlayNow,
+        icon: const Icon(Icons.play_arrow),
+        label: const Text("Play Now"),
+        backgroundColor: Colors.greenAccent,
+        foregroundColor: Colors.black87,
+      ),
+    );
+  }
 }
