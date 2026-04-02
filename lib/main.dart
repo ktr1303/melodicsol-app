@@ -62,6 +62,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late VideoPlayerController _videoController;
   late AnimationController _vinylController;
   late AnimationController _logoGlowController;
+  late AnimationController _livePulseController;
   late AnimationController _visualizerController;
   late PageController _pageController;
   late AnimationController _boneStaggerController;
@@ -241,7 +242,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _vinylController = AnimationController(duration: const Duration(seconds: 25), vsync: this);
     _logoGlowController = AnimationController(duration: const Duration(milliseconds: 2200), vsync: this)..repeat(reverse: true);
     _visualizerController = AnimationController(duration: const Duration(milliseconds: 800), vsync: this)..repeat(reverse: true);
-
+    _livePulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800), // Fast pulse — feels energetic
+    )..repeat(reverse: true); // This creates the breathing/flashing effect
     _loadPlaylists();
     _fetchAlbums();
     _setupProcessingListener();
@@ -556,6 +560,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _vinylController.dispose();
     _logoGlowController.dispose();
     _visualizerController.dispose();
+    _livePulseController.dispose();
     for (var controller in _albumGlowControllers.values) {
       controller.dispose();
     }
@@ -942,97 +947,78 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Positioned.fill(
-                child: _videoError != null || !_videoInitialized
-                    ? Image.asset('assets/spine.png', fit: BoxFit.fill)
-                    : (_videoController.value.isInitialized
-                        ? FittedBox(
-                            fit: BoxFit.fill,
-                            child: SizedBox(
-                              width: _videoController.value.size.width,
-                              height: screenHeight,
-                              child: VideoPlayer(_videoController),
-                            ),
-                          )
-                        : Image.asset('assets/spine.png', fit: BoxFit.fill)),
-              ),
-              // Logo with LIVE NOW when livestream is active
-              // === LIVESTREAM LOGO WITH FLASHING "LIVE NOW" ===
-              // === LIVESTREAM LOGO WITH FLASHING "LIVE NOW" ===
-              Positioned(
-                top: 35,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: GestureDetector(
-                    onTap: () {
-                      if (_isLivestreamActive) {
-                        _launchUrl(_youtubeLivestreamUrl);
+            // === LIVESTREAM LOGO WITH FAST FLASHING "LIVE NOW" ===
+            Positioned(
+              top: 35,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: GestureDetector(
+                  onTap: () {
+                    if (_isLivestreamActive) {
+                      _launchUrl(_youtubeLivestreamUrl);
+                    } else {
+                      if (_player.playing) {
+                        setState(() => _showVisualizer = true);
                       } else {
-                        if (_player.playing) {
-                          setState(() => _showVisualizer = true);
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text("Play a song first to enjoy the visualizer")),
-                          );
-                        }
-                      }
-                    },
-                    child: AnimatedBuilder(
-                      animation: _logoGlowController,
-                      builder: (context, child) {
-                        return Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (_isLivestreamActive)
-                              AnimatedBuilder(
-                                animation: _logoGlowController,
-                                builder: (context, _) => Text(
-                                  "LIVE",
-                                  style: TextStyle(
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.red.withOpacity(0.6 + 0.4 * _logoGlowController.value),
-                                    letterSpacing: 2.5,
-                                  ),
-                                ),
-                              ),
-                            if (_isLivestreamActive) const SizedBox(width: 12),
-                            Container(
-                              decoration: BoxDecoration(
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: _isLivestreamActive 
-                                        ? Colors.red.withOpacity(0.95)
-                                        : logoGlowColor.withOpacity(0.55 + 0.45 * _logoGlowController.value),
-                                    blurRadius: _isLivestreamActive ? 0 : 32 + 18 * _logoGlowController.value,
-                                  ),
-                                ],
-                              ),
-                              child: child,
-                            ),
-                            if (_isLivestreamActive) const SizedBox(width: 12),
-                            if (_isLivestreamActive)
-                              AnimatedBuilder(
-                                animation: _logoGlowController,
-                                builder: (context, _) => Text(
-                                  "NOW",
-                                  style: TextStyle(
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.red.withOpacity(0.6 + 0.4 * _logoGlowController.value),
-                                    letterSpacing: 2.5,
-                                  ),
-                                ),
-                              ),
-                          ],
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("Play a song first to enjoy the visualizer")),
                         );
-                      },
-                      child: Image.asset('assets/logo.png', height: 96),
-                    ),
+                      }
+                    }
+                  },
+                  child: AnimatedBuilder(
+                    animation: Listenable.merge([_logoGlowController, _livePulseController]),
+                    builder: (context, child) {
+                      final glowOpacity = 0.55 + 0.45 * _logoGlowController.value;
+                      final pulseOpacity = 0.6 + 0.4 * _livePulseController.value;
+
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_isLivestreamActive)
+                            Text(
+                              "LIVE",
+                              style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red.withOpacity(pulseOpacity),
+                                letterSpacing: 2.5,
+                              ),
+                            ),
+                          if (_isLivestreamActive) const SizedBox(width: 12),
+                          Container(
+                            decoration: BoxDecoration(
+                              boxShadow: [
+                                BoxShadow(
+                                  color: _isLivestreamActive
+                                      ? Colors.red.withOpacity(0.95)
+                                      : logoGlowColor.withOpacity(glowOpacity),
+                                  blurRadius: _isLivestreamActive ? 0 : 32 + 18 * _logoGlowController.value,
+                                ),
+                              ],
+                            ),
+                            child: child,
+                          ),
+                          if (_isLivestreamActive) const SizedBox(width: 12),
+                          if (_isLivestreamActive)
+                            Text(
+                              "NOW",
+                              style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red.withOpacity(pulseOpacity),
+                                letterSpacing: 2.5,
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                    child: Image.asset('assets/logo.png', height: 96),
                   ),
                 ),
               ),
+            ),
               // Album Spine Grid
               ...sortedAlbums.asMap().entries.map((e) {
                 final index = e.key;
