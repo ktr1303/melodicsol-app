@@ -93,6 +93,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   int? _nextUpIndex;
   List<Map<String, dynamic>> _queue = [];        // ← Add this line
 
+    bool _isLivestreamActive = true;           // Toggle this to true when you go live
+  final String _youtubeLivestreamUrl = "https://www.youtube.com/live/your-livestream-id";  // ← Change to your actual YouTube live URL
+  final String _livestreamPin = "1234"; // Change this to your desired pin for live switch control
   // ====================== PLAYLISTS ======================
   List<Map<String, dynamic>> _playlists = [];
   String? _currentPlaylistId;
@@ -448,7 +451,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     // Safe to play next song
     _playSong(_currentAlbum!, nextIndex);
   }
-  
+
   // NEW: Navigate to Song Story
   void _navigateToSongStory(Map<String, dynamic> song, String albumName) {
     Navigator.push(
@@ -932,7 +935,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       ..sort((a, b) => (_albums[b]?['order'] as int? ?? 999).compareTo(_albums[a]?['order'] as int? ?? 999));
 
     if (_selectedAlbum == null) {
-      // Spine / Main Album Grid (unchanged - simple tap)
       return SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
         child: SizedBox(
@@ -954,6 +956,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                           )
                         : Image.asset('assets/spine.png', fit: BoxFit.fill)),
               ),
+              // Logo with LIVE NOW when livestream is active
+              // === LIVESTREAM LOGO WITH FLASHING "LIVE NOW" ===
+              // === LIVESTREAM LOGO WITH FLASHING "LIVE NOW" ===
               Positioned(
                 top: 35,
                 left: 0,
@@ -961,33 +966,74 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 child: Center(
                   child: GestureDetector(
                     onTap: () {
-                      if (_player.playing) {
-                        setState(() => _showVisualizer = true);
+                      if (_isLivestreamActive) {
+                        _launchUrl(_youtubeLivestreamUrl);
                       } else {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Play a song first to enjoy the visualizer")),
-                        );
+                        if (_player.playing) {
+                          setState(() => _showVisualizer = true);
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text("Play a song first to enjoy the visualizer")),
+                          );
+                        }
                       }
                     },
                     child: AnimatedBuilder(
                       animation: _logoGlowController,
-                      builder: (_, child) => Container(
-                        decoration: BoxDecoration(
-                          boxShadow: [
-                            BoxShadow(
-                              color: logoGlowColor.withOpacity(0.55 + 0.45 * _logoGlowController.value),
-                              blurRadius: 32 + 18 * _logoGlowController.value,
-                              spreadRadius: 8,
-                            )
+                      builder: (context, child) {
+                        return Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_isLivestreamActive)
+                              AnimatedBuilder(
+                                animation: _logoGlowController,
+                                builder: (context, _) => Text(
+                                  "LIVE",
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.red.withOpacity(0.6 + 0.4 * _logoGlowController.value),
+                                    letterSpacing: 2.5,
+                                  ),
+                                ),
+                              ),
+                            if (_isLivestreamActive) const SizedBox(width: 12),
+                            Container(
+                              decoration: BoxDecoration(
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: _isLivestreamActive 
+                                        ? Colors.red.withOpacity(0.95)
+                                        : logoGlowColor.withOpacity(0.55 + 0.45 * _logoGlowController.value),
+                                    blurRadius: _isLivestreamActive ? 0 : 32 + 18 * _logoGlowController.value,
+                                  ),
+                                ],
+                              ),
+                              child: child,
+                            ),
+                            if (_isLivestreamActive) const SizedBox(width: 12),
+                            if (_isLivestreamActive)
+                              AnimatedBuilder(
+                                animation: _logoGlowController,
+                                builder: (context, _) => Text(
+                                  "NOW",
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.red.withOpacity(0.6 + 0.4 * _logoGlowController.value),
+                                    letterSpacing: 2.5,
+                                  ),
+                                ),
+                              ),
                           ],
-                        ),
-                        child: child,
-                      ),
+                        );
+                      },
                       child: Image.asset('assets/logo.png', height: 96),
                     ),
                   ),
                 ),
               ),
+              // Album Spine Grid
               ...sortedAlbums.asMap().entries.map((e) {
                 final index = e.key;
                 final albumName = e.value;
@@ -1088,7 +1134,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         ),
       );
     } else {
-      // === ALBUM DETAIL PAGE WITH SONG-LEVEL GATING ===
+      // Album Detail Page with song-level gating
       final staticArtUrl = _albums[_selectedAlbum]!['artUrl'] as String;
       final rotatingArtUrl = _albums[_selectedAlbum]!['rotatingArtUrl'] as String? ?? staticArtUrl;
       final albumThemeColor = _getAlbumThemeColor(_selectedAlbum);
@@ -1111,7 +1157,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
             ),
           ),
-          // Rotating Art + Album Story
           Stack(
             alignment: Alignment.center,
             children: [
@@ -1142,18 +1187,17 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     ),
                   ),
                 ),
-              // FIXED Rotating Art - now correctly passes the right albumName
               GestureDetector(
                 onTap: () {
-                  final albumToUse = _selectedAlbum ?? "Unknown";
+                  final albumToUse = _currentAlbum ?? _selectedAlbum ?? "Unknown";
                   _showAlbumStory(albumToUse);
                 },
                 behavior: HitTestBehavior.opaque,
                 child: AnimatedBuilder(
-                  animation: Listenable.merge([_vinylController, _albumGlowControllers[_selectedAlbum ?? ""] ?? _logoGlowController]),
+                  animation: Listenable.merge([_vinylController, _albumGlowControllers[_currentAlbum ?? ""] ?? _logoGlowController]),
                   builder: (context, child) {
-                    final themeColor = _getAlbumThemeColor(_selectedAlbum);
-                    final glowController = _albumGlowControllers[_selectedAlbum ?? ""] ?? _logoGlowController;
+                    final themeColor = _getAlbumThemeColor(_currentAlbum);
+                    final glowController = _albumGlowControllers[_currentAlbum ?? ""] ?? _logoGlowController;
                     return Container(
                       width: 215,
                       height: 215,
@@ -1199,9 +1243,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     final song = songs[index] as Map<String, dynamic>;
                     final title = song['Title'] as String? ?? path.basename(song['url'] as String? ?? '');
                     final isCurrent = _currentAlbum == _selectedAlbum && _currentSongIndex == index;
-
-                    // Simple teaser logic: First song is always free, rest require Open Access
-                    final bool isFreeSong = index == 0;   // Change this later if you want specific songs free
+                    final bool isFreeSong = index == 0;
 
                     return GestureDetector(
                       onLongPress: () => _showSongOptions(song, _selectedAlbum!, index),
@@ -1245,7 +1287,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
             ),
           ),
-          // Player bar stays the same
           Container(
             decoration: BoxDecoration(color: albumThemeColor.withOpacity(0.15), borderRadius: const BorderRadius.vertical(top: Radius.circular(20))),
             padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
@@ -1356,11 +1397,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               const Text("Now Playing", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white70)),
               const SizedBox(height: 8),
 
-              // Now Playing - Tappable to go to album
-              // Now Playing - Tappable to go to album
-              // Now Playing - Tappable to go to album
-              // Now Playing - Tappable to go to album
-              // Now Playing - Tappable to go to album (with debug)
               // Now Playing - Tappable to go to album
               GestureDetector(
                 onTap: () {
@@ -1637,6 +1673,55 @@ Widget _buildSocialPage() {
                 ),
               );
             }).toList(),
+            const SizedBox(height: 40),
+            const Divider(color: Colors.white24),
+            const SizedBox(height: 20),
+            const Text(
+              "Livestream Control (Private)",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white70),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Text("Livestream Active", style: TextStyle(color: Colors.white70)),
+                const Spacer(),
+                Switch(
+                  value: _isLivestreamActive,
+                  activeColor: Colors.red,
+                  onChanged: (value) {
+                    setState(() => _isLivestreamActive = value);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(value ? "Livestream mode ON" : "Livestream mode OFF"),
+                        backgroundColor: value ? Colors.red : Colors.green,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_isLivestreamActive)
+              TextField(
+                obscureText: true,
+                decoration: const InputDecoration(
+                  hintText: "Enter PIN to confirm",
+                  filled: true,
+                  fillColor: Colors.white10,
+                ),
+                onSubmitted: (pin) {
+                  if (pin == _livestreamPin) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("✅ Livestream confirmed active")),
+                    );
+                  } else {
+                    setState(() => _isLivestreamActive = false);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Incorrect PIN")),
+                    );
+                  }
+                },
+              ),            
 
             const SizedBox(height: 100), // extra bottom padding
 
