@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 final AudioPlayer _globalPlayer = AudioPlayer();
 
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -56,6 +57,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   final AudioPlayer _player = _globalPlayer;
 
+  final TextEditingController _promoCodeController = TextEditingController();
+
   late VideoPlayerController _videoController;
   late AnimationController _vinylController;
   late AnimationController _logoGlowController;
@@ -85,9 +88,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   StreamSubscription<ProcessingState>? _processingSubscription;
   DateTime? _lastPlayCall;
   // NEW: Support for "Play song next" 
+  // NEW: Support for "Play song next" + Full Queue
   String? _nextUpAlbum;
   int? _nextUpIndex;
-  
+  List<Map<String, dynamic>> _queue = [];        // ← Add this line
+
   // ====================== PLAYLISTS ======================
   List<Map<String, dynamic>> _playlists = [];
   String? _currentPlaylistId;
@@ -383,24 +388,21 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
   }
     // NEW: Queue song to play immediately after current one
+  // Improved Queue Song Next
   Future<void> _queueSongNext(Map<String, dynamic> song, String albumName, int songIndex) async {
-    if (songIndex < 0) return;
-
-    if (_currentAlbum == null || _currentSongIndex == -1 || !_player.playing) {
-      await _playSong(albumName, songIndex);
-      return;
-    }
+    final songCopy = Map<String, dynamic>.from(song);
+    songCopy["albumName"] = albumName;
+    songCopy["index"] = songIndex;
 
     setState(() {
-      _nextUpAlbum = albumName;
-      _nextUpIndex = songIndex;
+      _queue.add(songCopy);
     });
 
     final title = (song['Title'] as String?) ?? 'Unknown';
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('“$title” queued to play next'),
+          content: Text('“$title” added to queue'),
           backgroundColor: Colors.greenAccent.withOpacity(0.9),
           behavior: SnackBarBehavior.floating,
         ),
@@ -408,34 +410,45 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
   }
 
-  // Updated song completion to respect "Play next"
+  // Improved Song Completion Handler
   void _handleSongCompletion() {
-    if (_nextUpAlbum != null && _nextUpIndex != null) {
-      final album = _nextUpAlbum!;
-      final index = _nextUpIndex!;
-      setState(() {
-        _nextUpAlbum = null;
-        _nextUpIndex = null;
-      });
-      _playSong(album, index);
+    // Priority 1: Play from queue if anything is queued
+    if (_queue.isNotEmpty) {
+      final nextSong = _queue.removeAt(0);
+      final albumName = nextSong["albumName"] as String;
+      final index = nextSong["index"] as int;
+      _playSong(albumName, index);
+      setState(() {}); // refresh queue UI
       return;
     }
 
-    // Fall back to original logic (shuffle, loop, album order)
+    // Priority 2: No queue → normal album progression, but respect locks
     if (_currentAlbum == null || _currentSongIndex == -1) return;
+
     final songs = _albums[_currentAlbum]?['songs'] as List<dynamic>? ?? [];
     if (songs.isEmpty) return;
 
-    int nextIndex = _isShuffled 
-        ? Random().nextInt(songs.length) 
-        : (_currentSongIndex + 1) % songs.length;
+    int nextIndex = (_currentSongIndex + 1) % songs.length;
 
-    if (_loopMode == LoopMode.one) {
-      nextIndex = _currentSongIndex;
+    // Check if the next song is free (first song of the album) or user has Open Access
+    final bool isNextSongFree = nextIndex == 0;
+
+    if (!isNextSongFree && !_hasOpenAccess) {
+      // Stop playback instead of playing a locked song
+      _player.pause();
+      setState(() {
+        _currentSongTitle = "Open Access required for more songs";
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Unlock Open Access to continue listening")),
+      );
+      return;
     }
+
+    // Safe to play next song
     _playSong(_currentAlbum!, nextIndex);
   }
-
+  
   // NEW: Navigate to Song Story
   void _navigateToSongStory(Map<String, dynamic> song, String albumName) {
     Navigator.push(
@@ -547,18 +560,57 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _playNextSong() async {
+    // If queue has songs, play the next one from queue
+    if (_queue.isNotEmpty) {
+      final nextSong = _queue.removeAt(0);
+      final albumName = nextSong["albumName"] as String;
+      final index = nextSong["index"] as int;
+      _playSong(albumName, index);
+      setState(() {}); // refresh queue UI
+      return;
+    }
+
+    // No queue → normal album next, but respect locked songs
     if (_currentAlbum == null || _currentSongIndex == -1) return;
-    final songs = _albums[_currentAlbum]!['songs'] as List;
-    int next = (_currentSongIndex + 1) % songs.length;
-    await _playSong(_currentAlbum!, next);
+
+    final songs = _albums[_currentAlbum]?['songs'] as List<dynamic>? ?? [];
+    if (songs.isEmpty) return;
+
+    int nextIndex = (_currentSongIndex + 1) % songs.length;
+
+    // Check if the next song is free (first song of album) or user has Open Access
+    final bool isNextSongFree = nextIndex == 0;
+
+    if (!isNextSongFree && !_hasOpenAccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Unlock Open Access to play more songs")),
+      );
+      return;
+    }
+
+    await _playSong(_currentAlbum!, nextIndex);
   }
 
   Future<void> _playPreviousSong() async {
     if (_currentAlbum == null || _currentSongIndex == -1) return;
-    final songs = _albums[_currentAlbum]!['songs'] as List;
-    int prev = _currentSongIndex - 1;
-    if (prev < 0) prev = songs.length - 1;
-    await _playSong(_currentAlbum!, prev);
+
+    final songs = _albums[_currentAlbum]?['songs'] as List<dynamic>? ?? [];
+    if (songs.isEmpty) return;
+
+    int prevIndex = _currentSongIndex - 1;
+    if (prevIndex < 0) prevIndex = songs.length - 1;
+
+    // Check if the previous song is a free teaser (first song) or user has Open Access
+    final bool isPrevSongFree = prevIndex == 0;
+
+    if (!isPrevSongFree && !_hasOpenAccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Unlock Open Access to play more songs")),
+      );
+      return;
+    }
+
+    await _playSong(_currentAlbum!, prevIndex);
   }
 
   void _toggleLoop() {
@@ -880,6 +932,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       ..sort((a, b) => (_albums[b]?['order'] as int? ?? 999).compareTo(_albums[a]?['order'] as int? ?? 999));
 
     if (_selectedAlbum == null) {
+      // Spine / Main Album Grid (unchanged - simple tap)
       return SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
         child: SizedBox(
@@ -1035,7 +1088,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         ),
       );
     } else {
-      // Album Detail Page (this is where we will add song-level gating)
+      // === ALBUM DETAIL PAGE WITH SONG-LEVEL GATING ===
       final staticArtUrl = _albums[_selectedAlbum]!['artUrl'] as String;
       final rotatingArtUrl = _albums[_selectedAlbum]!['rotatingArtUrl'] as String? ?? staticArtUrl;
       final albumThemeColor = _getAlbumThemeColor(_selectedAlbum);
@@ -1058,7 +1111,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
             ),
           ),
-          // Rotating Art + Album Story (unchanged)
+          // Rotating Art + Album Story
           Stack(
             alignment: Alignment.center,
             children: [
@@ -1089,17 +1142,18 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     ),
                   ),
                 ),
+              // FIXED Rotating Art - now correctly passes the right albumName
               GestureDetector(
                 onTap: () {
-                  final albumToUse = _currentAlbum ?? _selectedAlbum ?? "Unknown";
+                  final albumToUse = _selectedAlbum ?? "Unknown";
                   _showAlbumStory(albumToUse);
                 },
                 behavior: HitTestBehavior.opaque,
                 child: AnimatedBuilder(
-                  animation: Listenable.merge([_vinylController, _albumGlowControllers[_currentAlbum ?? ""] ?? _logoGlowController]),
+                  animation: Listenable.merge([_vinylController, _albumGlowControllers[_selectedAlbum ?? ""] ?? _logoGlowController]),
                   builder: (context, child) {
-                    final themeColor = _getAlbumThemeColor(_currentAlbum);
-                    final glowController = _albumGlowControllers[_currentAlbum ?? ""] ?? _logoGlowController;
+                    final themeColor = _getAlbumThemeColor(_selectedAlbum);
+                    final glowController = _albumGlowControllers[_selectedAlbum ?? ""] ?? _logoGlowController;
                     return Container(
                       width: 215,
                       height: 215,
@@ -1146,8 +1200,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     final title = song['Title'] as String? ?? path.basename(song['url'] as String? ?? '');
                     final isCurrent = _currentAlbum == _selectedAlbum && _currentSongIndex == index;
 
-                    // For now, make all songs playable (we'll add teaser logic next)
-                    final bool canPlay = true;   // Change this later for paid songs
+                    // Simple teaser logic: First song is always free, rest require Open Access
+                    final bool isFreeSong = index == 0;   // Change this later if you want specific songs free
 
                     return GestureDetector(
                       onLongPress: () => _showSongOptions(song, _selectedAlbum!, index),
@@ -1173,12 +1227,17 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                           style: TextStyle(
                             fontSize: 16.5,
                             fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                            color: canPlay ? (isCurrent ? albumThemeColor : Colors.white) : Colors.white54,
+                            color: isFreeSong || _hasOpenAccess 
+                                ? (isCurrent ? albumThemeColor : Colors.white) 
+                                : Colors.white54,
                           ),
                         ),
-                        onTap: canPlay 
-                          ? () => _playSong(_selectedAlbum!, index)
-                          : () => _showPaywall(),   // Show paywall for paid songs
+                        trailing: (!isFreeSong && !_hasOpenAccess) 
+                            ? const Icon(Icons.lock, size: 18, color: Colors.white54)
+                            : null,
+                        onTap: (isFreeSong || _hasOpenAccess) 
+                            ? () => _playSong(_selectedAlbum!, index)
+                            : () => _showPaywall(),
                       ),
                     );
                   },
@@ -1186,7 +1245,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
             ),
           ),
-          // Player bar (unchanged)
+          // Player bar stays the same
           Container(
             decoration: BoxDecoration(color: albumThemeColor.withOpacity(0.15), borderRadius: const BorderRadius.vertical(top: Radius.circular(20))),
             padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
@@ -1239,6 +1298,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       );
     }
   }
+
   void _showAddToPlaylistMenu(Map<String, dynamic> song, String albumName) {
     showModalBottomSheet(
       context: context,
@@ -1266,6 +1326,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Widget _buildPlaylistsPage(double screenHeight) {
+    final hasQueue = _queue.isNotEmpty;
+
     return Column(
       children: [
         const SizedBox(height: 60),
@@ -1284,9 +1346,144 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             ],
           ),
         ),
+
+        // Now Playing + Queue Section
+        Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text("Now Playing", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white70)),
+              const SizedBox(height: 8),
+
+              // Now Playing - Tappable to go to album
+              // Now Playing - Tappable to go to album
+              // Now Playing - Tappable to go to album
+              // Now Playing - Tappable to go to album
+              // Now Playing - Tappable to go to album (with debug)
+              // Now Playing - Tappable to go to album
+              GestureDetector(
+                onTap: () {
+                  print("DEBUG: Now Playing tapped! Current album = $_currentAlbum");
+                  if (_currentAlbum != null) {
+                    // Force switch to album view
+                    setState(() {
+                      _selectedAlbum = _currentAlbum;
+                    });
+                    // Also switch to the album page in PageView if needed
+                    _pageController.animateToPage(
+                      1, // assuming album page is index 1
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                    );
+                  } else {
+                    print("DEBUG: No current album to open");
+                  }
+                },
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.play_circle_fill, color: Colors.greenAccent, size: 40),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _currentSongTitle,
+                              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _currentAlbum ?? "Unknown Album",
+                              style: TextStyle(fontSize: 14, color: Colors.white70),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.clear, color: Colors.white54),
+                        onPressed: () {
+                          _player.pause();
+                          setState(() {
+                            _currentSongTitle = "Nothing playing";
+                            _currentAlbum = null;
+                            _currentSongIndex = -1;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              if (hasQueue) ...[
+                const SizedBox(height: 20),
+                const Text("Queue", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white70)),
+                const SizedBox(height: 8),
+                ..._queue.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final song = entry.value;
+                  final title = song['Title'] as String? ?? 'Unknown';
+                  final album = song['albumName'] as String? ?? 'Unknown Album';
+
+                  return GestureDetector(
+                    onTap: () {
+                      // Play this queued song immediately
+                      final albumName = song["albumName"] as String;
+                      final songIndex = song["index"] as int;
+                      _queue.removeAt(index);           // remove from queue
+                      _playSong(albumName, songIndex);
+                      setState(() {});                  // refresh UI
+                    },
+                    child: ListTile(
+                      leading: const Icon(Icons.queue_play_next, color: Colors.orangeAccent),
+                      title: Text(title),
+                      subtitle: Text(album),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.white54),
+                        onPressed: () {
+                          setState(() => _queue.removeAt(index));
+                        },
+                      ),
+                    ),
+                  );
+                }).toList(),
+
+                const SizedBox(height: 8),
+                TextButton.icon(
+                  onPressed: () {
+                    setState(() => _queue.clear());
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Queue cleared")),
+                    );
+                  },
+                  icon: const Icon(Icons.clear_all),
+                  label: const Text("Clear Queue"),
+                ),
+              ],
+            ],
+          ),
+        ),
+
         Expanded(
           child: _playlists.isEmpty
-              ? const Center(child: Text("No playlists yet\nTap + New to create one", textAlign: TextAlign.center, style: TextStyle(color: Colors.white70)))
+              ? const Center(
+                  child: Text(
+                    "No playlists yet\nTap + New to create one",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                )
               : ListView.builder(
                   itemCount: _playlists.length,
                   itemBuilder: (context, i) {
@@ -1318,9 +1515,15 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text("New Playlist"),
-        content: TextField(controller: controller, decoration: const InputDecoration(hintText: "Playlist name")),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(hintText: "Playlist name"),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancel"),
+          ),
           TextButton(
             onPressed: () {
               if (controller.text.trim().isNotEmpty) {
@@ -1436,6 +1639,70 @@ Widget _buildSocialPage() {
             }).toList(),
 
             const SizedBox(height: 100), // extra bottom padding
+
+                        const SizedBox(height: 40),
+            const Text(
+              "Have a Promo Code?",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white70),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _promoCodeController,
+                    decoration: const InputDecoration(
+                      hintText: "Enter promo code",
+                      filled: true,
+                      fillColor: Colors.white10,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton(
+                  onPressed: () async {
+                    final code = _promoCodeController.text.trim().toUpperCase();
+                    if (code.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Please enter a code")),
+                      );
+                      return;
+                    }
+
+                    try {
+                      // Correct method for version 9.x - opens native redemption sheet
+                      await Purchases.presentCodeRedemptionSheet();
+
+                      // After the sheet closes, check if access was granted
+                      final customerInfo = await Purchases.getCustomerInfo();
+                      final hasAccess = customerInfo.entitlements.active.containsKey("premium_access");
+
+                      if (hasAccess && mounted) {
+                        setState(() => _hasOpenAccess = true);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("✅ Promo code redeemed! Open Access granted.")),
+                        );
+                        _promoCodeController.clear();
+                      }
+                    } catch (e) {
+                      print("Promo code sheet error: $e");
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("Code redemption failed or cancelled.")),
+                        );
+                      }
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.greenAccent,
+                    foregroundColor: Colors.black,
+                  ),
+                  child: const Text("Redeem"),
+                ),
+              ],
+            ),
           ],
         ),
       ),
