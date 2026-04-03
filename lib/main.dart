@@ -427,9 +427,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     // Priority 1: Play from queue if anything is queued
     if (_queue.isNotEmpty) {
       final nextSong = _queue.removeAt(0);
-      final albumName = nextSong["albumName"] as String;
-      final index = nextSong["index"] as int;
-      _playSong(albumName, index);
+      final albumName = nextSong["albumName"] as String? ?? _currentAlbum ?? "";
+      final title = nextSong["title"] as String? ?? "Unknown Song";
+
+      print("🎵 Queue transition: Playing next queued song '$title' from album '$albumName'");
+
+      // Play the next song from queue
+      _playSong(albumName, 0);   // We use index 0 because we re-added it as a new "first" item in queue context
       setState(() {}); // refresh queue UI
       return;
     }
@@ -446,21 +450,21 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     final bool isNextSongFree = nextIndex == 0;
 
     if (!isNextSongFree && !_hasOpenAccess) {
-      // Stop playback instead of playing a locked song
       _player.pause();
       setState(() {
         _currentSongTitle = "Open Access required for more songs";
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Unlock Open Access to continue listening")),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Unlock Open Access to continue listening")),
+        );
+      }
       return;
     }
 
-    // Safe to play next song
+    // Safe to play next song in album
     _playSong(_currentAlbum!, nextIndex);
   }
-
   // NEW: Navigate to Song Story
   void _navigateToSongStory(Map<String, dynamic> song, String albumName) {
     Navigator.push(
@@ -573,17 +577,17 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _playNextSong() async {
-    // If queue has songs, play the next one from queue
+    // Priority 1: If there are songs in the queue, play the next one from queue
     if (_queue.isNotEmpty) {
       final nextSong = _queue.removeAt(0);
-      final albumName = nextSong["albumName"] as String;
-      final index = nextSong["index"] as int;
-      _playSong(albumName, index);
+      final albumName = nextSong["albumName"] as String? ?? _currentAlbum ?? "";
+      print("⏭️ Skip Next: Playing from queue - $albumName");
+      _playSong(albumName, 0);   // Play the first item we just removed from queue
       setState(() {}); // refresh queue UI
       return;
     }
 
-    // No queue → normal album next, but respect locked songs
+    // Priority 2: No queue → normal album progression (your existing logic)
     if (_currentAlbum == null || _currentSongIndex == -1) return;
 
     final songs = _albums[_currentAlbum]?['songs'] as List<dynamic>? ?? [];
@@ -591,17 +595,22 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
     int nextIndex = (_currentSongIndex + 1) % songs.length;
 
-    // Check if the next song is free (first song of album) or user has Open Access
+    // Respect locking for album songs
     final bool isNextSongFree = nextIndex == 0;
-
     if (!isNextSongFree && !_hasOpenAccess) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Unlock Open Access to play more songs")),
-      );
+      _player.pause();
+      setState(() {
+        _currentSongTitle = "Open Access required for more songs";
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Unlock Open Access to continue listening")),
+        );
+      }
       return;
     }
 
-    await _playSong(_currentAlbum!, nextIndex);
+    _playSong(_currentAlbum!, nextIndex);
   }
 
   Future<void> _playPreviousSong() async {
@@ -1428,7 +1437,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                               final playlistSongs = pl["songs"] as List<dynamic>? ?? [];
                               if (playlistSongs.isNotEmpty) {
                                 setState(() {
-                                  _queue.clear();
                                   _queue.addAll(playlistSongs.map((s) => {
                                     'title': s['Title'] ?? 'Unknown Song',
                                     'albumName': pl["name"] ?? "",
@@ -1436,8 +1444,21 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                     'url': s['url'] ?? "",
                                   }).toList());
                                 });
-                                // Start playing the first song
-                                _playSong(pl["name"] ?? "", 0);
+
+                                // Optional: Show a quick confirmation
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text("Added ${playlistSongs.length} songs to queue"),
+                                    duration: const Duration(seconds: 1),
+                                  ),
+                                );
+
+                                // Auto-play the first song of the playlist if nothing is currently playing
+                                if (!_player.playing && _queue.isNotEmpty) {
+                                  final firstAddedIndex = _queue.length - playlistSongs.length;
+                                  final albumName = pl["name"] ?? "";
+                                  _playSong(albumName, firstAddedIndex);
+                                }
                               }
                             },
                           child: Container(
