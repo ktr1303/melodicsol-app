@@ -507,7 +507,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             title: const Text("Play song next"),
             onTap: () {
               Navigator.pop(context);
-              _queueSongNext(song, albumName, songIndex);
+              _queueSongNext(song, albumName, songIndex);   // songIndex is now safely passed
             },
           ),
           ListTile(
