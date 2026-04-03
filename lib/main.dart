@@ -84,6 +84,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _videoInitialized = false;
   String? _videoError;
   bool _hasPlaybackError = false;
+  String? _currentSongArtUrl;
 
   int _currentPlayId = 0;
   StreamSubscription<ProcessingState>? _processingSubscription;
@@ -329,7 +330,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Invalid audio URL")));
       return;
     }
-
+    
+    final songs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
+    if (songIndex < songs.length) {
+      final song = songs[songIndex] as Map<String, dynamic>;
+      _currentSongArtUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+    }
     _currentPlayId++;
     final thisPlayId = _currentPlayId;
 
@@ -1312,125 +1318,162 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Widget _buildPlaylistsPage() {
-    return Column(
-      children: [
-        // Now Playing Header
-        Container(
-          padding: const EdgeInsets.all(16),
-          color: Colors.black87,
-          child: Row(
-            children: [
-              const Text("Now Playing", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const Spacer(),
-              Expanded(
-                child: Text(
-                  _currentSongTitle.isEmpty ? "Nothing playing" : _currentSongTitle,
-                  style: const TextStyle(fontSize: 15, color: Colors.white70),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        // Queue List
-        Expanded(
-          child: _queue.isEmpty
-              ? const Center(
-                  child: Text(
-                    "Queue is empty\nLong-press a song → 'Play Next'",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white54),
-                  ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: _queue.length,
-                  itemBuilder: (context, index) {
-                    final song = _queue[index];
-                    final title = song['title'] as String? ?? "Unknown Song";
-                    final album = song['albumName'] as String? ?? "";
-                    final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-
-                    return ListTile(
-                      leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: CachedNetworkImage(
-                          imageUrl: artUrl,
-                          width: 52,
-                          height: 52,
-                          fit: BoxFit.cover,
-                          errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 52, color: Colors.white38),
-                        ),
+    return GestureDetector(
+      onHorizontalDragEnd: (DragEndDetails details) {
+        final velocity = details.primaryVelocity ?? 0;
+        if (velocity > 500) {
+          // Swipe right → back to main album page
+          _pageController.animateToPage(1, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+        }
+      },
+      child: Column(
+        children: [
+          // Queue Tab Content
+          Expanded(
+            child: Column(
+              children: [
+                // Now Playing - Styled like a queue item
+                if (_currentSongTitle.isNotEmpty)
+                  ListTile(
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: CachedNetworkImage(
+                        imageUrl: _currentSongArtUrl ?? "",
+                        width: 52,
+                        height: 52,
+                        fit: BoxFit.cover,
+                        errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 52, color: Colors.white38),
                       ),
-                      title: Text(title),
-                      subtitle: Text(album.isNotEmpty ? album : "Unknown Album", style: const TextStyle(color: Colors.white54)),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => setState(() => _queue.removeAt(index)),
-                      ),
-                      onTap: () {
-                        final albumName = album.isNotEmpty ? album : (_selectedAlbum ?? "");
-                        _playSong(albumName, index);
-                      },
-                    );
-                  },
-                ),
-        ),
-
-        // Saved Playlists Section (at bottom)
-        Container(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text("Saved Playlists", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.add),
-                label: const Text("New Playlist"),
-                onPressed: _showCreatePlaylistDialog,
-              ),
-              const SizedBox(height: 12),
-              if (_playlists.isNotEmpty)
-                SizedBox(
-                  height: 140,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _playlists.length,
-                    itemBuilder: (context, i) {
-                      final pl = _playlists[i];
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 12),
-                        child: GestureDetector(
-                          onTap: () => _playPlaylist(pl["id"]),
-                          child: Container(
-                            width: 140,
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.white10,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(pl["name"], style: const TextStyle(fontWeight: FontWeight.bold)),
-                                Text("${pl["songs"].length} songs", style: const TextStyle(fontSize: 13, color: Colors.white54)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
+                    ),
+                    title: const Text("Now Playing", style: TextStyle(fontSize: 14, color: Colors.greenAccent)),
+                    subtitle: Text(_currentSongTitle, style: const TextStyle(fontSize: 16)),
+                    onTap: () {
+                      if (_currentAlbum != null) {
+                        setState(() => _selectedAlbum = _currentAlbum);
+                      }
                     },
                   ),
+
+                // Scrollable Queue List
+                Expanded(
+                  child: _queue.isEmpty
+                      ? const Center(
+                          child: Text(
+                            "Queue is empty\nLong-press a song → 'Play Next'",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.white54),
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(12),
+                          itemCount: _queue.length,
+                          itemBuilder: (context, index) {
+                            final song = _queue[index];
+                            final title = song['title'] as String? ?? "Unknown Song";
+                            final album = song['albumName'] as String? ?? "";
+                            final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+
+                            return ListTile(
+                              leading: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: CachedNetworkImage(
+                                  imageUrl: artUrl,
+                                  width: 52,
+                                  height: 52,
+                                  fit: BoxFit.cover,
+                                  errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 52, color: Colors.white38),
+                                ),
+                              ),
+                              title: Text(title),
+                              subtitle: Text(album.isNotEmpty ? album : "Unknown Album", style: const TextStyle(color: Colors.white54)),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.close),
+                                onPressed: () => setState(() => _queue.removeAt(index)),
+                              ),
+                              onTap: () {
+                                final albumName = album.isNotEmpty ? album : (_selectedAlbum ?? "");
+                                _playSong(albumName, index);
+                              },
+                            );
+                          },
+                        ),
                 ),
-            ],
+              ],
+            ),
           ),
-        ),
-      ],
+
+          // Saved Playlists Section (below queue)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: const BoxDecoration(
+              color: Colors.black87,
+              border: Border(top: BorderSide(color: Colors.white24)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("Saved Playlists", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.add),
+                  label: const Text("New Playlist"),
+                  onPressed: _showCreatePlaylistDialog,
+                ),
+                const SizedBox(height: 12),
+                if (_playlists.isNotEmpty)
+                  SizedBox(
+                    height: 140,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _playlists.length,
+                      itemBuilder: (context, i) {
+                        final pl = _playlists[i];
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 12),
+                          child: GestureDetector(
+                            onTap: () {
+                              // Add all songs from this playlist to queue and start playing
+                              final playlistSongs = pl["songs"] as List<dynamic>? ?? [];
+                              if (playlistSongs.isNotEmpty) {
+                                setState(() {
+                                  _queue.clear();
+                                  _queue.addAll(playlistSongs.map((s) => {
+                                    'title': s['Title'] ?? 'Unknown',
+                                    'albumName': pl["name"] ?? "",
+                                    'artUrl': s['artUrl'] ?? s['songArtUrl'] ?? "",
+                                  }).toList());
+                                });
+                                // Start playing the first song
+                                _playSong(pl["name"] ?? "", 0);
+                              }
+                            },
+                            child: Container(
+                              width: 140,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.white10,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(pl["name"], style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  Text("${pl["songs"].length} songs", style: const TextStyle(fontSize: 13, color: Colors.white54)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
-
   void _showCreatePlaylistDialog() {
     final controller = TextEditingController();
     showDialog(
