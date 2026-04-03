@@ -313,9 +313,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _playSong(String albumName, int index, {int retryCount = 0}) async {
-    // === STORE CURRENT SONG INFO (including art URL) ===
     final songList = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
-    if (index < 0 || index >= songList.length) return;
+    if (index < 0 || index >= songList.length) {
+      print("❌ Invalid song index: $index for album $albumName (only ${songList.length} songs)");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Song not found in album")),
+        );
+      }
+      return;
+    }
 
     final song = songList[index] as Map<String, dynamic>;
     _currentSongTitle = song['Title'] as String? ?? "Unknown Song";
@@ -397,25 +404,22 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
     // NEW: Queue song to play immediately after current one
   // Improved Queue Song Next
-  Future<void> _queueSongNext(Map<String, dynamic> song, String albumName, int songIndex) async {
-    final songCopy = Map<String, dynamic>.from(song);
-    songCopy["albumName"] = albumName;
-    songCopy["index"] = songIndex;
-
+  void _queueSongNext(Map<String, dynamic> song, String albumName, int songIndex) {
     setState(() {
-      _queue.add(songCopy);
+      _queue.add({
+        'title': song['Title'] as String? ?? "Unknown Song",
+        'albumName': albumName,
+        'artUrl': song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "",
+        'url': song['url'] as String? ?? "",
+      });
     });
 
-    final title = (song['Title'] as String?) ?? 'Unknown';
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('“$title” added to queue'),
-          backgroundColor: Colors.greenAccent.withOpacity(0.9),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("Added to queue: ${song['Title'] ?? 'Unknown Song'}"),
+        duration: const Duration(seconds: 1),
+      ),
+    );
   }
 
   // Improved Song Completion Handler
@@ -500,7 +504,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           ),
           ListTile(
             leading: const Icon(Icons.queue_play_next, color: Colors.greenAccent),
-            title: const Text("Play song next"),
+            title: const Text("Add to Queue"),
             onTap: () {
               _queueSongNext(song, albumName, songIndex);
               Navigator.pop(context);
@@ -1331,11 +1335,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
               title: const Text("Now Playing", style: TextStyle(fontSize: 14, color: Colors.greenAccent)),
               subtitle: Text(_currentSongTitle, style: const TextStyle(fontSize: 16)),
-              onTap: () {
-                if (_currentAlbum != null) {
-                  setState(() => _selectedAlbum = _currentAlbum);
-                }
-              },
+                      onTap: () {
+                        if (_currentAlbum != null) {
+                          setState(() {
+                            _selectedAlbum = _currentAlbum;   // Open the correct album
+                          });
+                          // Switch to the Main Album page (index 1)
+                          _pageController.animateToPage(
+                            1,
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeOut,
+                          );
+                        }
+                      },
             ),
           ),
         // Scrollable Queue List (this is the main fix)
@@ -1412,20 +1424,22 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                       return Padding(
                         padding: const EdgeInsets.only(right: 12),
                         child: GestureDetector(
-                          onTap: () {
-                            final playlistSongs = pl["songs"] as List<dynamic>? ?? [];
-                            if (playlistSongs.isNotEmpty) {
-                              setState(() {
-                                _queue.clear();
-                                _queue.addAll(playlistSongs.map((s) => {
-                                  'title': s['Title'] ?? 'Unknown',
-                                  'albumName': pl["name"] ?? "",
-                                  'artUrl': s['artUrl'] ?? s['songArtUrl'] ?? "",
-                                }).toList());
-                              });
-                              _playSong(pl["name"] ?? "", 0);
-                            }
-                          },
+                            onTap: () {
+                              final playlistSongs = pl["songs"] as List<dynamic>? ?? [];
+                              if (playlistSongs.isNotEmpty) {
+                                setState(() {
+                                  _queue.clear();
+                                  _queue.addAll(playlistSongs.map((s) => {
+                                    'title': s['Title'] ?? 'Unknown Song',
+                                    'albumName': pl["name"] ?? "",
+                                    'artUrl': s['artUrl'] ?? s['songArtUrl'] ?? "",
+                                    'url': s['url'] ?? "",
+                                  }).toList());
+                                });
+                                // Start playing the first song
+                                _playSong(pl["name"] ?? "", 0);
+                              }
+                            },
                           child: Container(
                             width: 140,
                             padding: const EdgeInsets.all(12),
