@@ -324,17 +324,19 @@ Future<void> _playSong(String albumName, int index, {
   String finalTitle = titleToPlay ?? "Unknown Song";
   String finalArtUrl = artUrl ?? "";
 
-  // Normal album playback path
   if (urlToPlay.isEmpty) {
     final songList = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
-    if (index < 0 || index >= songList.length) {
-      print("❌ Invalid song index for album $albumName");
-      return;
-    }
+    if (index < 0 || index >= songList.length) return;
+
     final song = songList[index] as Map<String, dynamic>;
     urlToPlay = (song['url'] as String?)?.trim() ?? '';
     finalTitle = (song['Title'] as String?) ?? "Unknown Song";
     finalArtUrl = (song['artUrl'] as String?) ?? (song['songArtUrl'] as String?) ?? "";
+  }
+
+  // Fix malformed URLs
+  if (urlToPlay.startsWith('https:/') && !urlToPlay.startsWith('https://')) {
+    urlToPlay = urlToPlay.replaceFirst('https:/', 'https://');
   }
 
   if (urlToPlay.isEmpty || !urlToPlay.startsWith('http')) {
@@ -346,10 +348,9 @@ Future<void> _playSong(String albumName, int index, {
     return;
   }
 
-  // Throttling to prevent rapid clicks
-  if (_lastPlayCall != null && 
-      DateTime.now().difference(_lastPlayCall!) < const Duration(milliseconds: 350)) {
-    print("⏳ Play call throttled");
+  // Throttling
+  if (_lastPlayCall != null && DateTime.now().difference(_lastPlayCall!) < const Duration(milliseconds: 350)) {
+    print("⏳ Skip throttled");
     return;
   }
   _lastPlayCall = DateTime.now();
@@ -362,22 +363,21 @@ Future<void> _playSong(String albumName, int index, {
   _processingSubscription?.cancel();
 
   try {
-    // Force UI update immediately
+    // Always update global state here
     setState(() {
+      _currentAlbum = albumName;
+      _currentSongIndex = index;
       _currentSongTitle = finalTitle;
       _currentSongArtUrl = finalArtUrl;
       _lastForcedTitle = finalTitle;
       _pendingSongTitle = null;
-      _currentAlbum = albumName;
-      _currentSongIndex = index;
       _hasPlaybackError = false;
     });
 
-    print('>>> TITLE FORCED TO: $finalTitle | PlayID: $thisPlayId');
+    print('>>> TITLE FORCED TO: $finalTitle | Album: $albumName | Index: $index | PlayID: $thisPlayId');
 
     await _player.stop();
     await _player.seek(Duration.zero);
-
     await Future.delayed(const Duration(milliseconds: 800));
 
     final source = HlsAudioSource(
@@ -391,14 +391,9 @@ Future<void> _playSong(String albumName, int index, {
     await _player.setAudioSource(source);
     print('✅ HlsAudioSource set successfully | PlayID: $thisPlayId');
 
-    await Future.delayed(const Duration(milliseconds: 300));
+    await Future.delayed(const Duration(milliseconds: 400));
     await _player.play();
     print('▶️ Play command sent | PlayID: $thisPlayId');
-
-    // Safety force after playback begins
-    Future.delayed(const Duration(milliseconds: 700), () {
-      if (mounted) setState(() => _currentSongTitle = _lastForcedTitle);
-    });
 
     _setupProcessingListener();
 
@@ -410,11 +405,7 @@ Future<void> _playSong(String albumName, int index, {
     print("❌ HLS ERROR (attempt ${retryCount + 1}): $e");
     if (retryCount < 2) {
       await Future.delayed(const Duration(seconds: 2));
-      return _playSong(albumName, index, 
-        retryCount: retryCount + 1, 
-        directUrl: directUrl, 
-        titleToPlay: titleToPlay, 
-        artUrl: artUrl);
+      return _playSong(albumName, index, retryCount: retryCount + 1, directUrl: directUrl, titleToPlay: titleToPlay, artUrl: artUrl);
     }
     if (mounted) {
       setState(() {
@@ -446,46 +437,32 @@ Future<void> _playSong(String albumName, int index, {
 
   // Improved Song Completion Handler
   void _handleSongCompletion() {
-    // Priority 1: Play from queue if anything is queued
+    print('🎯 _handleSongCompletion called - Queue size: ${_queue.length} | Current Album: $_currentAlbum | Index: $_currentSongIndex');
+
     if (_queue.isNotEmpty) {
+      print('→ Playing next from queue');
       final nextSong = _queue.removeAt(0);
-      final albumName = nextSong["albumName"] as String? ?? _currentAlbum ?? "";
-      final title = nextSong["title"] as String? ?? "Unknown Song";
+      final albumName = nextSong['albumName'] as String? ?? "";
+      final directUrl = nextSong['url'] as String? ?? "";
+      final title = nextSong['title'] as String? ?? "Unknown Song";
+      final artUrl = nextSong['artUrl'] as String? ?? "";
 
-      print("🎵 Queue transition: Playing next queued song '$title' from album '$albumName'");
-
-      // Play the next song from queue
-      _playSong(albumName, 0);   // We use index 0 because we re-added it as a new "first" item in queue context
-      setState(() {}); // refresh queue UI
-      return;
-    }
-
-    // Priority 2: No queue → normal album progression, but respect locks
-    if (_currentAlbum == null || _currentSongIndex == -1) return;
-
-    final songs = _albums[_currentAlbum]?['songs'] as List<dynamic>? ?? [];
-    if (songs.isEmpty) return;
-
-    int nextIndex = (_currentSongIndex + 1) % songs.length;
-
-    // Check if the next song is free (first song of the album) or user has Open Access
-    final bool isNextSongFree = nextIndex == 0;
-
-    if (!isNextSongFree && !_hasOpenAccess) {
-      _player.pause();
       setState(() {
-        _currentSongTitle = "Open Access required for more songs";
+        _currentSongTitle = title;
+        _currentSongArtUrl = artUrl;
+        _currentAlbum = albumName;           // Ensure we update current album
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Unlock Open Access to continue listening")),
-        );
+
+      if (directUrl.isNotEmpty && directUrl.startsWith('http')) {
+        _playSong(albumName, 0, directUrl: directUrl, titleToPlay: title, artUrl: artUrl);
+      } else {
+        _playSong(albumName, 0);
       }
       return;
     }
 
-    // Safe to play next song in album
-    _playSong(_currentAlbum!, nextIndex);
+    print('→ No queue - calling _playNextSong()');
+    _playNextSong();
   }
   // NEW: Navigate to Song Story
   void _navigateToSongStory(Map<String, dynamic> song, String albumName) {
@@ -653,64 +630,100 @@ void _setupProcessingListener() {
     super.dispose();
   }
 
-  Future<void> _playNextSong() async {
-    // Priority 1: If there are songs in the queue, play the next one from queue
-    if (_queue.isNotEmpty) {
-      final nextSong = _queue.removeAt(0);
-      final albumName = nextSong["albumName"] as String? ?? _currentAlbum ?? "";
-      print("⏭️ Skip Next: Playing from queue - $albumName");
-      _playSong(albumName, 0);   // Play the first item we just removed from queue
-      setState(() {}); // refresh queue UI
-      return;
-    }
+Future<void> _playNextSong() async {
+  print('🎯 _playNextSong called - Queue size: ${_queue.length} | Current Album: $_currentAlbum');
 
-    // Priority 2: No queue → normal album progression (your existing logic)
-    if (_currentAlbum == null || _currentSongIndex == -1) return;
+  // 1. Queue has songs → play next from queue
+  if (_queue.isNotEmpty) {
+    final nextSong = _queue.removeAt(0);
+    final albumName = nextSong['albumName'] as String? ?? "";
+    final directUrl = nextSong['url'] as String? ?? "";
+    final title = nextSong['title'] as String? ?? "Unknown Song";
+    final artUrl = nextSong['artUrl'] as String? ?? "";
 
-    final songs = _albums[_currentAlbum]?['songs'] as List<dynamic>? ?? [];
-    if (songs.isEmpty) return;
+    print('→ Playing from queue: $title');
 
-    int nextIndex = (_currentSongIndex + 1) % songs.length;
+    setState(() {
+      _currentSongTitle = title;
+      _currentSongArtUrl = artUrl;
+      _currentAlbum = albumName;
+    });
 
-    // Respect locking for album songs
-    final bool isNextSongFree = nextIndex == 0;
-    if (!isNextSongFree && !_hasOpenAccess) {
-      _player.pause();
-      setState(() {
-        _currentSongTitle = "Open Access required for more songs";
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Unlock Open Access to continue listening")),
-        );
-      }
-      return;
-    }
-
-    _playSong(_currentAlbum!, nextIndex);
+    await _playSong(albumName, 0, directUrl: directUrl, titleToPlay: title, artUrl: artUrl);
+    setState(() {}); // refresh queue UI
+    return;
   }
 
-  Future<void> _playPreviousSong() async {
-    if (_currentAlbum == null || _currentSongIndex == -1) return;
+  // 2. No queue → normal album navigation with free-song skipping
+  if (_currentAlbum == null || _currentSongIndex == -1) {
+    if (_selectedAlbum != null) _currentAlbum = _selectedAlbum;
+    else return;
+  }
 
-    final songs = _albums[_currentAlbum]?['songs'] as List<dynamic>? ?? [];
-    if (songs.isEmpty) return;
+  final songs = _albums[_currentAlbum]?['songs'] as List<dynamic>? ?? [];
+  if (songs.isEmpty) return;
 
-    int prevIndex = _currentSongIndex - 1;
-    if (prevIndex < 0) prevIndex = songs.length - 1;
+  int nextIndex = _currentSongIndex + 1;
+  if (nextIndex >= songs.length) {
+    nextIndex = 0; // loop back to start (or stop if you prefer)
+  }
 
-    // Check if the previous song is a free teaser (first song) or user has Open Access
-    final bool isPrevSongFree = prevIndex == 0;
+  // Find next free song (or any song if unlocked)
+  while (nextIndex != _currentSongIndex) {
+    final song = songs[nextIndex] as Map<String, dynamic>;
+    final isFree = song['isFree'] as bool? ?? false;
 
-    if (!isPrevSongFree && !_hasOpenAccess) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Unlock Open Access to play more songs")),
-      );
+    if (isFree || _hasOpenAccess) {
+      print('→ Playing next album song: ${song['Title']} (index $nextIndex)');
+      await _playSong(_currentAlbum!, nextIndex);
       return;
     }
 
-    await _playSong(_currentAlbum!, prevIndex);
+    nextIndex = (nextIndex + 1) % songs.length;
+    if (nextIndex == _currentSongIndex) break; // full loop, no free songs
   }
+
+  // If we get here, no playable songs left
+  print('→ No more free songs in album');
+  await _player.pause();
+  setState(() {
+    _currentSongTitle = "End of free songs on this album";
+  });
+}
+
+Future<void> _playPreviousSong() async {
+  print('🎯 _playPreviousSong called - Queue size: ${_queue.length}');
+
+  // For previous, we usually don't consume from queue (common UX)
+  // So we always do album previous with free-song skipping
+  if (_currentAlbum == null || _currentSongIndex == -1) {
+    if (_selectedAlbum != null) _currentAlbum = _selectedAlbum;
+    else return;
+  }
+
+  final songs = _albums[_currentAlbum]?['songs'] as List<dynamic>? ?? [];
+  if (songs.isEmpty) return;
+
+  int prevIndex = _currentSongIndex - 1;
+  if (prevIndex < 0) prevIndex = songs.length - 1;
+
+  // Find previous free song (or any if unlocked)
+  while (prevIndex != _currentSongIndex) {
+    final song = songs[prevIndex] as Map<String, dynamic>;
+    final isFree = song['isFree'] as bool? ?? false;
+
+    if (isFree || _hasOpenAccess) {
+      print('→ Playing previous album song: ${song['Title']} (index $prevIndex)');
+      await _playSong(_currentAlbum!, prevIndex);
+      return;
+    }
+
+    prevIndex = (prevIndex - 1 + songs.length) % songs.length;
+    if (prevIndex == _currentSongIndex) break;
+  }
+
+  print('→ No previous free song found');
+}
 
   void _toggleLoop() {
     setState(() {
@@ -1265,43 +1278,55 @@ void _setupProcessingListener() {
           const SizedBox(height: 30),
 
           // Song List with long-press and locking
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              itemCount: songs.length,
-              itemBuilder: (context, index) {
-                final song = songs[index] as Map<String, dynamic>;
-                final title = song['Title'] as String? ?? "Unknown Song";
-                final isFreeSong = index == 0;
-                final isLocked = !isFreeSong && !_hasOpenAccess;
+// Song List with per-song free/locked control
+// Song List with per-song free/locked control
+Expanded(
+  child: ListView.builder(
+    padding: const EdgeInsets.symmetric(horizontal: 24),
+    itemCount: songs.length,
+    itemBuilder: (context, index) {
+      final song = songs[index] as Map<String, dynamic>;
+      final title = song['Title'] as String? ?? "Unknown Track";
+      final songUrl = song['url'] as String? ?? "";
+      final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+      final isFree = song['isFree'] as bool? ?? false;   // default to locked
 
-                return ListTile(
-                  leading: ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: CachedNetworkImage(
-                      imageUrl: song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? rotatingArtUrl,
-                      width: 48,
-                      height: 48,
-                      fit: BoxFit.cover,
-                      errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
-                    ),
-                  ),
-                  title: Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 16.5,
-                      color: isLocked ? Colors.white54 : Colors.white,
-                    ),
-                  ),
-                  trailing: isLocked ? const Icon(Icons.lock, color: Colors.white54) : null,
-                  onTap: isLocked
-                      ? () => _showPaywall()
-                      : () => _playSong(albumName, index),
-                  onLongPress: () => _showSongOptions(song, albumName, index),
-                );
-              },
-            ),
+      final bool canPlay = isFree || _hasOpenAccess;
+
+      return ListTile(
+        leading: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: CachedNetworkImage(
+            imageUrl: artUrl,
+            width: 48,
+            height: 48,
+            fit: BoxFit.cover,
+            errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
           ),
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontSize: 16.5,
+            color: canPlay ? Colors.white : Colors.white54,
+            fontWeight: canPlay ? FontWeight.w500 : FontWeight.normal,
+          ),
+        ),
+        trailing: canPlay 
+            ? null 
+            : const Icon(Icons.lock, color: Colors.white54, size: 20),
+        onTap: () {
+          if (canPlay) {
+            _playSong(albumName, index);
+          } else {
+            _showPaywall();   // Show RevenueCat paywall
+          }
+        },
+        onLongPress: () => _showSongOptions(song, albumName, index),
+      );
+    },
+  ),
+),
 
           // Player Bar - Single clean row
           Container(
