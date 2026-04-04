@@ -69,8 +69,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   bool _ignoreProcessingListener = false;
   bool _ignorePendingTitle = false;
-  StreamSubscription? _processingSubscription;
-  bool _isQueueClick = false;   // ← Add this line
+  StreamSubscription? _processingSubscription;   // ← Add this line
   String _currentSongTitle = "Nothing playing";
   String? _currentSongArtUrl;
   String? _selectedAlbum;
@@ -321,21 +320,17 @@ Future<void> _playSong(String albumName, int index, {
   String? artUrl 
 }) async {
 
-  String urlToPlay = '';
-  String finalTitle = "Unknown Song";
-  String finalArtUrl = "";
+  String urlToPlay = directUrl?.trim() ?? '';
+  String finalTitle = titleToPlay ?? "Unknown Song";
+  String finalArtUrl = artUrl ?? "";
 
-  // === HANDLE QUEUE CLICK (directUrl) OR NORMAL ALBUM PLAYBACK ===
-  if (directUrl != null && directUrl.isNotEmpty) {
-    // Direct URL from queue - most reliable path
-    urlToPlay = directUrl;
-    finalTitle = titleToPlay ?? _currentSongTitle ?? "Unknown Song";
-    finalArtUrl = artUrl ?? _currentSongArtUrl ?? "";
-  } else {
-    // Normal album song playback
+  // Normal album playback path
+  if (urlToPlay.isEmpty) {
     final songList = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
-    if (index < 0 || index >= songList.length) return;
-
+    if (index < 0 || index >= songList.length) {
+      print("❌ Invalid song index for album $albumName");
+      return;
+    }
     final song = songList[index] as Map<String, dynamic>;
     urlToPlay = (song['url'] as String?)?.trim() ?? '';
     finalTitle = (song['Title'] as String?) ?? "Unknown Song";
@@ -344,14 +339,17 @@ Future<void> _playSong(String albumName, int index, {
 
   if (urlToPlay.isEmpty || !urlToPlay.startsWith('http')) {
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Invalid audio URL")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Invalid audio URL"))
+      );
     }
     return;
   }
 
-  // Throttling
-  if (_lastPlayCall != null && DateTime.now().difference(_lastPlayCall!) < const Duration(milliseconds: 350)) {
-    print("⏳ Skip throttled - too soon");
+  // Throttling to prevent rapid clicks
+  if (_lastPlayCall != null && 
+      DateTime.now().difference(_lastPlayCall!) < const Duration(milliseconds: 350)) {
+    print("⏳ Play call throttled");
     return;
   }
   _lastPlayCall = DateTime.now();
@@ -364,12 +362,14 @@ Future<void> _playSong(String albumName, int index, {
   _processingSubscription?.cancel();
 
   try {
-    // === FORCE TITLE IMMEDIATELY ===
+    // Force UI update immediately
     setState(() {
       _currentSongTitle = finalTitle;
       _currentSongArtUrl = finalArtUrl;
       _lastForcedTitle = finalTitle;
       _pendingSongTitle = null;
+      _currentAlbum = albumName;
+      _currentSongIndex = index;
       _hasPlaybackError = false;
     });
 
@@ -377,31 +377,27 @@ Future<void> _playSong(String albumName, int index, {
 
     await _player.stop();
     await _player.seek(Duration.zero);
-    print('✅ Player stopped and reset | PlayID: $thisPlayId');
 
-    await Future.delayed(const Duration(milliseconds: 900));
+    await Future.delayed(const Duration(milliseconds: 800));
 
     final source = HlsAudioSource(
       Uri.parse(urlToPlay),
       headers: {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36',
         'Accept': 'application/vnd.apple.mpegurl, */*',
-        'Accept-Encoding': 'identity',
       },
     );
 
     await _player.setAudioSource(source);
     print('✅ HlsAudioSource set successfully | PlayID: $thisPlayId');
 
-    await Future.delayed(const Duration(milliseconds: 400));
+    await Future.delayed(const Duration(milliseconds: 300));
     await _player.play();
     print('▶️ Play command sent | PlayID: $thisPlayId');
 
-    // Extra safety force after play starts
-    Future.delayed(const Duration(milliseconds: 800), () {
-      if (mounted && _lastForcedTitle.isNotEmpty) {
-        setState(() => _currentSongTitle = _lastForcedTitle);
-      }
+    // Safety force after playback begins
+    Future.delayed(const Duration(milliseconds: 700), () {
+      if (mounted) setState(() => _currentSongTitle = _lastForcedTitle);
     });
 
     _setupProcessingListener();
@@ -418,13 +414,14 @@ Future<void> _playSong(String albumName, int index, {
         retryCount: retryCount + 1, 
         directUrl: directUrl, 
         titleToPlay: titleToPlay, 
-        artUrl: artUrl
-      );
+        artUrl: artUrl);
     }
-    setState(() {
-      _currentSongTitle = "Playback failed";
-      _hasPlaybackError = true;
-    });
+    if (mounted) {
+      setState(() {
+        _currentSongTitle = "Playback failed";
+        _hasPlaybackError = true;
+      });
+    }
   }
 }
     // NEW: Queue song to play immediately after current one
@@ -560,33 +557,23 @@ Future<void> _playSong(String albumName, int index, {
       ),
     );
   }
-  void _setupProcessingListener() {
-    _processingSubscription?.cancel();
-    _processingSubscription = _player.processingStateStream.listen((state) {
-      if (_ignoreProcessingListener) {
-        print('🔇 Listener IGNORED (queue click protection active)');
-        return;
-      }
+void _setupProcessingListener() {
+  _processingSubscription?.cancel();
+  _processingSubscription = _player.processingStateStream.listen((state) {
+    print('>>> ProcessingState listener firing: $state | pending: $_pendingSongTitle | PlayID: $_currentPlayId');
 
-      print('>>> ProcessingState listener firing: $state | pending: $_pendingSongTitle | PlayID: $_currentPlayId');
+    if (_pendingSongTitle != null && (state == ProcessingState.ready || state == ProcessingState.buffering)) {
+      setState(() {
+        _currentSongTitle = _pendingSongTitle!;
+        _pendingSongTitle = null;
+      });
+    }
 
-      if (_pendingSongTitle != null && (state == ProcessingState.ready || state == ProcessingState.buffering)) {
-        print('>>> Listener UPDATING TITLE TO: $_pendingSongTitle');
-        setState(() {
-          _currentSongTitle = _pendingSongTitle!;
-          _currentAlbum = _pendingAlbum;
-          _currentSongIndex = _pendingSongIndex ?? -1;
-          _pendingSongTitle = null;
-          _pendingAlbum = null;
-          _pendingSongIndex = null;
-        });
-      }
-
-      if (state == ProcessingState.completed) {
-        _handleSongCompletion();
-      }
-    });
-  }
+    if (state == ProcessingState.completed) {
+      _handleSongCompletion();
+    }
+  });
+}
   @override
   void dispose() {
     _processingSubscription?.cancel();
