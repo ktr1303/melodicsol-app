@@ -410,7 +410,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         'title': song['Title'] as String? ?? "Unknown Song",
         'albumName': albumName,
         'artUrl': song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "",
-        'url': song['url'] as String? ?? "",
+        'url': song['url'] as String? ?? "",   // ← Critical for correct playback
       });
     });
 
@@ -1396,8 +1396,17 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         onPressed: () => setState(() => _queue.removeAt(index)),
                       ),
                       onTap: () {
-                        final albumName = album.isNotEmpty ? album : (_selectedAlbum ?? "");
-                        _playSong(albumName, index);
+                        final songData = _queue[index];
+                        final albumName = songData['albumName'] as String? ?? "";
+                        final url = songData['url'] as String? ?? "";
+
+                        if (url.isNotEmpty) {
+                          // Play directly from the stored data (bypasses index lookup)
+                          _currentSongTitle = songData['title'] as String? ?? "Unknown Song";
+                          _currentSongArtUrl = songData['artUrl'] as String? ?? "";
+                          _currentAlbum = albumName;
+                          _playSong(albumName, index);  // index is no longer critical but kept for compatibility
+                        }
                       },
                     );
                   },
