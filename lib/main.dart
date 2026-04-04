@@ -509,6 +509,69 @@ Future<void> _playSong(String albumName, int index, {
     );
   }
 
+  void _showQueueSongOptions(Map<String, dynamic> queueItem, int queueIndex) {
+    // Normalize queue song data to match what SongStoryPage expects
+    final normalizedSong = {
+      'Title': queueItem['title'] ?? queueItem['Title'] ?? "Unknown Track",
+      'url': queueItem['url'] ?? "",
+      'artUrl': queueItem['artUrl'] ?? queueItem['songArtUrl'] ?? "",
+      'songArtUrl': queueItem['artUrl'] ?? queueItem['songArtUrl'] ?? "",
+    };
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.auto_stories, color: Colors.amberAccent),
+            title: const Text("View Song Story"),
+            onTap: () {
+              Navigator.pop(context);
+              _navigateToSongStory(normalizedSong, queueItem['albumName'] as String? ?? "");
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete, color: Colors.redAccent),
+            title: const Text("Remove from Queue"),
+            onTap: () {
+              Navigator.pop(context);
+              setState(() => _queue.removeAt(queueIndex));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Song removed from queue")),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.album, color: Colors.greenAccent),
+            title: const Text("Go to Album"),
+            onTap: () {
+              Navigator.pop(context);
+              final albumName = queueItem['albumName'] as String? ?? "";
+              if (albumName.isNotEmpty) {
+                setState(() => _selectedAlbum = albumName);
+                _pageController.animateToPage(
+                  0,                    // Confirmed working from your test
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOut,
+                );
+              }
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.close),
+            title: const Text("Cancel"),
+            onTap: () => Navigator.pop(context),
+          ),
+        ],
+      ),
+    );
+  }
+
   // NEW: Updated long-press menu with Song Story + Play Next
   void _showSongOptions(Map<String, dynamic> song, String albumName, int songIndex) {
     showModalBottomSheet(
@@ -1337,202 +1400,183 @@ void _setupProcessingListener() {
     );
   }
 
-  Widget _buildPlaylistsPage() {
-    return Column(
-      children: [
-        // Now Playing Header
-        // Now Playing Header - moved down a bit
-        if (_currentSongTitle.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 40),   // ← This moves it down
-            child: ListTile(
-              leading: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: CachedNetworkImage(
-                  imageUrl: _currentSongArtUrl ?? "",
-                  width: 52,
-                  height: 52,
-                  fit: BoxFit.cover,
-                  errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 52, color: Colors.white38),
-                ),
+Widget _buildPlaylistsPage() {
+  return Column(
+    children: [
+      // Now Playing Header - moved down a bit
+      if (_currentSongTitle.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 40),
+          child: ListTile(
+            leading: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: CachedNetworkImage(
+                imageUrl: _currentSongArtUrl ?? "",
+                width: 52,
+                height: 52,
+                fit: BoxFit.cover,
+                errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 52, color: Colors.white38),
               ),
-              title: const Text("Now Playing", style: TextStyle(fontSize: 14, color: Colors.greenAccent)),
-              subtitle: Text(_currentSongTitle, style: const TextStyle(fontSize: 16)),
-                      onTap: () {
-                        if (_currentAlbum != null) {
-                          setState(() {
-                            _selectedAlbum = _currentAlbum;   // Open the correct album
-                          });
-                          // Switch to the Main Album page (index 1)
-                          _pageController.animateToPage(
-                            1,
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeOut,
-                          );
-                        }
-                      },
             ),
+            title: const Text("Now Playing", style: TextStyle(fontSize: 14, color: Colors.greenAccent)),
+            subtitle: Text(_currentSongTitle, style: const TextStyle(fontSize: 16)),
+            onTap: () {
+              if (_currentAlbum != null) {
+                setState(() => _selectedAlbum = _currentAlbum);
+                _pageController.animateToPage(
+                  1,  // Switch to Main Album page
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOut,
+                );
+              }
+            },
           ),
-        // Scrollable Queue List (this is the main fix)
-        Expanded(
-          child: _queue.isEmpty
-              ? const Center(
-                  child: Text(
-                    "Queue is empty\nLong-press a song → 'Play Next'",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white54),
-                  ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: _queue.length,
-                  itemBuilder: (context, index) {
-                    final song = _queue[index];
-                    final title = song['title'] as String? ?? "Unknown Song";
-                    final album = song['albumName'] as String? ?? "";
-                    final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+        ),
 
-                    return ListTile(
-                      leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: CachedNetworkImage(
-                          imageUrl: artUrl,
-                          width: 52,
-                          height: 52,
-                          fit: BoxFit.cover,
-                          errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 52, color: Colors.white38),
+      // Scrollable Queue List
+      Expanded(
+        child: _queue.isEmpty
+            ? const Center(
+                child: Text(
+                  "Queue is empty\nLong-press a song from an album → 'Play song next'",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white54),
+                ),
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: _queue.length,
+                itemBuilder: (context, index) {
+                  final song = _queue[index];
+                  final title = song['title'] as String? ?? "Unknown Song";
+                  final album = song['albumName'] as String? ?? "";
+                  final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+
+                  return ListTile(
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: CachedNetworkImage(
+                        imageUrl: artUrl,
+                        width: 52,
+                        height: 52,
+                        fit: BoxFit.cover,
+                        errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 52, color: Colors.white38),
+                      ),
+                    ),
+                    title: Text(title),
+                    subtitle: Text(album.isNotEmpty ? album : "Unknown Album", 
+                        style: const TextStyle(color: Colors.white54)),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => setState(() => _queue.removeAt(index)),
+                    ),
+                    onTap: () async {   // ← Existing queue click logic (kept as-is)
+                      final songData = _queue[index];
+                      final albumName = songData['albumName'] as String? ?? "";
+                      final directUrl = songData['url'] as String? ?? "";
+                      final titleVal = songData['title'] as String? ?? "Unknown Song";
+                      final artUrlVal = songData['artUrl'] as String? ?? "";
+
+                      setState(() => _queue.removeAt(index));
+
+                      setState(() {
+                        _ignoreProcessingListener = true;
+                        _pendingSongTitle = null;
+                        _currentSongTitle = titleVal;
+                        _currentSongArtUrl = artUrlVal;
+                        _currentAlbum = albumName;
+                      });
+
+                      if (directUrl.isNotEmpty && directUrl.startsWith('http')) {
+                        await _playSong(albumName, 0, directUrl: directUrl, titleToPlay: titleVal, artUrl: artUrlVal);
+                      } else {
+                        await _playSong(albumName, 0, directUrl: directUrl, titleToPlay: titleVal, artUrl: artUrlVal);
+                      }
+
+                      Future.delayed(const Duration(milliseconds: 3500), () {
+                        if (mounted) {
+                          setState(() => _ignoreProcessingListener = false);
+                        }
+                      });
+                    },
+                    // ← NEW: Long-press opens options menu for queue songs
+                    onLongPress: () => _showQueueSongOptions(song, index),
+                  );
+                },
+              ),
+      ),
+
+      // Saved Playlists Section at the bottom
+      Container(
+        padding: const EdgeInsets.all(16),
+        decoration: const BoxDecoration(
+          color: Colors.black87,
+          border: Border(top: BorderSide(color: Colors.white24)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Saved Playlists", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.add),
+              label: const Text("New Playlist"),
+              onPressed: _showCreatePlaylistDialog,
+            ),
+            const SizedBox(height: 12),
+            if (_playlists.isNotEmpty)
+              SizedBox(
+                height: 140,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _playlists.length,
+                  itemBuilder: (context, i) {
+                    final pl = _playlists[i];
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: GestureDetector(
+                        onTap: () {
+                          final playlistSongs = pl["songs"] as List<dynamic>? ?? [];
+                          if (playlistSongs.isNotEmpty) {
+                            setState(() {
+                              _queue.addAll(playlistSongs.map((s) => {
+                                'title': s['Title'] ?? 'Unknown Song',
+                                'albumName': pl["name"] ?? "",
+                                'artUrl': s['artUrl'] ?? s['songArtUrl'] ?? "",
+                                'url': s['url'] ?? "",
+                              }).toList());
+                            });
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text("Added ${playlistSongs.length} songs to queue")),
+                            );
+                          }
+                        },
+                        child: Container(
+                          width: 140,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white10,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(pl["name"], style: const TextStyle(fontWeight: FontWeight.bold)),
+                              Text("${pl["songs"].length} songs", style: const TextStyle(fontSize: 13, color: Colors.white54)),
+                            ],
+                          ),
                         ),
                       ),
-                      title: Text(title),
-                      subtitle: Text(album.isNotEmpty ? album : "Unknown Album", style: const TextStyle(color: Colors.white54)),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => setState(() => _queue.removeAt(index)),
-                      ),
-                      onTap: () async {
-                        final songData = _queue[index];
-                        final albumName = songData['albumName'] as String? ?? "";
-                        final directUrl = songData['url'] as String? ?? "";
-                        final title = songData['title'] as String? ?? "Unknown Song";
-                        final artUrl = songData['artUrl'] as String? ?? "";
-
-                        // Remove from queue
-                        setState(() => _queue.removeAt(index));
-
-                        // Strong protection
-                        setState(() {
-                          _ignoreProcessingListener = true;
-                          _pendingSongTitle = null;           // ← Clear any pending
-                          _currentSongTitle = title;
-                          _currentSongArtUrl = artUrl;
-                          _currentAlbum = albumName;
-                        });
-
-                        print('🎯 Queue click - FORCING title: $title (listener blocked)');
-
-                        // Play using direct URL when possible
-                        if (directUrl.isNotEmpty && directUrl.startsWith('http')) {
-                          await _playSong(albumName, 0, directUrl: directUrl, titleToPlay: title, artUrl: artUrl);
-                        } else {
-                          await _playSong(albumName, 0, directUrl: directUrl, titleToPlay: title, artUrl: artUrl);
-                        }
-
-                        // Re-enable listener after song has fully settled
-                        Future.delayed(const Duration(milliseconds: 3500), () {
-                          if (mounted) {
-                            setState(() => _ignoreProcessingListener = false);
-                            print('✅ Listener re-enabled after queue click');
-                          }
-                        });
-                      },
                     );
                   },
                 ),
-        ),
-
-        // Saved Playlists Section at the bottom
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: const BoxDecoration(
-            color: Colors.black87,
-            border: Border(top: BorderSide(color: Colors.white24)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text("Saved Playlists", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.add),
-                label: const Text("New Playlist"),
-                onPressed: _showCreatePlaylistDialog,
               ),
-              const SizedBox(height: 12),
-              if (_playlists.isNotEmpty)
-                SizedBox(
-                  height: 140,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _playlists.length,
-                    itemBuilder: (context, i) {
-                      final pl = _playlists[i];
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 12),
-                        child: GestureDetector(
-                            onTap: () {
-                              final playlistSongs = pl["songs"] as List<dynamic>? ?? [];
-                              if (playlistSongs.isNotEmpty) {
-                                setState(() {
-                                  _queue.addAll(playlistSongs.map((s) => {
-                                    'title': s['Title'] ?? 'Unknown Song',
-                                    'albumName': pl["name"] ?? "",
-                                    'artUrl': s['artUrl'] ?? s['songArtUrl'] ?? "",
-                                    'url': s['url'] ?? "",
-                                  }).toList());
-                                });
-
-                                // Optional: Show a quick confirmation
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text("Added ${playlistSongs.length} songs to queue"),
-                                    duration: const Duration(seconds: 1),
-                                  ),
-                                );
-
-                                // Auto-play the first song of the playlist if nothing is currently playing
-                                if (!_player.playing && _queue.isNotEmpty) {
-                                  final firstAddedIndex = _queue.length - playlistSongs.length;
-                                  final albumName = pl["name"] ?? "";
-                                  _playSong(albumName, firstAddedIndex);
-                                }
-                              }
-                            },
-                          child: Container(
-                            width: 140,
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.white10,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(pl["name"], style: const TextStyle(fontWeight: FontWeight.bold)),
-                                Text("${pl["songs"].length} songs", style: const TextStyle(fontSize: 13, color: Colors.white54)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-            ],
-          ),
+          ],
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
+}
 
   void _showCreatePlaylistDialog() {
     final controller = TextEditingController();
