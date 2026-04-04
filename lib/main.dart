@@ -67,7 +67,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late PageController _pageController;
   late AnimationController _boneStaggerController;
 
+  bool _ignoreProcessingListener = false;
   bool _ignorePendingTitle = false;
+  StreamSubscription? _processingSubscription;
   bool _isQueueClick = false;   // ← Add this line
   String _currentSongTitle = "Nothing playing";
   String? _currentSongArtUrl;
@@ -87,11 +89,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _videoInitialized = false;
   String? _videoError;
   bool _hasPlaybackError = false;
-
   int _currentPlayId = 0;
-  StreamSubscription<ProcessingState>? _processingSubscription;
   DateTime? _lastPlayCall;
-  // NEW: Support for "Play song next" 
+  String _lastForcedTitle = '';
   // NEW: Support for "Play song next" + Full Queue
   String? _nextUpAlbum;
   int? _nextUpIndex;
@@ -314,103 +314,119 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _playSong(firstSong["albumName"] as String, 0);
   }
 
-  Future<void> _playSong(String albumName, int index, {int retryCount = 0, String? directUrl}) async {
-    _isQueueClick = true;
-    String urlToPlay = '';
-    String titleToPlay = "Unknown Song";
-    String artUrlToPlay = "";
+Future<void> _playSong(String albumName, int index, { 
+  int retryCount = 0, 
+  String? directUrl, 
+  String? titleToPlay, 
+  String? artUrl 
+}) async {
 
-    if (directUrl != null && directUrl.isNotEmpty) {
-      // Direct URL from queue - use it directly (most reliable for queue clicks)
-      urlToPlay = directUrl;
-      titleToPlay = _currentSongTitle;
-      artUrlToPlay = _currentSongArtUrl ?? ""; 
-    } else {
-      // Normal album lookup (used for album song list and normal playback)
-      final songList = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
-      if (index < 0 || index >= songList.length) return;
+  String urlToPlay = '';
+  String finalTitle = "Unknown Song";
+  String finalArtUrl = "";
 
-      final song = songList[index] as Map<String, dynamic>;
-      urlToPlay = (song['url'] as String?)?.trim() ?? '';
-      titleToPlay = song['Title'] as String? ?? "Unknown Song";
-      artUrlToPlay = song['arturl'] as String? ?? song['songArtUrl'] as String? ?? "";
+  // === HANDLE QUEUE CLICK (directUrl) OR NORMAL ALBUM PLAYBACK ===
+  if (directUrl != null && directUrl.isNotEmpty) {
+    // Direct URL from queue - most reliable path
+    urlToPlay = directUrl;
+    finalTitle = titleToPlay ?? _currentSongTitle ?? "Unknown Song";
+    finalArtUrl = artUrl ?? _currentSongArtUrl ?? "";
+  } else {
+    // Normal album song playback
+    final songList = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
+    if (index < 0 || index >= songList.length) return;
 
-      _currentSongTitle = titleToPlay; 
-      _currentSongArtUrl = artUrlToPlay;
-      _currentAlbum = albumName;
-      _currentSongIndex = index;
-    }
-
-    if (urlToPlay.isEmpty || !urlToPlay.startsWith('http')) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Invalid audio URL")));
-      return;
-    }
-
-    _lastPlayCall = DateTime.now();
-    _currentPlayId++;
-    final thisPlayId = _currentPlayId;
-
-    print('🎵 HLS START: "$titleToPlay" | URL: $urlToPlay | Attempt: ${retryCount + 1} | PlayID: $thisPlayId');
-
-    _processingSubscription?.cancel();
-
-    try {
-      print('>>> TITLE FORCED TO: $titleToPlay | PlayID: $thisPlayId');
-      setState(() {
-        _currentSongTitle = titleToPlay;
-        _pendingSongTitle = null;
-        _hasPlaybackError = false;
-      });
-
-      await _player.stop();
-      await _player.seek(Duration.zero);
-      print('✅ Player stopped and reset | PlayID: $thisPlayId');
-
-      await Future.delayed(const Duration(milliseconds: 900));
-
-      final source = HlsAudioSource(
-        Uri.parse(urlToPlay),
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36',
-          'Accept': 'application/vnd.apple.mpegurl, */*',
-          'Accept-Encoding': 'identity',
-        },
-      );
-
-      await _player.setAudioSource(source);
-      print('✅ HlsAudioSource set successfully | PlayID: $thisPlayId');
-
-      await _player.play();
-      print('▶️ Play command sent | PlayID: $thisPlayId');
-
-      // FORCE Now Playing UI update (this is the key fix)
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (mounted) {
-          setState(() {
-            _currentSongTitle = titleToPlay;
-            _currentSongArtUrl = artUrlToPlay ?? _currentSongArtUrl;
-          });
-        }
-      });
-
-      _setupProcessingListener();
-
-      if (!_vinylController.isAnimating) {
-        _vinylController.repeat();
-      }
-
-    } catch (e) {
-      print("❌ HLS ERROR (attempt ${retryCount + 1}): $e");
-      if (retryCount < 2) {
-        await Future.delayed(const Duration(seconds: 2));
-        return _playSong(albumName, index, retryCount: retryCount + 1, directUrl: directUrl);
-      }
-      setState(() {
-        _currentSongTitle = "Playback failed";
-        _hasPlaybackError = true;
-      });
-    }
+    final song = songList[index] as Map<String, dynamic>;
+    urlToPlay = (song['url'] as String?)?.trim() ?? '';
+    finalTitle = (song['Title'] as String?) ?? "Unknown Song";
+    finalArtUrl = (song['artUrl'] as String?) ?? (song['songArtUrl'] as String?) ?? "";
   }
+
+  if (urlToPlay.isEmpty || !urlToPlay.startsWith('http')) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Invalid audio URL")));
+    }
+    return;
+  }
+
+  // Throttling
+  if (_lastPlayCall != null && DateTime.now().difference(_lastPlayCall!) < const Duration(milliseconds: 350)) {
+    print("⏳ Skip throttled - too soon");
+    return;
+  }
+  _lastPlayCall = DateTime.now();
+
+  _currentPlayId++;
+  final thisPlayId = _currentPlayId;
+
+  print('🎵 HLS START: "$finalTitle" | URL: $urlToPlay | Attempt: ${retryCount + 1} | PlayID: $thisPlayId');
+
+  _processingSubscription?.cancel();
+
+  try {
+    // === FORCE TITLE IMMEDIATELY ===
+    setState(() {
+      _currentSongTitle = finalTitle;
+      _currentSongArtUrl = finalArtUrl;
+      _lastForcedTitle = finalTitle;
+      _pendingSongTitle = null;
+      _hasPlaybackError = false;
+    });
+
+    print('>>> TITLE FORCED TO: $finalTitle | PlayID: $thisPlayId');
+
+    await _player.stop();
+    await _player.seek(Duration.zero);
+    print('✅ Player stopped and reset | PlayID: $thisPlayId');
+
+    await Future.delayed(const Duration(milliseconds: 900));
+
+    final source = HlsAudioSource(
+      Uri.parse(urlToPlay),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36',
+        'Accept': 'application/vnd.apple.mpegurl, */*',
+        'Accept-Encoding': 'identity',
+      },
+    );
+
+    await _player.setAudioSource(source);
+    print('✅ HlsAudioSource set successfully | PlayID: $thisPlayId');
+
+    await Future.delayed(const Duration(milliseconds: 400));
+    await _player.play();
+    print('▶️ Play command sent | PlayID: $thisPlayId');
+
+    // Extra safety force after play starts
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (mounted && _lastForcedTitle.isNotEmpty) {
+        setState(() => _currentSongTitle = _lastForcedTitle);
+      }
+    });
+
+    _setupProcessingListener();
+
+    if (!_vinylController.isAnimating) {
+      _vinylController.repeat();
+    }
+
+  } catch (e) {
+    print("❌ HLS ERROR (attempt ${retryCount + 1}): $e");
+    if (retryCount < 2) {
+      await Future.delayed(const Duration(seconds: 2));
+      return _playSong(albumName, index, 
+        retryCount: retryCount + 1, 
+        directUrl: directUrl, 
+        titleToPlay: titleToPlay, 
+        artUrl: artUrl
+      );
+    }
+    setState(() {
+      _currentSongTitle = "Playback failed";
+      _hasPlaybackError = true;
+    });
+  }
+}
     // NEW: Queue song to play immediately after current one
   // Improved Queue Song Next
   void _queueSongNext(Map<String, dynamic> song, String albumName, int songIndex) {
@@ -547,28 +563,30 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   void _setupProcessingListener() {
     _processingSubscription?.cancel();
     _processingSubscription = _player.processingStateStream.listen((state) {
-      final currentPending = _pendingSongTitle;
-      print('>>> ProcessingState listener firing: $state | pending: $currentPending | PlayID: $_currentPlayId');
+      if (_ignoreProcessingListener) {
+        print('🔇 Listener IGNORED (queue click protection active)');
+        return;
+      }
 
-      if (currentPending != null && !_ignorePendingTitle && (state == ProcessingState.ready || state == ProcessingState.buffering)) {
-        print('>>> ProcessingState listener UPDATING TITLE TO: $currentPending');
+      print('>>> ProcessingState listener firing: $state | pending: $_pendingSongTitle | PlayID: $_currentPlayId');
+
+      if (_pendingSongTitle != null && (state == ProcessingState.ready || state == ProcessingState.buffering)) {
+        print('>>> Listener UPDATING TITLE TO: $_pendingSongTitle');
         setState(() {
-          _currentSongTitle = currentPending;
+          _currentSongTitle = _pendingSongTitle!;
           _currentAlbum = _pendingAlbum;
           _currentSongIndex = _pendingSongIndex ?? -1;
           _pendingSongTitle = null;
           _pendingAlbum = null;
           _pendingSongIndex = null;
-          _hasPlaybackError = false;
         });
       }
-      // Reset queue click lock when a new song is ready
-      if (state == ProcessingState.ready) {
-        setState(() => _isQueueClick = false);
+
+      if (state == ProcessingState.completed) {
+        _handleSongCompletion();
       }
     });
   }
-
   @override
   void dispose() {
     _processingSubscription?.cancel();
@@ -1404,36 +1422,40 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         icon: const Icon(Icons.close),
                         onPressed: () => setState(() => _queue.removeAt(index)),
                       ),
-                      onTap: () {
+                      onTap: () async {
                         final songData = _queue[index];
                         final albumName = songData['albumName'] as String? ?? "";
                         final directUrl = songData['url'] as String? ?? "";
                         final title = songData['title'] as String? ?? "Unknown Song";
                         final artUrl = songData['artUrl'] as String? ?? "";
 
-                        // Remove from queue immediately
-                        setState(() {
-                          _queue.removeAt(index);
-                        });
+                        // Remove from queue
+                        setState(() => _queue.removeAt(index));
 
-                        // Force update and ignore pending logic
+                        // Strong protection
                         setState(() {
-                          _ignorePendingTitle = true;
+                          _ignoreProcessingListener = true;
+                          _pendingSongTitle = null;           // ← Clear any pending
                           _currentSongTitle = title;
                           _currentSongArtUrl = artUrl;
                           _currentAlbum = albumName;
-                          _pendingSongTitle = null;
                         });
 
-                        if (directUrl.isNotEmpty) {
-                          _playSong(albumName, index, directUrl: directUrl);
+                        print('🎯 Queue click - FORCING title: $title (listener blocked)');
+
+                        // Play using direct URL when possible
+                        if (directUrl.isNotEmpty && directUrl.startsWith('http')) {
+                          await _playSong(albumName, 0, directUrl: directUrl, titleToPlay: title, artUrl: artUrl);
                         } else {
-                          _playSong(albumName, index);
+                          await _playSong(albumName, 0, directUrl: directUrl, titleToPlay: title, artUrl: artUrl);
                         }
 
-                        // Reset ignore flag after the new song is stable
-                        Future.delayed(const Duration(seconds: 2), () {
-                          if (mounted) setState(() => _ignorePendingTitle = false);
+                        // Re-enable listener after song has fully settled
+                        Future.delayed(const Duration(milliseconds: 3500), () {
+                          if (mounted) {
+                            setState(() => _ignoreProcessingListener = false);
+                            print('✅ Listener re-enabled after queue click');
+                          }
                         });
                       },
                     );
