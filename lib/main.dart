@@ -20,12 +20,11 @@ final AudioPlayer _globalPlayer = AudioPlayer();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize RevenueCat - REPLACE WITH YOUR ACTUAL PUBLIC KEY
+  // === TEMPORARY FOR PHONE TESTING (removes "Wrong API Key" popup) ===
   await Purchases.setLogLevel(LogLevel.debug);
-  await Purchases.configure(
-    PurchasesConfiguration("test_ZBLCyGBvSMTFCEvmTmrzCwZVBPR"),   // ← Put your RevenueCat public key here
-  );
-
+  // Comment out the line below while testing on your phone
+  // await Purchases.configure(PurchasesConfiguration("test_ZBLCyGBvSMTFCEvmTmrzCwZVBPR"));
+  print("✅ RevenueCat test key disabled for clean phone testing");
   final session = await AudioSession.instance;
   await session.configure(const AudioSessionConfiguration.music());
 
@@ -2241,6 +2240,39 @@ Widget _buildSocialPage() {
         ),
       ),
     );
+  }
+
+    // ====================== PROMO CODE + RESET (Test Mode) ======================
+  Future<void> _redeemPromoCode(String code) async {
+    final trimmed = code.trim().toUpperCase();
+
+    if (trimmed == "SOLFULL" || trimmed == "SOLFULL2026") {
+      setState(() => _hasOpenAccess = true);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("✅ All songs unlocked! (Test promo code)"),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else if (trimmed == "RESETACCESS" || trimmed == "LOCKALL") {
+      setState(() => _hasOpenAccess = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("🔒 All songs locked again (Test reset)"),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("❌ Invalid promo code")),
+        );
+      }
+    }
   }
 
   Future<void> _launchUrl(String url) async {
