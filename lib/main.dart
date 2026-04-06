@@ -1234,7 +1234,7 @@ Future<void> _playPreviousSong() async {
 
           // Rotating Album Art
           Padding(
-            padding: const EdgeInsets.only(top: 40, bottom: 20),
+            padding: const EdgeInsets.only(top: 12, bottom: 15),
             child: Center(
               child: GestureDetector(
                 onTap: () => _showAlbumStory(albumName),
@@ -1274,7 +1274,7 @@ Future<void> _playPreviousSong() async {
             textAlign: TextAlign.center,
           ),
 
-          const SizedBox(height: 30),
+          const SizedBox(height: 12),
 
           // Song List with long-press and locking
 // Song List with per-song free/locked control
@@ -1333,7 +1333,7 @@ Expanded(
               color: themeColor.withOpacity(0.15),
               borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
             ),
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
             child: SafeArea(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1804,39 +1804,18 @@ Widget _buildSocialPage() {
                 ),
                 const SizedBox(width: 12),
                 ElevatedButton(
-                  onPressed: () async {
-                    final code = _promoCodeController.text.trim().toUpperCase();
-                    if (code.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Please enter a code")),
-                      );
-                      return;
-                    }
+onPressed: () async {
+  final code = _promoCodeController.text.trim();
+  if (code.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Please enter a code")),
+    );
+    return;
+  }
 
-                    try {
-                      // Correct method for version 9.x - opens native redemption sheet
-                      await Purchases.presentCodeRedemptionSheet();
-
-                      // After the sheet closes, check if access was granted
-                      final customerInfo = await Purchases.getCustomerInfo();
-                      final hasAccess = customerInfo.entitlements.active.containsKey("premium_access");
-
-                      if (hasAccess && mounted) {
-                        setState(() => _hasOpenAccess = true);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("✅ Promo code redeemed! Open Access granted.")),
-                        );
-                        _promoCodeController.clear();
-                      }
-                    } catch (e) {
-                      print("Promo code sheet error: $e");
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Code redemption failed or cancelled.")),
-                        );
-                      }
-                    }
-                  },
+  await _redeemPromoCode(code);        // ← Calls your local test method
+  _promoCodeController.clear();        // Clear the field after use
+},
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.greenAccent,
                     foregroundColor: Colors.black,
