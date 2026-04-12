@@ -46,6 +46,7 @@ dependencies:
   audio_session: ^0.1.18
   url_launcher: ^6.3.0
   google_fonts: ^8.0.2
+  app_links: ^6.2.2   # Modern and reliable package for deep links 
 
 dev_dependencies:
   flutter_test:

@@ -13,23 +13,44 @@ import 'dart:math';
 import 'dart:async';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'dart:io';           // For Platform.isAndroid / Platform.isIOS
+import 'package:app_links/app_links.dart';   // For deep links
+
+
 
 final AudioPlayer _globalPlayer = AudioPlayer();
+
 
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // === TEMPORARY FOR PHONE TESTING (removes "Wrong API Key" popup) ===
+  // Initialize RevenueCat
   await Purchases.setLogLevel(LogLevel.debug);
-  // Comment out the line below while testing on your phone
-  // await Purchases.configure(PurchasesConfiguration("test_ZBLCyGBvSMTFCEvmTmrzCwZVBPR"));
-  print("✅ RevenueCat test key disabled for clean phone testing");
+
+  PurchasesConfiguration configuration;
+  if (Platform.isAndroid) {
+    configuration = PurchasesConfiguration("YOUR_GOOGLE_PLAY_PUBLIC_KEY_HERE");
+  } else if (Platform.isIOS) {
+    configuration = PurchasesConfiguration("YOUR_APPLE_APP_STORE_PUBLIC_KEY_HERE");
+  } else {
+    configuration = PurchasesConfiguration("test_ZBLCyGBvSMTFCEvmTmrzCwZVBPR");
+  }
+  await Purchases.configure(configuration);
+
   final session = await AudioSession.instance;
   await session.configure(const AudioSessionConfiguration.music());
 
   runApp(const MelodicSolApp());
+  
 }
+// In main.dart, after runApp
+
+
+
 
 class MelodicSolApp extends StatelessWidget {
   const MelodicSolApp({super.key});
@@ -42,7 +63,7 @@ class MelodicSolApp extends StatelessWidget {
         primaryColor: Colors.greenAccent,
         scaffoldBackgroundColor: Colors.black,
       ),
-      home: const HomePage(),
+      home: const WelcomeScreen(),
     );
   }
 }
@@ -65,6 +86,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late AnimationController _visualizerController;
   late PageController _pageController;
   late AnimationController _boneStaggerController;
+  late AppLinks _appLinks;
+StreamSubscription<Uri?>? _deepLinkSubscription;
 
   bool _ignoreProcessingListener = false;
   bool _ignorePendingTitle = false;
@@ -76,6 +99,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   Duration _duration = Duration.zero;
   Map<String, Map<String, dynamic>> _albums = {};
   bool _isLoading = true;
+  bool _isLivestreamActive = false;
+  String _livestreamUrl = "https://www.youtube.com/@melodicsol/live";
   String? _errorMessage;
   String? _currentAlbum;
   int _currentSongIndex = -1;
@@ -94,18 +119,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   String? _nextUpAlbum;
   int? _nextUpIndex;
   List<Map<String, dynamic>> _queue = [];        // ← Add this line
-
-    bool _isLivestreamActive = true;           // Toggle this to true when you go live
-  final String _youtubeLivestreamUrl = "https://www.youtube.com/live/your-livestream-id";  // ← Change to your actual YouTube live URL
-  final String _livestreamPin = "1234"; // Change this to your desired pin for live switch control
   // ====================== PLAYLISTS ======================
   List<Map<String, dynamic>> _playlists = [];
   String? _currentPlaylistId;
+
+
+  
 
   // ====================== VISUALIZER ======================
   bool _showVisualizer = false;
   int _visualizerStyle = 0; // 0=Waveform, 1=Circular, 2=Frequency, 3=Mirror, 4=Pulse Rings
   bool _combineModes = false;
+
+  
 
   // Independent glow controllers per album
   final Map<String, AnimationController> _albumGlowControllers = {};
@@ -137,67 +163,67 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   final Map<String, TextStyle> _albumFonts = {
     "Base": GoogleFonts.rubikBeastly(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
     "Track": GoogleFonts.bungeeInline(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
     "Gold": GoogleFonts.bungeeSpice(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
     "Free": GoogleFonts.matemasie(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
     "Roger": GoogleFonts.kalniaGlaze(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
     "609": GoogleFonts.boldonse(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
     "Gemini": GoogleFonts.danfo(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
     "Asraya": GoogleFonts.foldit(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
     "Stone": GoogleFonts.bungee(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
     "Central": GoogleFonts.nabla(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
     "Central (2)": GoogleFonts.nabla(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
     "Self": GoogleFonts.fruktur(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
     "Sol": GoogleFonts.oi(
-      fontSize: 16.5,
+      fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
@@ -226,6 +252,20 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     super.initState();
     _pageController = PageController(initialPage: 1);
     _boneStaggerController = AnimationController(duration: const Duration(milliseconds: 1800), vsync: this)..forward();
+    _appLinks = AppLinks();
+    _deepLinkSubscription = _appLinks.uriLinkStream.listen((Uri? uri) {
+      if (uri != null) {
+        print("🔗 Deep link received: $uri");
+        _handleDeepLink(uri);
+      }
+    });
+
+    Timer.periodic(const Duration(seconds: 30), (timer) {
+    _checkLivestreamStatus();
+  });
+
+  // Check immediately when app starts
+  _checkLivestreamStatus();
 
     _videoController = VideoPlayerController.asset(
       'assets/spine_video.mp4',
@@ -262,6 +302,32 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _player.positionStream.listen((pos) => setState(() => _position = pos));
     _player.durationStream.listen((dur) => setState(() => _duration = dur ?? Duration.zero));
   }
+
+void _handleDeepLink(Uri uri) {
+  if (uri.pathSegments.contains('confirm')) {
+    final email = uri.queryParameters['email'];
+    if (email != null && email.isNotEmpty) {
+      // Mark user as verified
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setBool('hasProvidedEmail', true);
+        prefs.setString('confirmedEmail', email);
+      });
+
+      // Show success message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("✅ Email confirmed! Welcome to Melodic Sol."),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+
+      // Optional: Refresh or go to main screen
+      setState(() {});
+    }
+  }
+}
 
   Future<void> _loadPlaylists() async {
     final prefs = await SharedPreferences.getInstance();
@@ -463,6 +529,30 @@ Future<void> _playSong(String albumName, int index, {
     print('→ No queue - calling _playNextSong()');
     _playNextSong();
   }
+// Check livestream status from S3 JSON file
+Future<void> _checkLivestreamStatus() async {
+  try {
+    final response = await http.get(
+      Uri.parse("https://dhufx08tsdp2a.cloudfront.net/livestream-status.json?t=${DateTime.now().millisecondsSinceEpoch}"),
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final bool isActive = data['isActive'] ?? false;
+      final String url = data['streamUrl'] ?? "https://www.youtube.com/@melodicsol/live";
+
+      if (mounted && (isActive != _isLivestreamActive || url != _livestreamUrl)) {
+        setState(() {
+          _isLivestreamActive = isActive;
+          _livestreamUrl = url;
+        });
+      }
+    }
+  } catch (e) {
+    // Silently fail if offline or file not found
+  }
+}
+
   // NEW: Navigate to Song Story
   void _navigateToSongStory(Map<String, dynamic> song, String albumName) {
     Navigator.push(
@@ -623,6 +713,7 @@ void _setupProcessingListener() {
     _logoGlowController.dispose();
     _visualizerController.dispose();
     _livePulseController.dispose();
+    _deepLinkSubscription?.cancel();
     for (var controller in _albumGlowControllers.values) {
       controller.dispose();
     }
@@ -1077,7 +1168,7 @@ Future<void> _playPreviousSong() async {
                   child: GestureDetector(
                     onTap: () {
                       if (_isLivestreamActive) {
-                        _launchUrl(_youtubeLivestreamUrl);
+                        _launchUrl(_livestreamUrl);
                       } else {
                         if (_player.playing) {
                           setState(() => _showVisualizer = true);
@@ -1679,7 +1770,7 @@ Widget _buildSocialPage() {
             const SizedBox(height: 40),
 
             const Text(
-              "Connect With Us",
+              " ",
               style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
             ),
             const SizedBox(height: 24),
@@ -1757,34 +1848,12 @@ Widget _buildSocialPage() {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            if (_isLivestreamActive)
-              TextField(
-                obscureText: true,
-                decoration: const InputDecoration(
-                  hintText: "Enter PIN to confirm",
-                  filled: true,
-                  fillColor: Colors.white10,
-                ),
-                onSubmitted: (pin) {
-                  if (pin == _livestreamPin) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("✅ Livestream confirmed active")),
-                    );
-                  } else {
-                    setState(() => _isLivestreamActive = false);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Incorrect PIN")),
-                    );
-                  }
-                },
-              ),            
 
             const SizedBox(height: 100), // extra bottom padding
 
                         const SizedBox(height: 40),
             const Text(
-              "Have a Promo Code?",
+              " ",
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white70),
             ),
             const SizedBox(height: 12),
@@ -2342,6 +2411,201 @@ class VisualizerPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
+// ====================== WELCOME / LOGIN SCREEN (First Screen) ======================
+// ====================== WELCOME / LOGIN SCREEN (First Screen) ======================
+class WelcomeScreen extends StatefulWidget {
+  const WelcomeScreen({super.key});
+
+  @override
+  State<WelcomeScreen> createState() => _WelcomeScreenState();
+}
+
+
+class _WelcomeScreenState extends State<WelcomeScreen> {
+  late VideoPlayerController _welcomeVideoController;
+  final TextEditingController _emailController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Initialize your background video (change the URL to your actual Melodic Sol video)
+    _welcomeVideoController = VideoPlayerController.networkUrl(
+      Uri.parse("https://dhufx08tsdp2a.cloudfront.net/Website+vid.mp4"), // ← CHANGE THIS URL
+    )..initialize().then((_) {
+        if (mounted) {
+          setState(() {});
+          _welcomeVideoController.setLooping(true);
+          _welcomeVideoController.play();
+        }
+      });
+  }
+
+  @override
+  void dispose() {
+    _welcomeVideoController.dispose();
+    super.dispose();
+  }
+
+Future<void> _submitEmail() async {
+  final email = _emailController.text.trim().toLowerCase();
+  if (email.isEmpty || !email.contains('@')) {
+ScaffoldMessenger.of(context).showSnackBar(
+  const SnackBar(
+    content: Text("✅ Check your email for confirmation link!"),
+    backgroundColor: Colors.green,
+  ),
+);
+    return;
+  }
+
+  // Send to HighLevel
+  const highLevelApiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U";
+  const locationId = "HjL1xZmge7WY0boY0Nt7";
+
+  try {
+    await http.post(
+      Uri.parse("https://rest.gohighlevel.com/v1/contacts/"),
+      headers: {
+        "Authorization": "Bearer $highLevelApiKey",
+        "Content-Type": "application/json",
+      },
+      body: jsonEncode({
+        "email": email,
+        "locationId": locationId,
+        "source": "Melodic Sol App - Welcome Screen",
+        "tags": ["melodicsol-app", "welcome-screen"],
+      }),
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("✅ Confirmation email sent! Check your inbox."),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  } catch (e) {
+    print("HighLevel error: $e");
+  }
+
+  // For now, we still mark as provided locally (we'll improve this with confirmation later)
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setBool('hasProvidedEmail', true);
+
+  if (mounted) {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const HomePage()),
+    );
+  }
+}
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          // Background Video
+          SizedBox.expand(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(
+                width: _welcomeVideoController.value.size.width,
+                height: _welcomeVideoController.value.size.height,
+                child: VideoPlayer(_welcomeVideoController),
+              ),
+            ),
+          ),
+
+          // Dark overlay for readability
+          Container(color: Colors.black.withOpacity(0.55)),
+
+          // Content
+          SafeArea(
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text(
+                    "Melodic Sol",
+                    style: TextStyle(
+                      fontSize: 48,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: 4,
+                    ),
+                  ),
+                  const SizedBox(height: 80),
+
+                  // Login / Sign Up Button
+                  ElevatedButton(
+                    onPressed: () {
+                      showDialog(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          backgroundColor: Colors.grey[900],
+                          title: const Text("Enter Your Email", style: TextStyle(color: Colors.white)),
+                          content: TextField(
+                            controller: _emailController,
+                            keyboardType: TextInputType.emailAddress,
+                            style: const TextStyle(color: Colors.white),
+                            decoration: const InputDecoration(
+                              hintText: "your@email.com",
+                              hintStyle: TextStyle(color: Colors.white54),
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text("Cancel"),
+                            ),
+                            ElevatedButton(
+                              onPressed: () {
+                                Navigator.pop(context);
+                                _submitEmail();
+                              },
+                              child: const Text("Continue"),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 16),
+                    ),
+                    child: const Text("Login / Sign Up", style: TextStyle(fontSize: 18)),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Skip for now
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(builder: (_) => const HomePage()),
+                      );
+                    },
+                    child: const Text(
+                      "Skip for now",
+                      style: TextStyle(fontSize: 18, color: Colors.white70),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ====================== SONG STORY PAGE ======================
 class SongStoryPage extends StatelessWidget {
   final Map<String, dynamic> song;
@@ -2461,4 +2725,7 @@ class SongStoryPage extends StatelessWidget {
       ),
     );
   }
+
+
+
 }
