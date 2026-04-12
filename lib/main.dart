@@ -87,7 +87,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late PageController _pageController;
   late AnimationController _boneStaggerController;
   late AppLinks _appLinks;
-StreamSubscription<Uri?>? _deepLinkSubscription;
+  StreamSubscription<Uri?>? _deepLinkSubscription;
 
   bool _ignoreProcessingListener = false;
   bool _ignorePendingTitle = false;
@@ -122,6 +122,8 @@ StreamSubscription<Uri?>? _deepLinkSubscription;
   // ====================== PLAYLISTS ======================
   List<Map<String, dynamic>> _playlists = [];
   String? _currentPlaylistId;
+  bool _hasConfirmedEmail = false;
+
 
 
   
@@ -304,31 +306,33 @@ StreamSubscription<Uri?>? _deepLinkSubscription;
   }
 
 void _handleDeepLink(Uri uri) {
+  print("🔗 Deep link received: $uri");   // Keep this debug line
+
   if (uri.pathSegments.contains('confirm')) {
     final email = uri.queryParameters['email'];
     if (email != null && email.isNotEmpty) {
-      // Mark user as verified
+      // Save to persistent storage
       SharedPreferences.getInstance().then((prefs) {
         prefs.setBool('hasProvidedEmail', true);
         prefs.setString('confirmedEmail', email);
       });
 
-      // Show success message
+      // Force UI update
+      setState(() {
+        _hasConfirmedEmail = true;
+      });
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("✅ Email confirmed! Welcome to Melodic Sol."),
+          const SnackBar(
+            content: Text("✅ Email confirmed! Bonus songs unlocked."),
             backgroundColor: Colors.green,
           ),
         );
       }
-
-      // Optional: Refresh or go to main screen
-      setState(() {});
     }
   }
 }
-
   Future<void> _loadPlaylists() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonString = prefs.getString('playlists');
@@ -1379,9 +1383,11 @@ Expanded(
       final title = song['Title'] as String? ?? "Unknown Track";
       final songUrl = song['url'] as String? ?? "";
       final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-      final isFree = song['isFree'] as bool? ?? false;   // default to locked
+final isFree = song['isFree'] as bool? ?? false;
+final bool emailUnlock = song['emailUnlock'] as bool? ?? false;
 
-      final bool canPlay = isFree || _hasOpenAccess;
+// New logic: locked only if not free, not lifetime unlocked, and not email-unlocked
+final bool isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
 
       return ListTile(
         leading: ClipRRect(
@@ -1394,29 +1400,48 @@ Expanded(
             errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
           ),
         ),
-        title: Text(
-          title,
+title: Row(
+  children: [
+    Expanded(
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 16.5,
+          color: isLocked ? Colors.white54 : Colors.white,
+          fontWeight: isLocked ? FontWeight.normal : FontWeight.w500,
+        ),
+      ),
+    ),
+    if (_hasConfirmedEmail && emailUnlock && !isFree)
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          color: Colors.greenAccent.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.greenAccent.withOpacity(0.6)),
+        ),
+        child: const Text(
+          "Bonus Unlocked",
           style: TextStyle(
-            fontSize: 16.5,
-            color: canPlay ? Colors.white : Colors.white54,
-            fontWeight: canPlay ? FontWeight.w500 : FontWeight.normal,
+            fontSize: 12,
+            color: Colors.greenAccent,
+            fontWeight: FontWeight.w600,
           ),
         ),
-        trailing: canPlay 
-            ? null 
-            : const Icon(Icons.lock, color: Colors.white54, size: 20),
-        onTap: () {
-          if (canPlay) {
-            _playSong(albumName, index);
-          } else {
-            _showPaywall();   // Show RevenueCat paywall
-          }
-        },
-        onLongPress: () => _showSongOptions(song, albumName, index),
-      );
-    },
-  ),
+      ),
+  ],
 ),
+        trailing: isLocked
+        ? const Icon(Icons.lock, color: Colors.white54, size: 20)
+        : null,
+        onTap: isLocked 
+            ? () => _showPaywall() 
+            : () => _playSong(albumName, index),
+                onLongPress: () => _showSongOptions(song, albumName, index),
+              );
+            },
+          ),
+        ),
 
           // Player Bar - Single clean row
           Container(
@@ -2450,25 +2475,24 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 Future<void> _submitEmail() async {
   final email = _emailController.text.trim().toLowerCase();
   if (email.isEmpty || !email.contains('@')) {
-ScaffoldMessenger.of(context).showSnackBar(
-  const SnackBar(
-    content: Text("✅ Check your email for confirmation link!"),
-    backgroundColor: Colors.green,
-  ),
-);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Please enter a valid email")),
+    );
     return;
   }
 
-  // Send to HighLevel
-  const highLevelApiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U";
-  const locationId = "HjL1xZmge7WY0boY0Nt7";
+  const highLevelApiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U";   // ← Make sure this is correct
+  const locationId = "HjL1xZmge7WY0boY0Nt7";               // ← Make sure this is correct
+
+  print("🔄 Attempting to send email to HighLevel: $email");
 
   try {
-    await http.post(
+    final response = await http.post(
       Uri.parse("https://rest.gohighlevel.com/v1/contacts/"),
       headers: {
         "Authorization": "Bearer $highLevelApiKey",
         "Content-Type": "application/json",
+        "Accept": "application/json",
       },
       body: jsonEncode({
         "email": email,
@@ -2478,19 +2502,37 @@ ScaffoldMessenger.of(context).showSnackBar(
       }),
     );
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("✅ Confirmation email sent! Check your inbox."),
-          backgroundColor: Colors.green,
-        ),
-      );
+    print("📡 HighLevel response status: ${response.statusCode}");
+    print("📡 HighLevel response body: ${response.body}");
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      print("✅ Successfully created contact in HighLevel");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("✅ Confirmation email sent! Check your inbox."),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else {
+      print("❌ HighLevel error: ${response.body}");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Failed to send email (status ${response.statusCode})")),
+        );
+      }
     }
   } catch (e) {
-    print("HighLevel error: $e");
+    print("❌ Exception sending to HighLevel: $e");
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Network error: $e")),
+      );
+    }
   }
 
-  // For now, we still mark as provided locally (we'll improve this with confirmation later)
+  // Still mark locally for now
   final prefs = await SharedPreferences.getInstance();
   await prefs.setBool('hasProvidedEmail', true);
 
