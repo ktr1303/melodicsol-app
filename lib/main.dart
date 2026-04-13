@@ -123,6 +123,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   List<Map<String, dynamic>> _playlists = [];
   String? _currentPlaylistId;
   bool _hasConfirmedEmail = false;
+  bool _needsAlbumRefresh = false;
 
 
 
@@ -306,20 +307,22 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
 void _handleDeepLink(Uri uri) {
-  print("🔗 Deep link received: $uri");   // Keep this debug line
+  print("🔗 Deep link received: $uri");
 
   if (uri.pathSegments.contains('confirm')) {
     final email = uri.queryParameters['email'];
     if (email != null && email.isNotEmpty) {
-      // Save to persistent storage
+      print("✅ Valid confirmation email: $email");
+
       SharedPreferences.getInstance().then((prefs) {
         prefs.setBool('hasProvidedEmail', true);
         prefs.setString('confirmedEmail', email);
       });
 
-      // Force UI update
       setState(() {
         _hasConfirmedEmail = true;
+        _needsAlbumRefresh = true;   // Trigger refresh
+        print("🔄 setState: _hasConfirmedEmail = true | Refresh flag = true");
       });
 
       if (mounted) {
@@ -1307,6 +1310,11 @@ Future<void> _playPreviousSong() async {
       // === ALBUM DETAIL PAGE - Full restored version ===
       final albumData = _albums[_selectedAlbum]!;
       final albumName = _selectedAlbum!;
+      if (_needsAlbumRefresh) {
+       WidgetsBinding.instance.addPostFrameCallback((_) {
+       setState(() => _needsAlbumRefresh = false);
+        });
+      }
       final rotatingArtUrl = albumData['rotatingArtUrl'] as String? ?? albumData['artUrl'] as String;
       final story = albumData['story'] as String? ?? "No story available.";
       final themeColor = _getAlbumThemeColor(albumName);
@@ -1383,11 +1391,12 @@ Expanded(
       final title = song['Title'] as String? ?? "Unknown Track";
       final songUrl = song['url'] as String? ?? "";
       final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-final isFree = song['isFree'] as bool? ?? false;
-final bool emailUnlock = song['emailUnlock'] as bool? ?? false;
+      final isFree = song['isFree'] as bool? ?? false;
+      final bool emailUnlock = song['emailUnlock'] as bool? ?? false;
 
-// New logic: locked only if not free, not lifetime unlocked, and not email-unlocked
-final bool isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
+      // New logic: locked only if not free, not lifetime unlocked, and not email-unlocked
+      final bool isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
+      final bool isBonusUnlocked = _hasConfirmedEmail && emailUnlock && !isFree;
 
       return ListTile(
         leading: ClipRRect(
@@ -1400,19 +1409,19 @@ final bool isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emai
             errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
           ),
         ),
-title: Row(
-  children: [
-    Expanded(
-      child: Text(
-        title,
-        style: TextStyle(
+      title: Row(
+       children: [
+        Expanded(
+          child: Text(
+            title,
+            style: TextStyle(
           fontSize: 16.5,
           color: isLocked ? Colors.white54 : Colors.white,
           fontWeight: isLocked ? FontWeight.normal : FontWeight.w500,
         ),
       ),
     ),
-    if (_hasConfirmedEmail && emailUnlock && !isFree)
+    if (isBonusUnlocked)
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         decoration: BoxDecoration(
