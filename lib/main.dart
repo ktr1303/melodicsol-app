@@ -13,9 +13,6 @@ import 'dart:math';
 import 'dart:async';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'dart:io';           // For Platform.isAndroid / Platform.isIOS
 import 'package:app_links/app_links.dart';   // For deep links
 
@@ -28,18 +25,6 @@ final AudioPlayer _globalPlayer = AudioPlayer();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize RevenueCat
-  await Purchases.setLogLevel(LogLevel.debug);
-
-  PurchasesConfiguration configuration;
-  if (Platform.isAndroid) {
-    configuration = PurchasesConfiguration("YOUR_GOOGLE_PLAY_PUBLIC_KEY_HERE");
-  } else if (Platform.isIOS) {
-    configuration = PurchasesConfiguration("YOUR_APPLE_APP_STORE_PUBLIC_KEY_HERE");
-  } else {
-    configuration = PurchasesConfiguration("test_ZBLCyGBvSMTFCEvmTmrzCwZVBPR");
-  }
-  await Purchases.configure(configuration);
 
   final session = await AudioSession.instance;
   await session.configure(const AudioSessionConfiguration.music());
@@ -124,15 +109,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   String? _currentPlaylistId;
   bool _hasConfirmedEmail = false;
   bool _needsAlbumRefresh = false;
-
-
-
-  
-
   // ====================== VISUALIZER ======================
   bool _showVisualizer = false;
   int _visualizerStyle = 0; // 0=Waveform, 1=Circular, 2=Frequency, 3=Mirror, 4=Pulse Rings
   bool _combineModes = false;
+
+  
 
   
 
@@ -262,6 +244,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         _handleDeepLink(uri);
       }
     });
+    
 
     Timer.periodic(const Duration(seconds: 30), (timer) {
     _checkLivestreamStatus();
@@ -306,36 +289,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _player.durationStream.listen((dur) => setState(() => _duration = dur ?? Duration.zero));
   }
 
-void _handleDeepLink(Uri uri) {
-  print("🔗 Deep link received: $uri");
 
-  if (uri.pathSegments.contains('confirm')) {
-    final email = uri.queryParameters['email'];
-    if (email != null && email.isNotEmpty) {
-      print("✅ Valid confirmation email: $email");
-
-      SharedPreferences.getInstance().then((prefs) {
-        prefs.setBool('hasProvidedEmail', true);
-        prefs.setString('confirmedEmail', email);
-      });
-
-      setState(() {
-        _hasConfirmedEmail = true;
-        _needsAlbumRefresh = true;   // Trigger refresh
-        print("🔄 setState: _hasConfirmedEmail = true | Refresh flag = true");
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("✅ Email confirmed! Bonus songs unlocked."),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    }
-  }
-}
   Future<void> _loadPlaylists() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonString = prefs.getString('playlists');
@@ -487,6 +441,7 @@ Future<void> _playSong(String albumName, int index, {
     }
   }
 }
+
     // NEW: Queue song to play immediately after current one
   // Improved Queue Song Next
   void _queueSongNext(Map<String, dynamic> song, String albumName, int songIndex) {
@@ -693,6 +648,45 @@ Future<void> _checkLivestreamStatus() async {
       ),
     );
   }
+
+void _handleDeepLink(Uri uri) {
+  print("🔗 Deep link received: $uri");
+
+  if (uri.pathSegments.contains('confirm')) {
+    final email = uri.queryParameters['email'];
+    if (email != null && email.isNotEmpty) {
+      print("✅ Valid confirmation email: $email");
+
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setBool('hasProvidedEmail', true);
+        prefs.setString('confirmedEmail', email);
+      });
+
+      // Force the state update
+      setState(() {
+        _hasConfirmedEmail = true;
+        print("🔄 setState executed - _hasConfirmedEmail is now TRUE");
+      });
+
+      // Return to the main home screen and force rebuild
+      if (Navigator.canPop(context)) {
+        Navigator.popUntil(context, (route) => route.isFirst);
+      }
+
+      // Show success message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("✅ Email confirmed! Bonus songs are now unlocked."),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+}
+
 void _setupProcessingListener() {
   _processingSubscription?.cancel();
   _processingSubscription = _player.processingStateStream.listen((state) {
@@ -721,6 +715,7 @@ void _setupProcessingListener() {
     _visualizerController.dispose();
     _livePulseController.dispose();
     _deepLinkSubscription?.cancel();
+    super.dispose();
     for (var controller in _albumGlowControllers.values) {
       controller.dispose();
     }
@@ -1387,70 +1382,69 @@ Expanded(
     padding: const EdgeInsets.symmetric(horizontal: 24),
     itemCount: songs.length,
     itemBuilder: (context, index) {
-      final song = songs[index] as Map<String, dynamic>;
-      final title = song['Title'] as String? ?? "Unknown Track";
-      final songUrl = song['url'] as String? ?? "";
-      final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-      final isFree = song['isFree'] as bool? ?? false;
-      final bool emailUnlock = song['emailUnlock'] as bool? ?? false;
+  final song = songs[index] as Map<String, dynamic>;
+  final title = song['Title'] as String? ?? "Unknown Track";
+  final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
 
-      // New logic: locked only if not free, not lifetime unlocked, and not email-unlocked
-      final bool isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
-      final bool isBonusUnlocked = _hasConfirmedEmail && emailUnlock && !isFree;
+  final isFree = song['isFree'] as bool? ?? false;
+  final emailUnlock = song['emailUnlock'] as bool? ?? false;
 
-      return ListTile(
-        leading: ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: CachedNetworkImage(
-            imageUrl: artUrl,
-            width: 48,
-            height: 48,
-            fit: BoxFit.cover,
-            errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
-          ),
-        ),
-      title: Row(
-       children: [
+  final bool isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
+  final bool isBonusUnlocked = _hasConfirmedEmail && emailUnlock && !isFree;
+
+  print("Song: $title | isFree: $isFree | emailUnlock: $emailUnlock | _hasConfirmedEmail: $_hasConfirmedEmail | isLocked: $isLocked | isBonusUnlocked: $isBonusUnlocked");
+
+  return ListTile(
+    leading: ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: CachedNetworkImage(
+        imageUrl: artUrl,
+        width: 48,
+        height: 48,
+        fit: BoxFit.cover,
+        errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
+      ),
+    ),
+    title: Row(
+      children: [
         Expanded(
           child: Text(
             title,
             style: TextStyle(
-          fontSize: 16.5,
-          color: isLocked ? Colors.white54 : Colors.white,
-          fontWeight: isLocked ? FontWeight.normal : FontWeight.w500,
-        ),
-      ),
-    ),
-    if (isBonusUnlocked)
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(
-          color: Colors.greenAccent.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.greenAccent.withOpacity(0.6)),
-        ),
-        child: const Text(
-          "Bonus Unlocked",
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.greenAccent,
-            fontWeight: FontWeight.w600,
+              fontSize: 16.5,
+              color: isLocked ? Colors.white54 : Colors.white,
+              fontWeight: isLocked ? FontWeight.normal : FontWeight.w500,
+            ),
           ),
         ),
-      ),
-  ],
-),
-        trailing: isLocked
+        if (isBonusUnlocked)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.greenAccent.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.greenAccent.withOpacity(0.6)),
+            ),
+            child: const Text(
+              "Bonus Unlocked",
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.greenAccent,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+      ],
+    ),
+    trailing: isLocked
         ? const Icon(Icons.lock, color: Colors.white54, size: 20)
         : null,
-        onTap: isLocked 
-            ? () => _showPaywall() 
-            : () => _playSong(albumName, index),
-                onLongPress: () => _showSongOptions(song, albumName, index),
-              );
-            },
-          ),
-        ),
+    onTap: isLocked
+        ? () => _showPaywall()
+        : () => _playSong(albumName, index),
+    onLongPress: () => _showSongOptions(song, albumName, index),
+  );
+},  ),       ), 
 
           // Player Bar - Single clean row
           Container(
@@ -2515,15 +2509,16 @@ Future<void> _submitEmail() async {
     print("📡 HighLevel response body: ${response.body}");
 
     if (response.statusCode == 200 || response.statusCode == 201) {
-      print("✅ Successfully created contact in HighLevel");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("✅ Confirmation email sent! Check your inbox."),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
+      print("✅ Successfully created contact in HighLevel");          
+                  // Navigate to the Check Your Inbox screen
+         Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+              builder: (context) => EmailConfirmationScreen(
+               email: "chrissgarry@gmail.com",
+                      ),
+                    ),
+                  );
     } else {
       print("❌ HighLevel error: ${response.body}");
       if (mounted) {
@@ -2776,7 +2771,55 @@ class SongStoryPage extends StatelessWidget {
       ),
     );
   }
+}
+// New screen shown after email is entered
+class EmailConfirmationScreen extends StatelessWidget {
+  final String email;
 
+  const EmailConfirmationScreen({Key? key, required this.email}) : super(key: key);
 
-
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.email_outlined, size: 80, color: Colors.white),
+              const SizedBox(height: 32),
+              const Text(
+                "Check Your Inbox",
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                "We've sent a confirmation link to:\n$email",
+                style: const TextStyle(fontSize: 16, color: Colors.white70),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 40),
+              const Text(
+                "Once you click the link in the email,\nyou'll be brought back here and bonus songs will unlock.",
+                style: TextStyle(fontSize: 15, color: Colors.white60),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 60),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white24,
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                ),
+                child: const Text("Back to Home", style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
