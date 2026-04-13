@@ -651,29 +651,41 @@ Future<void> _checkLivestreamStatus() async {
 
 void _handleDeepLink(Uri uri) {
   print("🔗 Deep link received: $uri");
+  print("🔗 Path: '${uri.path}'");
+  print("🔗 Path segments: ${uri.pathSegments}");
+  print("🔗 Query parameters: ${uri.queryParameters}");
 
-  if (uri.pathSegments.contains('confirm')) {
+  // More flexible check for confirmation deep link
+  final String fullUriString = uri.toString().toLowerCase();
+  final bool isConfirmationLink = fullUriString.contains('confirm') || 
+                                  uri.pathSegments.contains('confirm') ||
+                                  uri.queryParameters.containsKey('email');
+
+  if (isConfirmationLink) {
     final email = uri.queryParameters['email'];
     if (email != null && email.isNotEmpty) {
-      print("✅ Valid confirmation email: $email");
+      print("✅ Valid confirmation email found: $email");
 
+      // Save to SharedPreferences
       SharedPreferences.getInstance().then((prefs) {
         prefs.setBool('hasProvidedEmail', true);
         prefs.setString('confirmedEmail', email);
+        print("💾 Saved confirmation to SharedPreferences");
       });
 
-      // Force the state update
+      // Force unlock state
       setState(() {
         _hasConfirmedEmail = true;
         print("🔄 setState executed - _hasConfirmedEmail is now TRUE");
       });
 
-      // Return to the main home screen and force rebuild
+      // Force back to main album page
       if (Navigator.canPop(context)) {
         Navigator.popUntil(context, (route) => route.isFirst);
+      } else {
+        setState(() {}); // force rebuild if already on main screen
       }
 
-      // Show success message
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -683,7 +695,11 @@ void _handleDeepLink(Uri uri) {
           ),
         );
       }
+    } else {
+      print("⚠️ No email parameter in deep link");
     }
+  } else {
+    print("⚠️ Deep link does not appear to be a confirmation link");
   }
 }
 
@@ -2456,10 +2472,8 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   @override
   void initState() {
     super.initState();
-
-    // Initialize your background video (change the URL to your actual Melodic Sol video)
     _welcomeVideoController = VideoPlayerController.networkUrl(
-      Uri.parse("https://dhufx08tsdp2a.cloudfront.net/Website+vid.mp4"), // ← CHANGE THIS URL
+      Uri.parse("https://dhufx08tsdp2a.cloudfront.net/Website+vid.mp4"),
     )..initialize().then((_) {
         if (mounted) {
           setState(() {});
@@ -2472,20 +2486,23 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   @override
   void dispose() {
     _welcomeVideoController.dispose();
+    _emailController.dispose();
     super.dispose();
   }
 
 Future<void> _submitEmail() async {
   final email = _emailController.text.trim().toLowerCase();
   if (email.isEmpty || !email.contains('@')) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Please enter a valid email")),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please enter a valid email")),
+      );
+    }
     return;
   }
 
-  const highLevelApiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U";   // ← Make sure this is correct
-  const locationId = "HjL1xZmge7WY0boY0Nt7";               // ← Make sure this is correct
+  const highLevelApiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U";
+  const locationId = "HjL1xZmge7WY0boY0Nt7";
 
   print("🔄 Attempting to send email to HighLevel: $email");
 
@@ -2509,16 +2526,19 @@ Future<void> _submitEmail() async {
     print("📡 HighLevel response body: ${response.body}");
 
     if (response.statusCode == 200 || response.statusCode == 201) {
-      print("✅ Successfully created contact in HighLevel");          
-                  // Navigate to the Check Your Inbox screen
-         Navigator.pushReplacement(
+      print("✅ Successfully created contact in HighLevel");
+
+      final String enteredEmail = _emailController.text.trim();
+
+      // ← THIS IS THE KEY CHANGE: Go to confirmation screen
+      if (mounted) {
+        Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-              builder: (context) => EmailConfirmationScreen(
-               email: "chrissgarry@gmail.com",
-                      ),
-                    ),
-                  );
+            builder: (context) => EmailConfirmationScreen(email: enteredEmail),
+          ),
+        );
+      }
     } else {
       print("❌ HighLevel error: ${response.body}");
       if (mounted) {
@@ -2535,17 +2555,6 @@ Future<void> _submitEmail() async {
       );
     }
   }
-
-  // Still mark locally for now
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setBool('hasProvidedEmail', true);
-
-  if (mounted) {
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const HomePage()),
-    );
-  }
 }
 
   @override
@@ -2559,16 +2568,14 @@ Future<void> _submitEmail() async {
             child: FittedBox(
               fit: BoxFit.cover,
               child: SizedBox(
-                width: _welcomeVideoController.value.size.width,
-                height: _welcomeVideoController.value.size.height,
+                width: _welcomeVideoController.value.size?.width ?? 1280,
+                height: _welcomeVideoController.value.size?.height ?? 720,
                 child: VideoPlayer(_welcomeVideoController),
               ),
             ),
           ),
-
-          // Dark overlay for readability
+          // Dark overlay
           Container(color: Colors.black.withOpacity(0.55)),
-
           // Content
           SafeArea(
             child: Center(
@@ -2585,8 +2592,6 @@ Future<void> _submitEmail() async {
                     ),
                   ),
                   const SizedBox(height: 80),
-
-                  // Login / Sign Up Button
                   ElevatedButton(
                     onPressed: () {
                       showDialog(
@@ -2626,10 +2631,7 @@ Future<void> _submitEmail() async {
                     ),
                     child: const Text("Login / Sign Up", style: TextStyle(fontSize: 18)),
                   ),
-
                   const SizedBox(height: 20),
-
-                  // Skip for now
                   TextButton(
                     onPressed: () {
                       Navigator.pushReplacement(
@@ -2651,7 +2653,6 @@ Future<void> _submitEmail() async {
     );
   }
 }
-
 // ====================== SONG STORY PAGE ======================
 class SongStoryPage extends StatelessWidget {
   final Map<String, dynamic> song;
@@ -2773,48 +2774,49 @@ class SongStoryPage extends StatelessWidget {
   }
 }
 // New screen shown after email is entered
+// ====================== EMAIL CONFIRMATION SCREEN ======================
+// ====================== EMAIL CONFIRMATION SCREEN ======================
 class EmailConfirmationScreen extends StatelessWidget {
   final String email;
-
-  const EmailConfirmationScreen({Key? key, required this.email}) : super(key: key);
+  const EmailConfirmationScreen({super.key, required this.email});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.email_outlined, size: 80, color: Colors.white),
-              const SizedBox(height: 32),
-              const Text(
-                "Check Your Inbox",
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                "We've sent a confirmation link to:\n$email",
-                style: const TextStyle(fontSize: 16, color: Colors.white70),
-                textAlign: TextAlign.center,
-              ),
+              const Icon(Icons.email_outlined, size: 100, color: Colors.white),
               const SizedBox(height: 40),
               const Text(
-                "Once you click the link in the email,\nyou'll be brought back here and bonus songs will unlock.",
-                style: TextStyle(fontSize: 15, color: Colors.white60),
+                "Check Your Inbox",
+                style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              Text(
+                "We sent a confirmation link to:\n$email",
+                style: const TextStyle(fontSize: 18, color: Colors.white70),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 60),
               ElevatedButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(builder: (_) => const HomePage()),
+                  );
+                },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white24,
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  backgroundColor: Colors.greenAccent,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
                 ),
-                child: const Text("Back to Home", style: TextStyle(color: Colors.white)),
+                child: const Text("Back to App", style: TextStyle(fontSize: 18)),
               ),
             ],
           ),
