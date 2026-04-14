@@ -662,27 +662,15 @@ void _handleDeepLink(Uri uri) {
 
       setState(() {
         _hasConfirmedEmail = true;
-        print("🔄 setState executed - _hasConfirmedEmail is now TRUE");
       });
 
-      // Strongest possible reset: Completely restart navigation to main page
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (mounted) {
-          // This removes ALL screens and starts fresh with HomePage
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const HomePage()),
-            (route) => false,
-          );
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("✅ Email confirmed! Bonus songs are now unlocked."),
-              backgroundColor: Colors.green,
-              duration: Duration(seconds: 3),
-            ),
-          );
-        }
-      });
+      // Open the new confirmed screen
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => EmailConfirmedScreen(email: email),
+        ),
+      );
     }
   }
 }
@@ -2799,6 +2787,80 @@ class EmailConfirmationScreen extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+// ====================== EMAIL CONFIRMED LANDING PAGE ======================
+// ====================== EMAIL CONFIRMED LANDING PAGE ======================
+class EmailConfirmedScreen extends StatelessWidget {
+  final String email;
+  const EmailConfirmedScreen({super.key, required this.email});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          // Same video background as welcome screen
+          SizedBox.expand(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(
+                width: 1280,
+                height: 720,
+                child: VideoPlayer(VideoPlayerController.networkUrl(
+                  Uri.parse("https://dhufx08tsdp2a.cloudfront.net/Website+vid.mp4"),
+                )..initialize()..setLooping(true)..play()),
+              ),
+            ),
+          ),
+          Container(color: Colors.black.withOpacity(0.65)),
+
+          SafeArea(
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.check_circle_outline, size: 120, color: Colors.greenAccent),
+                  const SizedBox(height: 40),
+                  const Text(
+                    "Email Confirmed!",
+                    style: TextStyle(
+                      fontSize: 36,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    "Thank you!\nYour bonus songs are now unlocked.",
+                    style: const TextStyle(fontSize: 18, color: Colors.white70),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 80),
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(builder: (_) => const HomePage()),
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.greenAccent,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(horizontal: 60, vertical: 20),
+                      textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                    child: const Text("CLICK HERE TO CONTINUE"),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
