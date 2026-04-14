@@ -71,8 +71,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late AnimationController _visualizerController;
   late PageController _pageController;
   late AnimationController _boneStaggerController;
-  late AppLinks _appLinks;
-  StreamSubscription<Uri?>? _deepLinkSubscription;
+
 
   bool _ignoreProcessingListener = false;
   bool _ignorePendingTitle = false;
@@ -114,9 +113,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   int _visualizerStyle = 0; // 0=Waveform, 1=Circular, 2=Frequency, 3=Mirror, 4=Pulse Rings
   bool _combineModes = false;
 
-  
-
-  
+  late AppLinks _appLinks;
+  StreamSubscription? _deepLinkSubscription;
 
   // Independent glow controllers per album
   final Map<String, AnimationController> _albumGlowControllers = {};
@@ -240,11 +238,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _appLinks = AppLinks();
     _deepLinkSubscription = _appLinks.uriLinkStream.listen((Uri? uri) {
       if (uri != null) {
-        print("🔗 Deep link received: $uri");
         _handleDeepLink(uri);
       }
-    });
-    
+    });    
+;
 
     Timer.periodic(const Duration(seconds: 30), (timer) {
     _checkLivestreamStatus();
@@ -651,58 +648,44 @@ Future<void> _checkLivestreamStatus() async {
 
 void _handleDeepLink(Uri uri) {
   print("🔗 Deep link received: $uri");
-  print("🔗 Path: '${uri.path}'");
-  print("🔗 Path segments: ${uri.pathSegments}");
-  print("🔗 Query parameters: ${uri.queryParameters}");
 
-  // More flexible check for confirmation deep link
   final String fullUriString = uri.toString().toLowerCase();
-  final bool isConfirmationLink = fullUriString.contains('confirm') || 
-                                  uri.pathSegments.contains('confirm') ||
-                                  uri.queryParameters.containsKey('email');
-
-  if (isConfirmationLink) {
+  if (fullUriString.contains('confirm') || uri.queryParameters.containsKey('email')) {
     final email = uri.queryParameters['email'];
     if (email != null && email.isNotEmpty) {
-      print("✅ Valid confirmation email found: $email");
+      print("✅ Valid confirmation email: $email");
 
-      // Save to SharedPreferences
       SharedPreferences.getInstance().then((prefs) {
         prefs.setBool('hasProvidedEmail', true);
         prefs.setString('confirmedEmail', email);
-        print("💾 Saved confirmation to SharedPreferences");
       });
 
-      // Force unlock state
       setState(() {
         _hasConfirmedEmail = true;
         print("🔄 setState executed - _hasConfirmedEmail is now TRUE");
       });
 
-      // Force back to main album page
-      if (Navigator.canPop(context)) {
-        Navigator.popUntil(context, (route) => route.isFirst);
-      } else {
-        setState(() {}); // force rebuild if already on main screen
-      }
+      // Strongest possible reset: Completely restart navigation to main page
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          // This removes ALL screens and starts fresh with HomePage
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const HomePage()),
+            (route) => false,
+          );
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("✅ Email confirmed! Bonus songs are now unlocked."),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 4),
-          ),
-        );
-      }
-    } else {
-      print("⚠️ No email parameter in deep link");
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("✅ Email confirmed! Bonus songs are now unlocked."),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      });
     }
-  } else {
-    print("⚠️ Deep link does not appear to be a confirmation link");
   }
 }
-
 void _setupProcessingListener() {
   _processingSubscription?.cancel();
   _processingSubscription = _player.processingStateStream.listen((state) {
@@ -990,6 +973,7 @@ Future<void> _playPreviousSong() async {
       ),
     );
   }
+
 
   // ====================== FULL SCREEN VISUALIZER ======================
   Widget _buildFullScreenVisualizer() {
@@ -2469,9 +2453,12 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   late VideoPlayerController _welcomeVideoController;
   final TextEditingController _emailController = TextEditingController();
 
+
   @override
   void initState() {
     super.initState();
+
+    // Video background
     _welcomeVideoController = VideoPlayerController.networkUrl(
       Uri.parse("https://dhufx08tsdp2a.cloudfront.net/Website+vid.mp4"),
     )..initialize().then((_) {
@@ -2481,6 +2468,9 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
           _welcomeVideoController.play();
         }
       });
+
+
+
   }
 
   @override
@@ -2490,72 +2480,69 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     super.dispose();
   }
 
-Future<void> _submitEmail() async {
-  final email = _emailController.text.trim().toLowerCase();
-  if (email.isEmpty || !email.contains('@')) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please enter a valid email")),
-      );
-    }
-    return;
-  }
-
-  const highLevelApiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U";
-  const locationId = "HjL1xZmge7WY0boY0Nt7";
-
-  print("🔄 Attempting to send email to HighLevel: $email");
-
-  try {
-    final response = await http.post(
-      Uri.parse("https://rest.gohighlevel.com/v1/contacts/"),
-      headers: {
-        "Authorization": "Bearer $highLevelApiKey",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-      },
-      body: jsonEncode({
-        "email": email,
-        "locationId": locationId,
-        "source": "Melodic Sol App - Welcome Screen",
-        "tags": ["melodicsol-app", "welcome-screen"],
-      }),
-    );
-
-    print("📡 HighLevel response status: ${response.statusCode}");
-    print("📡 HighLevel response body: ${response.body}");
-
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      print("✅ Successfully created contact in HighLevel");
-
-      final String enteredEmail = _emailController.text.trim();
-
-      // ← THIS IS THE KEY CHANGE: Go to confirmation screen
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => EmailConfirmationScreen(email: enteredEmail),
-          ),
-        );
-      }
-    } else {
-      print("❌ HighLevel error: ${response.body}");
+  Future<void> _submitEmail() async {
+    final email = _emailController.text.trim().toLowerCase();
+    if (email.isEmpty || !email.contains('@')) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Failed to send email (status ${response.statusCode})")),
+          const SnackBar(content: Text("Please enter a valid email")),
+        );
+      }
+      return;
+    }
+
+    const highLevelApiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U";
+    const locationId = "HjL1xZmge7WY0boY0Nt7";
+
+    print("🔄 Attempting to send email to HighLevel: $email");
+
+    try {
+      final response = await http.post(
+        Uri.parse("https://rest.gohighlevel.com/v1/contacts/"),
+        headers: {
+          "Authorization": "Bearer $highLevelApiKey",
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
+        body: jsonEncode({
+          "email": email,
+          "locationId": locationId,
+          "source": "Melodic Sol App - Welcome Screen",
+          "tags": ["melodicsol-app", "welcome-screen"],
+        }),
+      );
+
+      print("📡 HighLevel response status: ${response.statusCode}");
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        print("✅ Successfully created contact in HighLevel");
+
+        final String enteredEmail = _emailController.text.trim();
+          if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => EmailConfirmationScreen(email: enteredEmail),
+            ),
+          );
+        }
+      } else {
+        print("❌ HighLevel error: ${response.body}");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Failed to send email")),
+          );
+        }
+      }
+    } catch (e) {
+      print("❌ Exception: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Network error")),
         );
       }
     }
-  } catch (e) {
-    print("❌ Exception sending to HighLevel: $e");
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Network error: $e")),
-      );
-    }
   }
-}
 
   @override
   Widget build(BuildContext context) {
@@ -2563,7 +2550,6 @@ Future<void> _submitEmail() async {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Background Video
           SizedBox.expand(
             child: FittedBox(
               fit: BoxFit.cover,
@@ -2574,9 +2560,7 @@ Future<void> _submitEmail() async {
               ),
             ),
           ),
-          // Dark overlay
           Container(color: Colors.black.withOpacity(0.55)),
-          // Content
           SafeArea(
             child: Center(
               child: Column(
@@ -2584,12 +2568,7 @@ Future<void> _submitEmail() async {
                 children: [
                   const Text(
                     "Melodic Sol",
-                    style: TextStyle(
-                      fontSize: 48,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      letterSpacing: 4,
-                    ),
+                    style: TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 4),
                   ),
                   const SizedBox(height: 80),
                   ElevatedButton(
@@ -2639,10 +2618,7 @@ Future<void> _submitEmail() async {
                         MaterialPageRoute(builder: (_) => const HomePage()),
                       );
                     },
-                    child: const Text(
-                      "Skip for now",
-                      style: TextStyle(fontSize: 18, color: Colors.white70),
-                    ),
+                    child: const Text("Skip for now", style: TextStyle(fontSize: 18, color: Colors.white70)),
                   ),
                 ],
               ),
@@ -2653,6 +2629,7 @@ Future<void> _submitEmail() async {
     );
   }
 }
+
 // ====================== SONG STORY PAGE ======================
 class SongStoryPage extends StatelessWidget {
   final Map<String, dynamic> song;
@@ -2773,6 +2750,7 @@ class SongStoryPage extends StatelessWidget {
     );
   }
 }
+
 // New screen shown after email is entered
 // ====================== EMAIL CONFIRMATION SCREEN ======================
 // ====================== EMAIL CONFIRMATION SCREEN ======================
