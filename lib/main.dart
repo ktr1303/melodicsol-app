@@ -511,6 +511,38 @@ Future<void> _checkLivestreamStatus() async {
     // Silently fail if offline or file not found
   }
 }
+void _handleDeepLink(Uri uri) {
+  print("🔗 Deep link received: $uri");
+
+  final String fullUriString = uri.toString().toLowerCase();
+  if (fullUriString.contains('confirm') || uri.queryParameters.containsKey('email')) {
+    final email = uri.queryParameters['email'];
+    if (email != null && email.isNotEmpty) {
+      print("✅ Valid confirmation email: $email");
+
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setBool('hasProvidedEmail', true);
+        prefs.setString('confirmedEmail', email);
+      });
+
+      setState(() {
+        _hasConfirmedEmail = true;
+      });
+
+      // Small delay + strong navigation to the confirmed screen
+      Future.delayed(const Duration(milliseconds: 1000), () {
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => EmailConfirmedScreen(email: email),
+            ),
+          );
+        }
+      });
+    }
+  }
+}
 
   // NEW: Navigate to Song Story
   void _navigateToSongStory(Map<String, dynamic> song, String albumName) {
@@ -646,34 +678,7 @@ Future<void> _checkLivestreamStatus() async {
     );
   }
 
-void _handleDeepLink(Uri uri) {
-  print("🔗 Deep link received: $uri");
 
-  final String fullUriString = uri.toString().toLowerCase();
-  if (fullUriString.contains('confirm') || uri.queryParameters.containsKey('email')) {
-    final email = uri.queryParameters['email'];
-    if (email != null && email.isNotEmpty) {
-      print("✅ Valid confirmation email: $email");
-
-      SharedPreferences.getInstance().then((prefs) {
-        prefs.setBool('hasProvidedEmail', true);
-        prefs.setString('confirmedEmail', email);
-      });
-
-      setState(() {
-        _hasConfirmedEmail = true;
-      });
-
-      // Open the new confirmed screen
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => EmailConfirmedScreen(email: email),
-        ),
-      );
-    }
-  }
-}
 void _setupProcessingListener() {
   _processingSubscription?.cancel();
   _processingSubscription = _player.processingStateStream.listen((state) {
@@ -2793,6 +2798,7 @@ class EmailConfirmationScreen extends StatelessWidget {
 }
 // ====================== EMAIL CONFIRMED LANDING PAGE ======================
 // ====================== EMAIL CONFIRMED LANDING PAGE ======================
+// ====================== EMAIL CONFIRMED LANDING PAGE ======================
 class EmailConfirmedScreen extends StatelessWidget {
   final String email;
   const EmailConfirmedScreen({super.key, required this.email});
@@ -2803,7 +2809,7 @@ class EmailConfirmedScreen extends StatelessWidget {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Same video background as welcome screen
+          // Video background (same as welcome)
           SizedBox.expand(
             child: FittedBox(
               fit: BoxFit.cover,
@@ -2823,18 +2829,13 @@ class EmailConfirmedScreen extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.check_circle_outline, size: 120, color: Colors.greenAccent),
+                  const Icon(Icons.check_circle, size: 120, color: Colors.greenAccent),
                   const SizedBox(height: 40),
                   const Text(
                     "Email Confirmed!",
-                    style: TextStyle(
-                      fontSize: 36,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 20),
                   Text(
                     "Thank you!\nYour bonus songs are now unlocked.",
                     style: const TextStyle(fontSize: 18, color: Colors.white70),
@@ -2852,9 +2853,8 @@ class EmailConfirmedScreen extends StatelessWidget {
                       backgroundColor: Colors.greenAccent,
                       foregroundColor: Colors.black,
                       padding: const EdgeInsets.symmetric(horizontal: 60, vertical: 20),
-                      textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                     ),
-                    child: const Text("CLICK HERE TO CONTINUE"),
+                    child: const Text("CLICK HERE TO CONTINUE", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                   ),
                 ],
               ),
