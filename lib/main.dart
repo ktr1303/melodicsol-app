@@ -264,6 +264,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+        // TEMPORARY: Reset tutorials for testing — remove after testing
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('hasSeenWelcomeTutorial');
+    await prefs.remove('hasSeenMainAlbumTutorial');
+    await prefs.remove('hasSeenAlbumDetailTutorial');
+    await prefs.remove('hasSeenQueueTutorial');
+
     await _showWelcomeTutorial();   // This will automatically show main album tutorial after "Got it"
   });
  
@@ -271,7 +278,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _checkLivestreamStatus();
     
   });
- 
+  _pageController.addListener(() {
+    if (_pageController.hasClients) {
+      final currentPage = _pageController.page?.round() ?? 0;
+      if (currentPage == 1) {   // Adjust to 0 or 2 if your queue is on a different index
+        _showQueueTutorial();
+      }
+    }
+  }); 
   // Check immediately when app starts
   _checkLivestreamStatus();
 
@@ -466,25 +480,38 @@ Future<void> _playSong(String albumName, int index, {
 
     // NEW: Queue song to play immediately after current one
   // Improved Queue Song Next
-  void _queueSongNext(Map<String, dynamic> song, String albumName, int songIndex) {
-    setState(() {
-      _queue.add({
-        'title': song['Title'] as String? ?? "Unknown Song",
-        'albumName': albumName,
-        'artUrl': song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "",
-        'url': song['url'] as String? ?? "",   // ← Critical for correct playback
-      });
-    });
+void _queueSongNext(Map<String, dynamic> song, String albumName, int songIndex) {
+  // NEW: Check if song is locked before adding
+  final songList = _albums[albumName]?['songs'] as List? ?? [];
+  final originalSong = songList.firstWhere(
+    (s) => (s['Title'] as String?) == (song['Title'] as String?),
+    orElse: () => {},
+  );
 
+  final isFree = originalSong['isFree'] as bool? ?? false;
+  final emailUnlock = originalSong['emailUnlock'] as bool? ?? false;
+  final isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
+
+  if (isLocked) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text("Added to queue: ${song['Title'] ?? 'Unknown Song'}"),
-        duration: const Duration(seconds: 1),
-      ),      
+      const SnackBar(content: Text("This song is locked. Unlock with email or open access.")),
     );
-    
-    // Show queue tutorial the first time
-  _showQueueTutorial();
+    return;
+  }
+
+  // If not locked, proceed to add
+  setState(() {
+    _queue.add({
+      'title': song['Title'] as String? ?? "Unknown Song",
+      'albumName': albumName,
+      'artUrl': song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "",
+      'url': song['url'] as String? ?? "",
+    });
+  });
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text("Added to queue: ${song['Title'] ?? 'Unknown Song'}")),
+  );
 }
   
 
@@ -637,6 +664,7 @@ Future<void> _showAlbumDetailTutorial() async {
 }
 
 // 4. Queue Tutorial
+// Queue tutorial — shows ONLY the first time the user swipes to the queue page
 Future<void> _showQueueTutorial() async {
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getBool('hasSeenQueueTutorial') ?? false) return;
@@ -645,12 +673,12 @@ Future<void> _showQueueTutorial() async {
     context: context,
     barrierDismissible: false,
     builder: (context) => AlertDialog(
-      title: const Text("Your Queue 📋"),
+      title: const Text("Your Queue & Playlists 📋"),
       content: const Text(
-        "This is your playback queue.\n\n"
-        "• Tap a song in queue = Jump to that song\n"
-        "• Long-press a song in queue = Remove or reorder\n\n"
-        "Long-press songs from albums to add them here.",
+        "You are now on the Queue / Playlist page.\n\n"
+        "• Tap a song in the queue = Jump to that song and play it\n"
+        "• Long-press a song in the queue = Remove it or reorder\n\n"
+        "Add songs here by long-pressing them from any album.",
       ),
       actions: [
         TextButton(
@@ -808,7 +836,6 @@ void _handleDeepLink(Uri uri) {
 
   // NEW: Updated long-press menu with Song Story + Play Next
   void _showSongOptions(Map<String, dynamic> song, String albumName, int songIndex) {
-    _showAlbumDetailTutorial();
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.grey[900],
@@ -1439,8 +1466,12 @@ Future<void> _playPreviousSong() async {
                           child: GestureDetector(
                                   onTap: () => setState(() {
                                     _selectedAlbum = albumName;
-                                    _currentViewedAlbum = albumName;   // ← Add this line
+                                    _currentViewedAlbum = albumName;
+                                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                                    _showAlbumDetailTutorial();
+                                    });   // ← Add this line
                                   }),
+                                  
                             child: Container(
                               height: 52,
                               alignment: Alignment.center,
