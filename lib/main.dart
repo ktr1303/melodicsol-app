@@ -263,12 +263,15 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         _handleDeepLink(uri);
       }
     });
-;
-
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+    await _showWelcomeTutorial();   // This will automatically show main album tutorial after "Got it"
+  });
+ 
     Timer.periodic(const Duration(seconds: 30), (timer) {
     _checkLivestreamStatus();
+    
   });
-
+ 
   // Check immediately when app starts
   _checkLivestreamStatus();
 
@@ -471,6 +474,7 @@ Future<void> _playSong(String albumName, int index, {
         'artUrl': song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "",
         'url': song['url'] as String? ?? "",   // ← Critical for correct playback
       });
+      _showQueueTutorial();
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -482,47 +486,179 @@ Future<void> _playSong(String albumName, int index, {
   }
 
   // Improved Song Completion Handler
-  void _handleSongCompletion() {
-    print('🎯 _handleSongCompletion called - Queue size: ${_queue.length} | Current Album: $_currentAlbum | Index: $_currentSongIndex');
+void _handleSongCompletion() {
+  print('🎯 _handleSongCompletion called - Queue size: ${_queue.length} | Current Album: $_currentAlbum | Index: $_currentSongIndex');
 
-if (_queue.isNotEmpty) {
-  final nextSong = _queue.removeAt(0);
-  final albumName = nextSong['albumName'] as String? ?? "";
-  final directUrl = nextSong['url'] as String? ?? "";
-  final title = nextSong['title'] as String? ?? "Unknown Song";
-  final artUrl = nextSong['artUrl'] as String? ?? "";
+  if (_queue.isNotEmpty) {
+    int nextIndex = 0;
 
-  // Add lock check before playing
-  final songList = _albums[albumName]?['songs'] as List? ?? [];
-  final originalSong = songList.firstWhere((s) => (s['Title'] as String?) == title, orElse: () => {});
-  final isFree = originalSong['isFree'] as bool? ?? false;
-  final emailUnlock = originalSong['emailUnlock'] as bool? ?? false;
-  final isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
+    // Random selection when shuffle is enabled
+    if (_globalPlayer.shuffleModeEnabled && _queue.length > 1) {
+      nextIndex = Random().nextInt(_queue.length);
+      print("🔀 Shuffle active - randomly selected index $nextIndex from queue");
+    }
 
-  if (isLocked) {
-    print("⛔ Skipping locked song in queue: $title");
-    // Recurse to next item
-    _handleSongCompletion();
+    final nextSong = _queue.removeAt(nextIndex);
+
+    final albumName = nextSong['albumName'] as String? ?? "";
+    final directUrl = nextSong['url'] as String? ?? "";
+    final title = nextSong['title'] as String? ?? "Unknown Song";
+    final artUrl = nextSong['artUrl'] as String? ?? "";
+
+    // Add lock check before playing
+    final songList = _albums[albumName]?['songs'] as List? ?? [];
+    final originalSong = songList.firstWhere(
+      (s) => (s['Title'] as String?) == title,
+      orElse: () => {},
+    );
+
+    final isFree = originalSong['isFree'] as bool? ?? false;
+    final emailUnlock = originalSong['emailUnlock'] as bool? ?? false;
+    final isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
+
+    if (isLocked) {
+      print("⛔ Skipping locked song in queue: $title");
+      // Recurse to next item (will pick randomly again if shuffle is on)
+      _handleSongCompletion();
+      return;
+    }
+
+    setState(() {
+      _currentSongTitle = title;
+      _currentSongArtUrl = artUrl;
+      _currentAlbum = albumName;
+    });
+
+    print("🎵 Playing next from queue: $title (Album: $albumName)");
+
+    if (directUrl.isNotEmpty && directUrl.startsWith('http')) {
+      _playSong(albumName, 0, directUrl: directUrl, titleToPlay: title, artUrl: artUrl);
+    } else {
+      _playSong(albumName, 0);
+    }
     return;
   }
 
-  setState(() {
-    _currentSongTitle = title;
-    _currentSongArtUrl = artUrl;
-    _currentAlbum = albumName;
-  });
-
-  if (directUrl.isNotEmpty && directUrl.startsWith('http')) {
-    _playSong(albumName, 0, directUrl: directUrl, titleToPlay: title, artUrl: artUrl);
-  } else {
-    _playSong(albumName, 0);
-  }
-  return;
+  print('→ No queue - calling _playNextSong()');
+  _playNextSong();
 }
 
-    print('→ No queue - calling _playNextSong()');
-    _playNextSong();
-  }
+// 1. Welcome Tutorial - Very first thing on app launch (main spine)
+Future<void> _showWelcomeTutorial() async {
+  final prefs = await SharedPreferences.getInstance();
+  if (prefs.getBool('hasSeenWelcomeTutorial') ?? false) return;
+
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: const Text("Welcome to MelodicSol 🎵"),
+      content: const Text(
+        "Tap any album cover to open it and explore the music.\n\n"
+        "• Tap = Open album\n"
+        "• Long-press = More options (coming soon)",
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            prefs.setBool('hasSeenWelcomeTutorial', true);
+            Navigator.of(context).pop();
+            // Show main album tutorial right after welcome
+            _showMainAlbumTutorial();
+          },
+          child: const Text("Got it"),
+        ),
+      ],
+    ),
+  );
+}
+
+// 2. Main Album Spine Tutorial
+Future<void> _showMainAlbumTutorial() async {
+  final prefs = await SharedPreferences.getInstance();
+  if (prefs.getBool('hasSeenMainAlbumTutorial') ?? false) return;
+
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: const Text("Your Album Collection"),
+      content: const Text(
+        "This is the main album screen.\n\n"
+        "• Tap an album = Open it and see all songs\n"
+        "• Swipe left/right = Browse more albums (if you have multiple)",
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            prefs.setBool('hasSeenMainAlbumTutorial', true);
+            Navigator.of(context).pop();
+          },
+          child: const Text("Got it"),
+        ),
+      ],
+    ),
+  );
+}
+
+// 3. Album Detail / Songs Tutorial (when user taps an album)
+Future<void> _showAlbumDetailTutorial() async {
+  final prefs = await SharedPreferences.getInstance();
+  if (prefs.getBool('hasSeenAlbumDetailTutorial') ?? false) return;
+
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: const Text("Album & Songs 🎤"),
+      content: const Text(
+        "You are now inside an album.\n\n"
+        "• Tap a song = Play it right away\n"
+        "• Long-press a song = Add to queue ('Play song next')\n\n"
+        "Use the big play button at the bottom to start the album.",
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            prefs.setBool('hasSeenAlbumDetailTutorial', true);
+            Navigator.of(context).pop();
+          },
+          child: const Text("Got it"),
+        ),
+      ],
+    ),
+  );
+}
+
+// 4. Queue Tutorial - Triggers when queue page is first viewed or first song added to queue
+Future<void> _showQueueTutorial() async {
+  final prefs = await SharedPreferences.getInstance();
+  if (prefs.getBool('hasSeenQueueTutorial') ?? false) return;
+
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: const Text("Your Queue 📋"),
+      content: const Text(
+        "This is your playback queue.\n\n"
+        "• Tap a song in queue = Jump to that song\n"
+        "• Long-press a song in queue = Remove it or reorder\n\n"
+        "Songs you long-press from albums are added here.",
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            prefs.setBool('hasSeenQueueTutorial', true);
+            Navigator.of(context).pop();
+          },
+          child: const Text("Got it"),
+        ),
+      ],
+    ),
+  );
+}
+
 // Check livestream status from S3 JSON file
 Future<void> _checkLivestreamStatus() async {
   try {
@@ -1524,13 +1660,13 @@ Container(
               onPressed: () async {
                 final bool newShuffle = !_globalPlayer.shuffleModeEnabled;
                 await _globalPlayer.setShuffleModeEnabled(newShuffle);
-                setState(() {}); // refresh icon
+                setState(() {});
 
                 if (newShuffle) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text("Shuffle enabled"), duration: Duration(seconds: 1)),
                   );
-                  print("🔀 Shuffle ENABLED (note: full randomization needs playlist mode)");
+                  print("🔀 Shuffle ENABLED - will pick randomly from queue");
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text("Shuffle disabled"), duration: Duration(seconds: 1)),
@@ -1667,6 +1803,9 @@ Widget _buildPlaylistsPage() {
                   duration: const Duration(milliseconds: 300),
                   curve: Curves.easeOut,
                 );
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                _showAlbumDetailTutorial();
+                });
               }
             },
           ),
