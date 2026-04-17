@@ -474,16 +474,21 @@ Future<void> _playSong(String albumName, int index, {
         'artUrl': song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "",
         'url': song['url'] as String? ?? "",   // ← Critical for correct playback
       });
-      _showQueueTutorial();
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text("Added to queue: ${song['Title'] ?? 'Unknown Song'}"),
         duration: const Duration(seconds: 1),
-      ),
+      ),      
     );
-  }
+    
+    // Show queue tutorial the first time
+  _showQueueTutorial();
+}
+  
+
+
 
   // Improved Song Completion Handler
 void _handleSongCompletion() {
@@ -543,7 +548,9 @@ void _handleSongCompletion() {
   _playNextSong();
 }
 
-// 1. Welcome Tutorial - Very first thing on app launch (main spine)
+// ==================== TUTORIALS ====================
+
+// 1. Welcome - Very first thing
 Future<void> _showWelcomeTutorial() async {
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getBool('hasSeenWelcomeTutorial') ?? false) return;
@@ -556,15 +563,14 @@ Future<void> _showWelcomeTutorial() async {
       content: const Text(
         "Tap any album cover to open it and explore the music.\n\n"
         "• Tap = Open album\n"
-        "• Long-press = More options (coming soon)",
+        "• Long-press = More options",
       ),
       actions: [
         TextButton(
           onPressed: () {
             prefs.setBool('hasSeenWelcomeTutorial', true);
             Navigator.of(context).pop();
-            // Show main album tutorial right after welcome
-            _showMainAlbumTutorial();
+            _showMainAlbumTutorial();   // Chain to next
           },
           child: const Text("Got it"),
         ),
@@ -573,7 +579,7 @@ Future<void> _showWelcomeTutorial() async {
   );
 }
 
-// 2. Main Album Spine Tutorial
+// 2. Main Album Spine
 Future<void> _showMainAlbumTutorial() async {
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getBool('hasSeenMainAlbumTutorial') ?? false) return;
@@ -586,7 +592,7 @@ Future<void> _showMainAlbumTutorial() async {
       content: const Text(
         "This is the main album screen.\n\n"
         "• Tap an album = Open it and see all songs\n"
-        "• Swipe left/right = Browse more albums (if you have multiple)",
+        "• Swipe = Browse more albums",
       ),
       actions: [
         TextButton(
@@ -601,7 +607,7 @@ Future<void> _showMainAlbumTutorial() async {
   );
 }
 
-// 3. Album Detail / Songs Tutorial (when user taps an album)
+// 3. Album & Songs (triggered when album is opened)
 Future<void> _showAlbumDetailTutorial() async {
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getBool('hasSeenAlbumDetailTutorial') ?? false) return;
@@ -613,9 +619,9 @@ Future<void> _showAlbumDetailTutorial() async {
       title: const Text("Album & Songs 🎤"),
       content: const Text(
         "You are now inside an album.\n\n"
-        "• Tap a song = Play it right away\n"
+        "• Tap a song = Play it immediately\n"
         "• Long-press a song = Add to queue ('Play song next')\n\n"
-        "Use the big play button at the bottom to start the album.",
+        "Use the big play button to start the first song.",
       ),
       actions: [
         TextButton(
@@ -630,7 +636,7 @@ Future<void> _showAlbumDetailTutorial() async {
   );
 }
 
-// 4. Queue Tutorial - Triggers when queue page is first viewed or first song added to queue
+// 4. Queue Tutorial
 Future<void> _showQueueTutorial() async {
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getBool('hasSeenQueueTutorial') ?? false) return;
@@ -643,8 +649,8 @@ Future<void> _showQueueTutorial() async {
       content: const Text(
         "This is your playback queue.\n\n"
         "• Tap a song in queue = Jump to that song\n"
-        "• Long-press a song in queue = Remove it or reorder\n\n"
-        "Songs you long-press from albums are added here.",
+        "• Long-press a song in queue = Remove or reorder\n\n"
+        "Long-press songs from albums to add them here.",
       ),
       actions: [
         TextButton(
@@ -658,6 +664,8 @@ Future<void> _showQueueTutorial() async {
     ),
   );
 }
+
+
 
 // Check livestream status from S3 JSON file
 Future<void> _checkLivestreamStatus() async {
@@ -800,6 +808,7 @@ void _handleDeepLink(Uri uri) {
 
   // NEW: Updated long-press menu with Song Story + Play Next
   void _showSongOptions(Map<String, dynamic> song, String albumName, int songIndex) {
+    _showAlbumDetailTutorial();
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.grey[900],
