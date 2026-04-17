@@ -1524,19 +1524,18 @@ Container(
               onPressed: () async {
                 final bool newShuffle = !_globalPlayer.shuffleModeEnabled;
                 await _globalPlayer.setShuffleModeEnabled(newShuffle);
-
-                setState(() {}); // refresh icon color
+                setState(() {}); // refresh icon
 
                 if (newShuffle) {
-                  print("🔀 Shuffle ENABLED");
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text("Shuffle enabled"), duration: Duration(seconds: 1)),
                   );
+                  print("🔀 Shuffle ENABLED (note: full randomization needs playlist mode)");
                 } else {
-                  print("🔀 Shuffle DISABLED");
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text("Shuffle disabled"), duration: Duration(seconds: 1)),
                   );
+                  print("🔀 Shuffle DISABLED");
                 }
               },
             ),
@@ -1581,22 +1580,20 @@ Container(
             ),
             IconButton(
               icon: Icon(
-                _globalPlayer.loopMode == LoopMode.one 
-                    ? Icons.repeat_one 
-                    : Icons.repeat,
+                _globalPlayer.loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat,
                 size: 28,
                 color: _globalPlayer.loopMode != LoopMode.off ? themeColor : Colors.white54,
               ),
               onPressed: () {
                 if (_globalPlayer.loopMode == LoopMode.off) {
                   _globalPlayer.setLoopMode(LoopMode.all);
-                  print("🔁 Loop mode: All");
+                  print("🔁 Loop: All");
                 } else if (_globalPlayer.loopMode == LoopMode.all) {
                   _globalPlayer.setLoopMode(LoopMode.one);
-                  print("🔂 Loop mode: One");
+                  print("🔂 Loop: One");
                 } else {
                   _globalPlayer.setLoopMode(LoopMode.off);
-                  print("➡️ Loop mode: Off");
+                  print("➡️ Loop: Off");
                 }
               },
             ),
