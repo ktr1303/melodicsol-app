@@ -2,6 +2,7 @@ import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:path/path.dart' as path;
 import 'package:http/http.dart' as http;
@@ -16,24 +17,41 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';           // For Platform.isAndroid / Platform.isIOS
 import 'package:app_links/app_links.dart';   // For deep links
 
-
-
 final AudioPlayer _globalPlayer = AudioPlayer();
-
-
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
 
   final session = await AudioSession.instance;
   await session.configure(const AudioSessionConfiguration.music());
 
   runApp(const MelodicSolApp());
-  
-}
-// In main.dart, after runApp
 
+  // Longer delay + try/catch to prevent crash on init
+  await Future.delayed(const Duration(milliseconds: 800));
+/*
+  try {
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.melodicsol.channel.audio',
+      androidNotificationChannelName: 'MelodicSol Playback',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: true,
+      notificationColor: Colors.black,
+      androidShowNotificationBadge: true,
+      artDownscaleWidth: 512,
+      artDownscaleHeight: 512,
+      fastForwardInterval: const Duration(seconds: 30),
+      rewindInterval: const Duration(seconds: 15),
+      preloadArtwork: true,
+      // iosCategory: IOSAudioCategory.playback,
+      // iosApplicationCategory: IOSAudioApplicationCategory.audio,
+    );
+    print('✅ JustAudioBackground initialized successfully');
+  } catch (e) {
+    print('⚠️ JustAudioBackground init failed (non-fatal): $e');
+  }
+  */
+}
 
 
 
@@ -60,7 +78,6 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
-  final AudioPlayer _player = _globalPlayer;
 
   final TextEditingController _promoCodeController = TextEditingController();
 
@@ -112,6 +129,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _showVisualizer = false;
   int _visualizerStyle = 0; // 0=Waveform, 1=Circular, 2=Frequency, 3=Mirror, 4=Pulse Rings
   bool _combineModes = false;
+  String? _currentViewedAlbum;   // ← Add this  
 
   late AppLinks _appLinks;
   StreamSubscription? _deepLinkSubscription;
@@ -235,12 +253,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     super.initState();
     _pageController = PageController(initialPage: 1);
     _boneStaggerController = AnimationController(duration: const Duration(milliseconds: 1800), vsync: this)..forward();
+    // Deep link listener
     _appLinks = AppLinks();
+    print("🔧 Deep link listener registered in HomePageState");
+
     _deepLinkSubscription = _appLinks.uriLinkStream.listen((Uri? uri) {
+      print("🔗 uriLinkStream fired with: $uri");
       if (uri != null) {
         _handleDeepLink(uri);
       }
-    });    
+    });
 ;
 
     Timer.periodic(const Duration(seconds: 30), (timer) {
@@ -274,7 +296,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _fetchAlbums();
     _setupProcessingListener();
 
-    _player.playerStateStream.listen((playerState) {
+    _globalPlayer.playerStateStream.listen((playerState) {
       if (playerState.playing) {
         if (!_vinylController.isAnimating) _vinylController.repeat();
       } else {
@@ -282,8 +304,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       }
     });
 
-    _player.positionStream.listen((pos) => setState(() => _position = pos));
-    _player.durationStream.listen((dur) => setState(() => _duration = dur ?? Duration.zero));
+    _globalPlayer.positionStream.listen((pos) => setState(() => _position = pos));
+    _globalPlayer.durationStream.listen((dur) => setState(() => _duration = dur ?? Duration.zero));
   }
 
 
@@ -399,8 +421,8 @@ Future<void> _playSong(String albumName, int index, {
 
     print('>>> TITLE FORCED TO: $finalTitle | Album: $albumName | Index: $index | PlayID: $thisPlayId');
 
-    await _player.stop();
-    await _player.seek(Duration.zero);
+    await _globalPlayer.stop();
+    await _globalPlayer.seek(Duration.zero);
     await Future.delayed(const Duration(milliseconds: 800));
 
     final source = HlsAudioSource(
@@ -411,11 +433,11 @@ Future<void> _playSong(String albumName, int index, {
       },
     );
 
-    await _player.setAudioSource(source);
+    await _globalPlayer.setAudioSource(source);
     print('✅ HlsAudioSource set successfully | PlayID: $thisPlayId');
 
     await Future.delayed(const Duration(milliseconds: 400));
-    await _player.play();
+    await _globalPlayer.play();
     print('▶️ Play command sent | PlayID: $thisPlayId');
 
     _setupProcessingListener();
@@ -463,27 +485,40 @@ Future<void> _playSong(String albumName, int index, {
   void _handleSongCompletion() {
     print('🎯 _handleSongCompletion called - Queue size: ${_queue.length} | Current Album: $_currentAlbum | Index: $_currentSongIndex');
 
-    if (_queue.isNotEmpty) {
-      print('→ Playing next from queue');
-      final nextSong = _queue.removeAt(0);
-      final albumName = nextSong['albumName'] as String? ?? "";
-      final directUrl = nextSong['url'] as String? ?? "";
-      final title = nextSong['title'] as String? ?? "Unknown Song";
-      final artUrl = nextSong['artUrl'] as String? ?? "";
+if (_queue.isNotEmpty) {
+  final nextSong = _queue.removeAt(0);
+  final albumName = nextSong['albumName'] as String? ?? "";
+  final directUrl = nextSong['url'] as String? ?? "";
+  final title = nextSong['title'] as String? ?? "Unknown Song";
+  final artUrl = nextSong['artUrl'] as String? ?? "";
 
-      setState(() {
-        _currentSongTitle = title;
-        _currentSongArtUrl = artUrl;
-        _currentAlbum = albumName;           // Ensure we update current album
-      });
+  // Add lock check before playing
+  final songList = _albums[albumName]?['songs'] as List? ?? [];
+  final originalSong = songList.firstWhere((s) => (s['Title'] as String?) == title, orElse: () => {});
+  final isFree = originalSong['isFree'] as bool? ?? false;
+  final emailUnlock = originalSong['emailUnlock'] as bool? ?? false;
+  final isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
 
-      if (directUrl.isNotEmpty && directUrl.startsWith('http')) {
-        _playSong(albumName, 0, directUrl: directUrl, titleToPlay: title, artUrl: artUrl);
-      } else {
-        _playSong(albumName, 0);
-      }
-      return;
-    }
+  if (isLocked) {
+    print("⛔ Skipping locked song in queue: $title");
+    // Recurse to next item
+    _handleSongCompletion();
+    return;
+  }
+
+  setState(() {
+    _currentSongTitle = title;
+    _currentSongArtUrl = artUrl;
+    _currentAlbum = albumName;
+  });
+
+  if (directUrl.isNotEmpty && directUrl.startsWith('http')) {
+    _playSong(albumName, 0, directUrl: directUrl, titleToPlay: title, artUrl: artUrl);
+  } else {
+    _playSong(albumName, 0);
+  }
+  return;
+}
 
     print('→ No queue - calling _playNextSong()');
     _playNextSong();
@@ -529,17 +564,15 @@ void _handleDeepLink(Uri uri) {
         _hasConfirmedEmail = true;
       });
 
-      // Small delay + strong navigation to the confirmed screen
-      Future.delayed(const Duration(milliseconds: 1000), () {
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => EmailConfirmedScreen(email: email),
-            ),
-          );
-        }
-      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("✅ Email confirmed! Tap 'Back to App' to continue to the album with bonus songs."),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 6),
+          ),
+        );
+      }
     }
   }
 }
@@ -681,7 +714,7 @@ void _handleDeepLink(Uri uri) {
 
 void _setupProcessingListener() {
   _processingSubscription?.cancel();
-  _processingSubscription = _player.processingStateStream.listen((state) {
+  _processingSubscription = _globalPlayer.processingStateStream.listen((state) {
     print('>>> ProcessingState listener firing: $state | pending: $_pendingSongTitle | PlayID: $_currentPlayId');
 
     if (_pendingSongTitle != null && (state == ProcessingState.ready || state == ProcessingState.buffering)) {
@@ -769,7 +802,7 @@ Future<void> _playNextSong() async {
 
   // If we get here, no playable songs left
   print('→ No more free songs in album');
-  await _player.pause();
+  await _globalPlayer.pause();
   setState(() {
     _currentSongTitle = "End of free songs on this album";
   });
@@ -812,7 +845,7 @@ Future<void> _playPreviousSong() async {
   void _toggleLoop() {
     setState(() {
       _loopMode = _loopMode == LoopMode.off ? LoopMode.one : _loopMode == LoopMode.one ? LoopMode.all : LoopMode.off;
-      _player.setLoopMode(_loopMode);
+      _globalPlayer.setLoopMode(_loopMode);
     });
   }
 
@@ -938,7 +971,7 @@ Future<void> _playPreviousSong() async {
       iconSize: 64,
       icon: Icon(isPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill,
           color: isPlaying ? themeColor : Colors.white.withOpacity(0.9)),
-      onPressed: () => isPlaying ? _player.pause() : _player.play(),
+      onPressed: () => isPlaying ? _globalPlayer.pause() : _globalPlayer.play(),
     );
   }
 
@@ -1008,7 +1041,7 @@ Future<void> _playPreviousSong() async {
                       style: _visualizerStyle,
                       progress: _visualizerController.value,
                       color: themeColor,
-                      isPlaying: _player.playing,
+                      isPlaying: _globalPlayer.playing,
                       combine: _combineModes,
                     ),
                   );
@@ -1124,7 +1157,7 @@ Future<void> _playPreviousSong() async {
 
   Widget _buildMainAlbumPage(double screenHeight) {
     final logoGlowColor = _getLogoGlowColor();
-    final isPlaying = _player.playing;
+    final isPlaying = _globalPlayer.playing;
 
     final sortedAlbums = _albums.keys.toList()
       ..sort((a, b) => (_albums[b]?['order'] as int? ?? 999).compareTo(_albums[a]?['order'] as int? ?? 999));
@@ -1165,7 +1198,7 @@ Future<void> _playPreviousSong() async {
                       if (_isLivestreamActive) {
                         _launchUrl(_livestreamUrl);
                       } else {
-                        if (_player.playing) {
+                        if (_globalPlayer.playing) {
                           setState(() => _showVisualizer = true);
                         } else {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -1259,9 +1292,10 @@ Future<void> _playPreviousSong() async {
                         child: Opacity(
                           opacity: opacity,
                           child: GestureDetector(
-                            onTap: () {
-                              setState(() => _selectedAlbum = albumName);
-                            },
+                                  onTap: () => setState(() {
+                                    _selectedAlbum = albumName;
+                                    _currentViewedAlbum = albumName;   // ← Add this line
+                                  }),
                             child: Container(
                               height: 52,
                               alignment: Alignment.center,
@@ -1439,72 +1473,144 @@ Expanded(
   );
 },  ),       ), 
 
-          // Player Bar - Single clean row
-          Container(
-            decoration: BoxDecoration(
-              color: themeColor.withOpacity(0.15),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            ),
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-            child: SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _currentSongTitle.isEmpty ? "Nothing playing" : _currentSongTitle,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Slider(
-                    value: _position.inMilliseconds.toDouble().clamp(0, _duration.inMilliseconds.toDouble()),
-                    max: _duration.inMilliseconds.toDouble() > 0 ? _duration.inMilliseconds.toDouble() : 1,
-                    activeColor: themeColor,
-                    onChanged: (v) => _player.seek(Duration(milliseconds: v.toInt())),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(_formatDuration(_position), style: const TextStyle(fontSize: 11)),
-                        Text(_formatDuration(_duration), style: const TextStyle(fontSize: 11)),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(icon: const Icon(Icons.skip_previous, size: 32), color: themeColor, onPressed: _playPreviousSong),
-                      const SizedBox(width: 16),
-                      IconButton(
-                        icon: Icon(Icons.shuffle, size: 28, color: _player.shuffleModeEnabled ? themeColor : Colors.white54),
-                        onPressed: () => _player.setShuffleModeEnabled(!_player.shuffleModeEnabled),
-                      ),
-                      const SizedBox(width: 24),
-                      IconButton(
-                        icon: Icon(_player.playing ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 56),
-                        color: themeColor,
-                        onPressed: () => _player.playing ? _player.pause() : _player.play(),
-                      ),
-                      const SizedBox(width: 24),
-                      IconButton(
-                        icon: Icon(_player.loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat, size: 28, color: _player.loopMode != LoopMode.off ? themeColor : Colors.white54),
-                        onPressed: () {
-                          if (_player.loopMode == LoopMode.off) _player.setLoopMode(LoopMode.all);
-                          else if (_player.loopMode == LoopMode.all) _player.setLoopMode(LoopMode.one);
-                          else _player.setLoopMode(LoopMode.off);
-                        },
-                      ),
-                      const SizedBox(width: 16),
-                      IconButton(icon: const Icon(Icons.skip_next, size: 32), color: themeColor, onPressed: _playNextSong),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+// Bottom player bar - replace your current Container with this
+Container(
+  decoration: BoxDecoration(
+    color: themeColor.withOpacity(0.15),
+    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+  ),
+  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+  child: SafeArea(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,   // ← prevents overflow
+      children: [
+        Text(
+          _currentSongTitle.isEmpty ? "Nothing playing" : _currentSongTitle,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        Slider(
+          value: _position.inMilliseconds.toDouble().clamp(0, _duration.inMilliseconds.toDouble() > 0 ? _duration.inMilliseconds.toDouble() : 1),
+          max: _duration.inMilliseconds.toDouble() > 0 ? _duration.inMilliseconds.toDouble() : 1,
+          activeColor: themeColor,
+          onChanged: (v) => _globalPlayer.seek(Duration(milliseconds: v.toInt())),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(_formatDuration(_position), style: const TextStyle(fontSize: 11)),
+              Text(_formatDuration(_duration), style: const TextStyle(fontSize: 11)),
+            ],
           ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.skip_previous, size: 32),
+              color: themeColor,
+              onPressed: _playPreviousSong,
+            ),
+            IconButton(
+              icon: Icon(
+                Icons.shuffle,
+                size: 28,
+                color: _globalPlayer.shuffleModeEnabled ? themeColor : Colors.white54,
+              ),
+              onPressed: () async {
+                final bool newShuffle = !_globalPlayer.shuffleModeEnabled;
+                await _globalPlayer.setShuffleModeEnabled(newShuffle);
+
+                setState(() {}); // refresh icon color
+
+                if (newShuffle) {
+                  print("🔀 Shuffle ENABLED");
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Shuffle enabled"), duration: Duration(seconds: 1)),
+                  );
+                } else {
+                  print("🔀 Shuffle DISABLED");
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Shuffle disabled"), duration: Duration(seconds: 1)),
+                  );
+                }
+              },
+            ),
+            IconButton(
+              icon: Icon(
+                _globalPlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                size: 56,
+              ),
+              color: themeColor,
+              onPressed: () async {
+                if (_globalPlayer.playing) {
+                  await _globalPlayer.pause();
+                  return;
+                }
+
+                // Check if we have a currently playing/paused song
+                if (_currentSongTitle.isNotEmpty && _currentSongIndex >= 0) {
+                  // Normal resume
+                  await _globalPlayer.play();
+                  print("▶️ Resuming current song: $_currentSongTitle");
+                  return;
+                }
+
+                // First-time play: start first song of currently viewed album
+                String albumToPlay = _currentViewedAlbum ?? _currentAlbum ?? "";
+
+                if (albumToPlay.isEmpty || !_albums.containsKey(albumToPlay)) {
+                  if (_albums.isNotEmpty) {
+                    albumToPlay = _albums.keys.first;
+                    print("🎵 First-time play fallback: Using first album $albumToPlay");
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("No albums available")),
+                    );
+                    return;
+                  }
+                }
+
+                print("🎵 First-time play: Starting first song of album → $albumToPlay");
+                await _playSong(albumToPlay, 0);
+              },
+            ),
+            IconButton(
+              icon: Icon(
+                _globalPlayer.loopMode == LoopMode.one 
+                    ? Icons.repeat_one 
+                    : Icons.repeat,
+                size: 28,
+                color: _globalPlayer.loopMode != LoopMode.off ? themeColor : Colors.white54,
+              ),
+              onPressed: () {
+                if (_globalPlayer.loopMode == LoopMode.off) {
+                  _globalPlayer.setLoopMode(LoopMode.all);
+                  print("🔁 Loop mode: All");
+                } else if (_globalPlayer.loopMode == LoopMode.all) {
+                  _globalPlayer.setLoopMode(LoopMode.one);
+                  print("🔂 Loop mode: One");
+                } else {
+                  _globalPlayer.setLoopMode(LoopMode.off);
+                  print("➡️ Loop mode: Off");
+                }
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.skip_next, size: 32),
+              color: themeColor,
+              onPressed: _playNextSong,
+            ),
+          ],
+        ),
+      ],
+    ),
+  ),
+),
         ],
       );
     }
