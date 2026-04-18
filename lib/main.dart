@@ -18,6 +18,12 @@ import 'dart:io';           // For Platform.isAndroid / Platform.isIOS
 import 'package:app_links/app_links.dart';   // For deep links
 
 final AudioPlayer _globalPlayer = AudioPlayer();
+final GlobalKey _welcomeKey = GlobalKey();
+final GlobalKey _albumKey = GlobalKey();
+final GlobalKey _songsKey = GlobalKey();
+final GlobalKey _playButtonKey = GlobalKey();
+final GlobalKey _controlsKey = GlobalKey();
+final GlobalKey _queueKey = GlobalKey();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -60,11 +66,14 @@ class MelodicSolApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Melodic Sol',
+      title: 'Melodicsol',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         primaryColor: Colors.greenAccent,
         scaffoldBackgroundColor: Colors.black,
+      home: ShowCaseWidget(
+      builder: Builder(
+        builder: (context) => const HomePage(),  
       ),
       home: const WelcomeScreen(),
     );
@@ -248,83 +257,93 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _isCheckingSubscription = true;
   String? _revenueCatError;
 
-  @override
-  void initState() {
-    super.initState();
-    _pageController = PageController(initialPage: 1);
-    _boneStaggerController = AnimationController(duration: const Duration(milliseconds: 1800), vsync: this)..forward();
-    // Deep link listener
-    _appLinks = AppLinks();
-    print("🔧 Deep link listener registered in HomePageState");
+@override
+void initState() {
+  super.initState();
 
-    _deepLinkSubscription = _appLinks.uriLinkStream.listen((Uri? uri) {
-      print("🔗 uriLinkStream fired with: $uri");
-      if (uri != null) {
-        _handleDeepLink(uri);
-      }
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-        // TEMPORARY: Reset tutorials for testing — remove after testing
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('hasSeenWelcomeTutorial');
-    await prefs.remove('hasSeenMainAlbumTutorial');
-    await prefs.remove('hasSeenAlbumDetailTutorial');
-    await prefs.remove('hasSeenQueueTutorial');
+  _pageController = PageController(initialPage: 1);
+  _boneStaggerController = AnimationController(
+      duration: const Duration(milliseconds: 1800), vsync: this)
+    ..forward();
 
-    await _showWelcomeTutorial();   // This will automatically show main album tutorial after "Got it"
-  });
- 
-    Timer.periodic(const Duration(seconds: 30), (timer) {
-    _checkLivestreamStatus();
-    
-  });
-  _pageController.addListener(() {
-    if (_pageController.hasClients) {
-      final currentPage = _pageController.page?.round() ?? 0;
-      if (currentPage == 1) {   // Adjust to 0 or 2 if your queue is on a different index
-        _showQueueTutorial();
-      }
+  // Deep link listener
+  _appLinks = AppLinks();
+  print("Deep link listener registered in HomePageState");
+  _deepLinkSubscription = _appLinks.uriLinkStream.listen((Uri? uri) {
+    print("uriLinkStream fired with: $uri");
+    if (uri != null) {
+      _handleDeepLink(uri);
     }
-  }); 
-  // Check immediately when app starts
+  });
+
+  // Start interactive showcase only the very first time
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    final prefs = await SharedPreferences.getInstance();
+    final hasSeenShowcase = prefs.getBool('hasSeenInteractiveTutorial') ?? false;
+
+    if (!hasSeenShowcase) {
+      await Future.delayed(const Duration(milliseconds: 1200));
+      if (mounted) {
+        ShowCaseWidget.of(context).startShowCase([
+          _welcomeKey,
+          _albumKey,
+          _songsKey,
+          _playButtonKey,
+          _controlsKey,
+          _queueKey,
+        ]);
+      }
+      await prefs.setBool('hasSeenInteractiveTutorial', true);
+    }
+  });
+
+  Timer.periodic(const Duration(seconds: 30), (timer) {
+    _checkLivestreamStatus();
+  });
+
   _checkLivestreamStatus();
 
-    _videoController = VideoPlayerController.asset(
-      'assets/spine_video.mp4',
-      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-    )..initialize().then((_) {
-        setState(() => _videoInitialized = true);
-        _videoController.setLooping(true);
-        _videoController.setVolume(0.0);
-        _videoController.play();
-      }).catchError((error) {
-        print("Video failed to load: $error");
-        setState(() => _videoError = error.toString());
-      });
-
-    _vinylController = AnimationController(duration: const Duration(seconds: 25), vsync: this);
-    _logoGlowController = AnimationController(duration: const Duration(milliseconds: 2200), vsync: this)..repeat(reverse: true);
-    _visualizerController = AnimationController(duration: const Duration(milliseconds: 800), vsync: this)..repeat(reverse: true);
-    _livePulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800), // Fast pulse — feels energetic
-    )..repeat(reverse: true); // This creates the breathing/flashing effect
-    _loadPlaylists();
-    _fetchAlbums();
-    _setupProcessingListener();
-
-    _globalPlayer.playerStateStream.listen((playerState) {
-      if (playerState.playing) {
-        if (!_vinylController.isAnimating) _vinylController.repeat();
-      } else {
-        _vinylController.stop();
-      }
+  _videoController = VideoPlayerController.asset(
+    'assets/spine_video.mp4',
+    videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+  )..initialize().then((_) {
+      setState(() => _videoInitialized = true);
+      _videoController.setLooping(true);
+      _videoController.setVolume(0.0);
+      _videoController.play();
+    }).catchError((error) {
+      print("Video failed to load: $error");
+      setState(() => _videoError = error.toString());
     });
 
-    _globalPlayer.positionStream.listen((pos) => setState(() => _position = pos));
-    _globalPlayer.durationStream.listen((dur) => setState(() => _duration = dur ?? Duration.zero));
-  }
+  _vinylController = AnimationController(
+      duration: const Duration(seconds: 25), vsync: this);
+  _logoGlowController = AnimationController(
+      duration: const Duration(milliseconds: 2200), vsync: this)
+    ..repeat(reverse: true);
+  _visualizerController = AnimationController(
+      duration: const Duration(milliseconds: 800), vsync: this)
+    ..repeat(reverse: true);
+  _livePulseController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 800),
+  )..repeat(reverse: true);
 
+  _loadPlaylists();
+  _fetchAlbums();
+  _setupProcessingListener();
+
+  _globalPlayer.playerStateStream.listen((playerState) {
+    if (playerState.playing) {
+      if (!_vinylController.isAnimating) _vinylController.repeat();
+    } else {
+      _vinylController.stop();
+    }
+  });
+
+  _globalPlayer.positionStream.listen((pos) => setState(() => _position = pos));
+  _globalPlayer.durationStream.listen((dur) => setState(() => _duration = dur ?? Duration.zero));
+}
 
   Future<void> _loadPlaylists() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1336,13 +1355,17 @@ Future<void> _playPreviousSong() async {
 
     if (_selectedAlbum == null) {
       // === MAIN SPINE PAGE WITH VIDEO BACKGROUND ===
-      return SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        child: SizedBox(
-          height: screenHeight * 1.45,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
+return ShowCase(
+  key: _welcomeKey,
+  title: 'Welcome to MelodicSol 🎵',
+  description: 'This is your home screen. Browse your beautiful album collection here.',
+  child: SingleChildScrollView(
+    physics: const BouncingScrollPhysics(),
+    child: SizedBox(
+      height: screenHeight * 1.45,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
               // 1. Spine Video Background
               Positioned.fill(
                 child: _videoError != null || !_videoInitialized
@@ -1463,16 +1486,18 @@ Future<void> _playPreviousSong() async {
                         offset: Offset(0, lift),
                         child: Opacity(
                           opacity: opacity,
-                          child: GestureDetector(
-                                  onTap: () => setState(() {
-                                    _selectedAlbum = albumName;
-                                    _currentViewedAlbum = albumName;
-                                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                                    _showAlbumDetailTutorial();
-                                    });   // ← Add this line
-                                  }),
-                                  
-                            child: Container(
+                          child: ShowCase(
+                                key: _albumKey,
+                                title: 'Albums',
+                                description: 'Tap any album cover to open it and see the full song list.',
+                                child: GestureDetector(
+                                  onTap: () {
+                                    setState(() {
+                                      _selectedAlbum = albumName;
+                                      _currentViewedAlbum = albumName;
+                                    });
+                                  },
+                                  child: Container(
                               height: 52,
                               alignment: Alignment.center,
                               child: Text(
@@ -1715,13 +1740,14 @@ Container(
                 }
               },
             ),
-            IconButton(
-              icon: Icon(
-                _globalPlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                size: 56,
-              ),
-              color: themeColor,
-              onPressed: () async {
+              IconButton(
+                key: _playButtonKey,   // ← add this key
+                icon: Icon(
+                  _globalPlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                  size: 48,
+                  color: themeColor,
+                ),
+                onPressed: () async {
                 if (_globalPlayer.playing) {
                   await _globalPlayer.pause();
                   return;
