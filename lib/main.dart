@@ -15,7 +15,9 @@ import 'dart:async';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';           // For Platform.isAndroid / Platform.isIOS
-import 'package:app_links/app_links.dart';   // For deep links
+import 'package:app_links/app_links.dart';
+import 'package:showcaseview/showcaseview.dart';
+   // For deep links
 
 final AudioPlayer _globalPlayer = AudioPlayer();
 final GlobalKey _welcomeKey = GlobalKey();
@@ -63,23 +65,22 @@ Future<void> main() async {
 
 class MelodicSolApp extends StatelessWidget {
   const MelodicSolApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Melodicsol',
+      title: 'MelodicSol',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         primaryColor: Colors.greenAccent,
         scaffoldBackgroundColor: Colors.black,
-      home: ShowCaseWidget(
-      builder: Builder(
-        builder: (context) => const HomePage(),  
       ),
-      home: const WelcomeScreen(),
+      home: ShowCaseWidget(
+        builder: (context) => const WelcomeScreen(),
+      ),
     );
   }
 }
-
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
   @override
@@ -1355,11 +1356,7 @@ Future<void> _playPreviousSong() async {
 
     if (_selectedAlbum == null) {
       // === MAIN SPINE PAGE WITH VIDEO BACKGROUND ===
-return ShowCase(
-  key: _welcomeKey,
-  title: 'Welcome to MelodicSol 🎵',
-  description: 'This is your home screen. Browse your beautiful album collection here.',
-  child: SingleChildScrollView(
+return SingleChildScrollView(
     physics: const BouncingScrollPhysics(),
     child: SizedBox(
       height: screenHeight * 1.45,
@@ -1486,11 +1483,7 @@ return ShowCase(
                         offset: Offset(0, lift),
                         child: Opacity(
                           opacity: opacity,
-                          child: ShowCase(
-                                key: _albumKey,
-                                title: 'Albums',
-                                description: 'Tap any album cover to open it and see the full song list.',
-                                child: GestureDetector(
+                          child: GestureDetector(
                                   onTap: () {
                                     setState(() {
                                       _selectedAlbum = albumName;
