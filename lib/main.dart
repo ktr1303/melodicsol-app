@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
-import 'package:path/path.dart' as path;
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -12,19 +11,12 @@ import 'package:url_launcher/url_launcher.dart';
 import 'dart:math';
 import 'dart:async';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:io';           // For Platform.isAndroid / Platform.isIOS
+import 'package:shared_preferences/shared_preferences.dart';         // For Platform.isAndroid / Platform.isIOS
 import 'package:app_links/app_links.dart';
-import 'package:showcaseview/showcaseview.dart';
    // For deep links
 
 final AudioPlayer _globalPlayer = AudioPlayer();
-/*final GlobalKey _welcomeKey = GlobalKey();
-final GlobalKey _albumKey = GlobalKey();
-final GlobalKey _songsKey = GlobalKey();
-final GlobalKey _playButtonKey = GlobalKey();
-final GlobalKey _controlsKey = GlobalKey();
-final GlobalKey _queueKey = GlobalKey();*/
+
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -74,7 +66,7 @@ class MelodicSolApp extends StatelessWidget {
         primaryColor: Colors.greenAccent,
         scaffoldBackgroundColor: Colors.black,
       ),
-      home: WelcomeScreen()
+      home: const WelcomeScreen(),
     );
   }
 }
@@ -273,6 +265,20 @@ void initState() {
       _handleDeepLink(uri);
     }
   });
+
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+  await _showWelcomeTutorial();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('hasSeenWelcomeTutorial');
+    await prefs.remove('hasSeenMainAlbumTutorial');
+    await prefs.remove('hasSeenAlbumDetailTutorial');
+    await prefs.remove('hasSeenQueueTutorial');
+
+    await _showWelcomeTutorial();
+  });
+});
 
   // Start interactive showcase only the very first time
   /*WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -598,6 +604,7 @@ void _handleSongCompletion() {
 // ==================== TUTORIALS ====================
 
 // 1. Welcome - Very first thing
+// 1. Welcome Tutorial - First thing on app open
 Future<void> _showWelcomeTutorial() async {
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getBool('hasSeenWelcomeTutorial') ?? false) return;
@@ -609,8 +616,8 @@ Future<void> _showWelcomeTutorial() async {
       title: const Text("Welcome to MelodicSol 🎵"),
       content: const Text(
         "Tap any album cover to open it and explore the music.\n\n"
-        "• Tap = Open album\n"
-        "• Long-press = More options",
+        "• Tap = Open the album and see its songs\n"
+        "• Long-press = More options (coming soon)",
       ),
       actions: [
         TextButton(
@@ -626,7 +633,7 @@ Future<void> _showWelcomeTutorial() async {
   );
 }
 
-// 2. Main Album Spine
+// 2. Main Album Spine Tutorial
 Future<void> _showMainAlbumTutorial() async {
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getBool('hasSeenMainAlbumTutorial') ?? false) return;
@@ -639,7 +646,7 @@ Future<void> _showMainAlbumTutorial() async {
       content: const Text(
         "This is the main album screen.\n\n"
         "• Tap an album = Open it and see all songs\n"
-        "• Swipe = Browse more albums",
+        "• Swipe left/right = Browse more albums",
       ),
       actions: [
         TextButton(
@@ -654,7 +661,7 @@ Future<void> _showMainAlbumTutorial() async {
   );
 }
 
-// 3. Album & Songs (triggered when album is opened)
+// 3. Album Detail / Songs Tutorial (when user taps an album)
 Future<void> _showAlbumDetailTutorial() async {
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getBool('hasSeenAlbumDetailTutorial') ?? false) return;
@@ -668,7 +675,7 @@ Future<void> _showAlbumDetailTutorial() async {
         "You are now inside an album.\n\n"
         "• Tap a song = Play it immediately\n"
         "• Long-press a song = Add to queue ('Play song next')\n\n"
-        "Use the big play button to start the first song.",
+        "Use the big play button at the bottom to start the first song of the album.",
       ),
       actions: [
         TextButton(
@@ -683,8 +690,7 @@ Future<void> _showAlbumDetailTutorial() async {
   );
 }
 
-// 4. Queue Tutorial
-// Queue tutorial — shows ONLY the first time the user swipes to the queue page
+// 4. Queue Tutorial (when user first sees the queue page)
 Future<void> _showQueueTutorial() async {
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getBool('hasSeenQueueTutorial') ?? false) return;
@@ -1486,6 +1492,9 @@ Widget _buildMainAlbumPage(double screenHeight) {
                               _selectedAlbum = albumName;
                               _currentViewedAlbum = albumName;
                             });
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              _showAlbumDetailTutorial();
+                            });
                           },
                           child: Container(
                             height: 52,
@@ -1517,7 +1526,7 @@ Widget _buildMainAlbumPage(double screenHeight) {
             }).toList(),
           ],
         ),
-      ),
+      ),    
     );
   } else {
     // === ALBUM DETAIL PAGE ===
