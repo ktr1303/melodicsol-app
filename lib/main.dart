@@ -1,10 +1,8 @@
-import 'package:audio_service/audio_service.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
-import 'package:audio_session/audio_session.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -39,7 +37,7 @@ try {
   } catch (e, stack) {
     print("❌ JustAudioBackground init failed: $e");
     print("Stack: $stack");
-  }
+  } 
 /*
   final session = await AudioSession.instance;
   await session.configure(const AudioSessionConfiguration.music());*/
@@ -423,7 +421,6 @@ Future<void> _playSong(String albumName, int index, {
   if (urlToPlay.isEmpty) {
     final songList = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
     if (index < 0 || index >= songList.length) return;
-
     final song = songList[index] as Map<String, dynamic>;
     urlToPlay = (song['url'] as String?)?.trim() ?? '';
     finalTitle = (song['Title'] as String?) ?? "Unknown Song";
@@ -477,33 +474,27 @@ Future<void> _playSong(String albumName, int index, {
     await _globalPlayer.seek(Duration.zero);
     await Future.delayed(const Duration(milliseconds: 300));
 
+    // Create HLS source WITH MediaItem tag (REQUIRED for just_audio_background)
     final source = HlsAudioSource(
       Uri.parse(urlToPlay),
       headers: {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36',
         'Accept': 'application/vnd.apple.mpegurl, */*',
       },
+      tag: MediaItem(
+        id: urlToPlay,
+        title: finalTitle,
+        album: albumName,
+        artUri: finalArtUrl.isNotEmpty ? Uri.parse(finalArtUrl) : null,
+      ),
     );
 
-    // Set the audio source
     // Set the audio source
     await _globalPlayer.setAudioSource(source);
-
-    // Correct and simple way for just_audio_background
-    final mediaItem = MediaItem(
-      id: urlToPlay,
-      title: finalTitle,
-      album: albumName,
-      artUri: finalArtUrl.isNotEmpty ? Uri.parse(finalArtUrl) : null,
-    );
-
-    await AudioServiceBackground.setMediaItem(mediaItem);
-
-    print('✅ HlsAudioSource + MediaItem set successfully | PlayID: $thisPlayId');
+    print('✅ HlsAudioSource with MediaItem set successfully | PlayID: $thisPlayId');
 
     await Future.delayed(const Duration(milliseconds: 300));
     await _globalPlayer.play();
-
     print('▶️ Play command sent | PlayID: $thisPlayId');
 
     _setupProcessingListener();
@@ -511,7 +502,6 @@ Future<void> _playSong(String albumName, int index, {
     if (!_vinylController.isAnimating) {
       _vinylController.repeat();
     }
-
   } catch (e) {
     print("❌ HLS ERROR (attempt ${retryCount + 1}): $e");
 
