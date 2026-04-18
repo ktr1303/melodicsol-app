@@ -2,7 +2,6 @@ import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:path/path.dart' as path;
 import 'package:http/http.dart' as http;
@@ -20,12 +19,12 @@ import 'package:showcaseview/showcaseview.dart';
    // For deep links
 
 final AudioPlayer _globalPlayer = AudioPlayer();
-final GlobalKey _welcomeKey = GlobalKey();
+/*final GlobalKey _welcomeKey = GlobalKey();
 final GlobalKey _albumKey = GlobalKey();
 final GlobalKey _songsKey = GlobalKey();
 final GlobalKey _playButtonKey = GlobalKey();
 final GlobalKey _controlsKey = GlobalKey();
-final GlobalKey _queueKey = GlobalKey();
+final GlobalKey _queueKey = GlobalKey();*/
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,9 +36,9 @@ Future<void> main() async {
 
   // Longer delay + try/catch to prevent crash on init
   await Future.delayed(const Duration(milliseconds: 800));
-/*
+
   try {
-    await JustAudioBackground.init(
+   /* await JustAudioBackground.init(
       androidNotificationChannelId: 'com.melodicsol.channel.audio',
       androidNotificationChannelName: 'MelodicSol Playback',
       androidNotificationOngoing: true,
@@ -53,12 +52,12 @@ Future<void> main() async {
       preloadArtwork: true,
       // iosCategory: IOSAudioCategory.playback,
       // iosApplicationCategory: IOSAudioApplicationCategory.audio,
-    );
+    );*/
     print('✅ JustAudioBackground initialized successfully');
   } catch (e) {
     print('⚠️ JustAudioBackground init failed (non-fatal): $e');
   }
-  */
+  
 }
 
 
@@ -75,9 +74,7 @@ class MelodicSolApp extends StatelessWidget {
         primaryColor: Colors.greenAccent,
         scaffoldBackgroundColor: Colors.black,
       ),
-      home: ShowCaseWidget(
-        builder: (context) => const WelcomeScreen(),
-      ),
+      home: WelcomeScreen()
     );
   }
 }
@@ -303,6 +300,9 @@ void initState() {
   });
 
   _checkLivestreamStatus();
+
+  Container(color: Colors.black,
+  );
 
   _videoController = VideoPlayerController.asset(
     'assets/spine_video.mp4',
@@ -1347,468 +1347,391 @@ Future<void> _playPreviousSong() async {
     Navigator.pop(context);
   }
 
-  Widget _buildMainAlbumPage(double screenHeight) {
-    final logoGlowColor = _getLogoGlowColor();
-    final isPlaying = _globalPlayer.playing;
+Widget _buildMainAlbumPage(double screenHeight) {
+  final logoGlowColor = _getLogoGlowColor();
+  final isPlaying = _globalPlayer.playing;
 
-    final sortedAlbums = _albums.keys.toList()
-      ..sort((a, b) => (_albums[b]?['order'] as int? ?? 999).compareTo(_albums[a]?['order'] as int? ?? 999));
+  final sortedAlbums = _albums.keys.toList()
+    ..sort((a, b) => (_albums[b]?['order'] as int? ?? 999).compareTo(_albums[a]?['order'] as int? ?? 999));
 
-    if (_selectedAlbum == null) {
-      // === MAIN SPINE PAGE WITH VIDEO BACKGROUND ===
-    child: SingleChildScrollView(
-    physics: const BouncingScrollPhysics(),
-    child: SizedBox(
-      height: screenHeight * 1.45,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-              // 1. Spine Video Background
-              Positioned.fill(
-                child: _videoError != null || !_videoInitialized
-                    ? Image.asset('assets/spine.png', fit: BoxFit.fill)
-                    : (_videoController.value.isInitialized
-                        ? FittedBox(
-                            fit: BoxFit.fill,
-                            child: SizedBox(
-                              width: _videoController.value.size.width,
-                              height: screenHeight,
-                              child: VideoPlayer(_videoController),
+  if (_selectedAlbum == null) {
+    // === MAIN SPINE PAGE WITH VIDEO BACKGROUND ===
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      child: SizedBox(
+        height: screenHeight * 1.45,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // 1. Spine Video Background
+            Positioned.fill(
+              child: _videoError != null || !_videoInitialized
+                  ? Image.asset('assets/spine.png', fit: BoxFit.fill)
+                  : (_videoController.value.isInitialized
+                      ? FittedBox(
+                          fit: BoxFit.fill,
+                          child: SizedBox(
+                            width: _videoController.value.size.width,
+                            height: screenHeight,
+                            child: VideoPlayer(_videoController),
+                          ),
+                        )
+                      : Image.asset('assets/spine.png', fit: BoxFit.fill)),
+            ),
+
+            // 2. Livestream Logo with Flashing "LIVE NOW"
+            Positioned(
+              top: 35,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: GestureDetector(
+                  onTap: () {
+                    if (_isLivestreamActive) {
+                      _launchUrl(_livestreamUrl);
+                    } else {
+                      if (_globalPlayer.playing) {
+                        setState(() => _showVisualizer = true);
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("Play a song first to enjoy the visualizer")),
+                        );
+                      }
+                    }
+                  },
+                  child: AnimatedBuilder(
+                    animation: Listenable.merge([_logoGlowController, _livePulseController]),
+                    builder: (context, child) {
+                      final glowOpacity = 0.55 + 0.45 * _logoGlowController.value;
+                      final pulseOpacity = 0.6 + 0.4 * _livePulseController.value;
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_isLivestreamActive)
+                            Text(
+                              "LIVE",
+                              style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red.withOpacity(pulseOpacity),
+                                letterSpacing: 2.5,
+                              ),
                             ),
-                          )
-                        : Image.asset('assets/spine.png', fit: BoxFit.fill)),
+                          if (_isLivestreamActive) const SizedBox(width: 12),
+                          Container(
+                            decoration: BoxDecoration(
+                              boxShadow: [
+                                BoxShadow(
+                                  color: _isLivestreamActive
+                                      ? Colors.red.withOpacity(0.95)
+                                      : logoGlowColor.withOpacity(glowOpacity),
+                                  blurRadius: _isLivestreamActive ? 0 : 32 + 18 * _logoGlowController.value,
+                                ),
+                              ],
+                            ),
+                            child: child,
+                          ),
+                          if (_isLivestreamActive) const SizedBox(width: 12),
+                          if (_isLivestreamActive)
+                            Text(
+                              "NOW",
+                              style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red.withOpacity(pulseOpacity),
+                                letterSpacing: 2.5,
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                    child: Image.asset('assets/logo.png', height: 96),
+                  ),
+                ),
               ),
+            ),
 
-              // 2. Livestream Logo with Flashing "LIVE NOW"
-              Positioned(
-                top: 35,
+            // 3. Album Spine Grid
+            ...sortedAlbums.asMap().entries.map((e) {
+              final index = e.key;
+              final albumName = e.value;
+              final albumTheme = _getAlbumThemeColor(albumName);
+              const baseTop = 205.0;
+              const spacing = 57.0;
+              final itemTop = baseTop + (index * spacing);
+
+              final stagger = CurvedAnimation(
+                parent: _boneStaggerController,
+                curve: Interval((index / (sortedAlbums.length * 1.2)).clamp(0.0, 0.95), 1.0, curve: Curves.easeOutCubic),
+              );
+
+              final glowController = _albumGlowControllers[albumName] ?? _logoGlowController;
+
+              return Positioned(
+                top: itemTop,
                 left: 0,
                 right: 0,
-                child: Center(
-                  child: GestureDetector(
-                    onTap: () {
-                      if (_isLivestreamActive) {
-                        _launchUrl(_livestreamUrl);
-                      } else {
-                        if (_globalPlayer.playing) {
-                          setState(() => _showVisualizer = true);
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text("Play a song first to enjoy the visualizer")),
-                          );
-                        }
-                      }
-                    },
-                    child: AnimatedBuilder(
-                      animation: Listenable.merge([_logoGlowController, _livePulseController]),
-                      builder: (context, child) {
-                        final glowOpacity = 0.55 + 0.45 * _logoGlowController.value;
-                        final pulseOpacity = 0.6 + 0.4 * _livePulseController.value;
-
-                        return Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (_isLivestreamActive)
-                              Text(
-                                "LIVE",
-                                style: TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.red.withOpacity(pulseOpacity),
-                                  letterSpacing: 2.5,
-                                ),
-                              ),
-                            if (_isLivestreamActive) const SizedBox(width: 12),
-                            Container(
-                              decoration: BoxDecoration(
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: _isLivestreamActive
-                                        ? Colors.red.withOpacity(0.95)
-                                        : logoGlowColor.withOpacity(glowOpacity),
-                                    blurRadius: _isLivestreamActive ? 0 : 32 + 18 * _logoGlowController.value,
+                child: AnimatedBuilder(
+                  animation: Listenable.merge([stagger, glowController, _visualizerController]),
+                  builder: (context, child) {
+                    final opacity = stagger.value;
+                    final lift = (1 - stagger.value) * 30;
+                    return Transform.translate(
+                      offset: Offset(0, lift),
+                      child: Opacity(
+                        opacity: opacity,
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              _selectedAlbum = albumName;
+                              _currentViewedAlbum = albumName;
+                            });
+                          },
+                          child: Container(
+                            height: 52,
+                            alignment: Alignment.center,
+                            child: Text(
+                              albumName,
+                              style: _albumFonts[albumName] ?? GoogleFonts.inter(
+                                fontSize: 17.5,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                                letterSpacing: 0.4,
+                                shadows: [
+                                  Shadow(
+                                    offset: const Offset(1.5, 1.5),
+                                    blurRadius: 6,
+                                    color: Colors.black.withOpacity(0.9),
                                   ),
                                 ],
                               ),
-                              child: child,
-                            ),
-                            if (_isLivestreamActive) const SizedBox(width: 12),
-                            if (_isLivestreamActive)
-                              Text(
-                                "NOW",
-                                style: TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.red.withOpacity(pulseOpacity),
-                                  letterSpacing: 2.5,
-                                ),
-                              ),
-                          ],
-                        );
-                      },
-                      child: Image.asset('assets/logo.png', height: 96),
-                    ),
-                  ),
-                ),
-              ),
-
-              // 3. Album Spine Grid with Google Fonts
-              ...sortedAlbums.asMap().entries.map((e) {
-                final index = e.key;
-                final albumName = e.value;
-                final albumTheme = _getAlbumThemeColor(albumName);
-
-                const baseTop = 205.0;
-                const spacing = 57.0;
-                final itemTop = baseTop + (index * spacing);
-
-                final stagger = CurvedAnimation(
-                  parent: _boneStaggerController,
-                  curve: Interval((index / (sortedAlbums.length * 1.2)).clamp(0.0, 0.95), 1.0, curve: Curves.easeOutCubic),
-                );
-
-                final glowController = _albumGlowControllers[albumName] ?? _logoGlowController;
-
-                return Positioned(
-                  top: itemTop,
-                  left: 0,
-                  right: 0,
-                  child: AnimatedBuilder(
-                    animation: Listenable.merge([stagger, glowController, _visualizerController]),
-                    builder: (context, child) {
-                      final opacity = stagger.value;
-                      final lift = (1 - stagger.value) * 30;
-
-                      return Transform.translate(
-                        offset: Offset(0, lift),
-                        child: Opacity(
-                          opacity: opacity,
-                          child: GestureDetector(
-                                  onTap: () {
-                                    setState(() {
-                                      _selectedAlbum = albumName;
-                                      _currentViewedAlbum = albumName;
-                                    });
-                                  },
-                                  child: Container(
-                              height: 52,
-                              alignment: Alignment.center,
-                              child: Text(
-                                albumName,
-                                style: _albumFonts[albumName] ?? GoogleFonts.inter(
-                                  fontSize: 17.5,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
-                                  letterSpacing: 0.4,
-                                  shadows: [
-                                    Shadow(
-                                      offset: const Offset(1.5, 1.5),
-                                      blurRadius: 6,
-                                      color: Colors.black.withOpacity(0.9),
-                                    ),
-                                  ],
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
+                              textAlign: TextAlign.center,
                             ),
                           ),
                         ),
-                      );
-                    },
-                  ),
-                );
-              }).toList(),
-            ],
-          ),
-        ),
-      );
-    } else {
-      // === ALBUM DETAIL PAGE - Full restored version ===
-      final albumData = _albums[_selectedAlbum]!;
-      final albumName = _selectedAlbum!;
-      if (_needsAlbumRefresh) {
-       WidgetsBinding.instance.addPostFrameCallback((_) {
-       setState(() => _needsAlbumRefresh = false);
-        });
-      }
-      final rotatingArtUrl = albumData['rotatingArtUrl'] as String? ?? albumData['artUrl'] as String;
-      final story = albumData['story'] as String? ?? "No story available.";
-      final themeColor = _getAlbumThemeColor(albumName);
-      final songs = albumData['songs'] as List<dynamic>? ?? [];
-
-      return Column(
-        children: [
-          // Back button
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 48, 16, 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                icon: Icon(Icons.arrow_back, color: themeColor),
-                label: const Text("Back to Albums", style: TextStyle(fontSize: 17)),
-                onPressed: () => setState(() => _selectedAlbum = null),
-              ),
-            ),
-          ),
-
-          // Rotating Album Art
-          Padding(
-            padding: const EdgeInsets.only(top: 12, bottom: 15),
-            child: Center(
-              child: GestureDetector(
-                onTap: () => _showAlbumStory(albumName),
-                child: RotationTransition(
-                  turns: _vinylController,
-                  child: Container(
-                    width: 220,
-                    height: 220,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: themeColor.withOpacity(0.6),
-                          blurRadius: 40,
-                          spreadRadius: 10,
-                        ),
-                      ],
-                    ),
-                    child: ClipOval(
-                      child: CachedNetworkImage(
-                        imageUrl: rotatingArtUrl,
-                        fit: BoxFit.cover,
-                        placeholder: (context, url) => const CircularProgressIndicator(color: Colors.greenAccent),
-                        errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 80, color: Colors.grey),
                       ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // Album Title
-          Text(
-            albumName,
-            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
-            textAlign: TextAlign.center,
-          ),
-
-          const SizedBox(height: 12),
-
-          // Song List with long-press and locking
-// Song List with per-song free/locked control
-// Song List with per-song free/locked control
-Expanded(
-  child: ListView.builder(
-    padding: const EdgeInsets.symmetric(horizontal: 24),
-    itemCount: songs.length,
-    itemBuilder: (context, index) {
-  final song = songs[index] as Map<String, dynamic>;
-  final title = song['Title'] as String? ?? "Unknown Track";
-  final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-
-  final isFree = song['isFree'] as bool? ?? false;
-  final emailUnlock = song['emailUnlock'] as bool? ?? false;
-
-  final bool isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
-  final bool isBonusUnlocked = _hasConfirmedEmail && emailUnlock && !isFree;
-
-  print("Song: $title | isFree: $isFree | emailUnlock: $emailUnlock | _hasConfirmedEmail: $_hasConfirmedEmail | isLocked: $isLocked | isBonusUnlocked: $isBonusUnlocked");
-
-  return ListTile(
-    leading: ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: CachedNetworkImage(
-        imageUrl: artUrl,
-        width: 48,
-        height: 48,
-        fit: BoxFit.cover,
-        errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
-      ),
-    ),
-    title: Row(
-      children: [
-        Expanded(
-          child: Text(
-            title,
-            style: TextStyle(
-              fontSize: 16.5,
-              color: isLocked ? Colors.white54 : Colors.white,
-              fontWeight: isLocked ? FontWeight.normal : FontWeight.w500,
-            ),
-          ),
-        ),
-        if (isBonusUnlocked)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: Colors.greenAccent.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.greenAccent.withOpacity(0.6)),
-            ),
-            child: const Text(
-              "Bonus Unlocked",
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.greenAccent,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-      ],
-    ),
-    trailing: isLocked
-        ? const Icon(Icons.lock, color: Colors.white54, size: 20)
-        : null,
-    onTap: isLocked
-        ? () => _showPaywall()
-        : () => _playSong(albumName, index),
-    onLongPress: () => _showSongOptions(song, albumName, index),
-  );
-},  ),       ), 
-
-// Bottom player bar - replace your current Container with this
-Container(
-  decoration: BoxDecoration(
-    color: themeColor.withOpacity(0.15),
-    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-  ),
-  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-  child: SafeArea(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,   // ← prevents overflow
-      children: [
-        Text(
-          _currentSongTitle.isEmpty ? "Nothing playing" : _currentSongTitle,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        Slider(
-          value: _position.inMilliseconds.toDouble().clamp(0, _duration.inMilliseconds.toDouble() > 0 ? _duration.inMilliseconds.toDouble() : 1),
-          max: _duration.inMilliseconds.toDouble() > 0 ? _duration.inMilliseconds.toDouble() : 1,
-          activeColor: themeColor,
-          onChanged: (v) => _globalPlayer.seek(Duration(milliseconds: v.toInt())),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(_formatDuration(_position), style: const TextStyle(fontSize: 11)),
-              Text(_formatDuration(_duration), style: const TextStyle(fontSize: 11)),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.skip_previous, size: 32),
-              color: themeColor,
-              onPressed: _playPreviousSong,
-            ),
-            IconButton(
-              icon: Icon(
-                Icons.shuffle,
-                size: 28,
-                color: _globalPlayer.shuffleModeEnabled ? themeColor : Colors.white54,
-              ),
-              onPressed: () async {
-                final bool newShuffle = !_globalPlayer.shuffleModeEnabled;
-                await _globalPlayer.setShuffleModeEnabled(newShuffle);
-                setState(() {});
-
-                if (newShuffle) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Shuffle enabled"), duration: Duration(seconds: 1)),
-                  );
-                  print("🔀 Shuffle ENABLED - will pick randomly from queue");
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Shuffle disabled"), duration: Duration(seconds: 1)),
-                  );
-                  print("🔀 Shuffle DISABLED");
-                }
-              },
-            ),
-              IconButton(
-                key: _playButtonKey,   // ← add this key
-                icon: Icon(
-                  _globalPlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                  size: 48,
-                  color: themeColor,
-                ),
-                onPressed: () async {
-                if (_globalPlayer.playing) {
-                  await _globalPlayer.pause();
-                  return;
-                }
-
-                // Check if we have a currently playing/paused song
-                if (_currentSongTitle.isNotEmpty && _currentSongIndex >= 0) {
-                  // Normal resume
-                  await _globalPlayer.play();
-                  print("▶️ Resuming current song: $_currentSongTitle");
-                  return;
-                }
-
-                // First-time play: start first song of currently viewed album
-                String albumToPlay = _currentViewedAlbum ?? _currentAlbum ?? "";
-
-                if (albumToPlay.isEmpty || !_albums.containsKey(albumToPlay)) {
-                  if (_albums.isNotEmpty) {
-                    albumToPlay = _albums.keys.first;
-                    print("🎵 First-time play fallback: Using first album $albumToPlay");
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("No albums available")),
                     );
-                    return;
-                  }
-                }
-
-                print("🎵 First-time play: Starting first song of album → $albumToPlay");
-                await _playSong(albumToPlay, 0);
-              },
-            ),
-            IconButton(
-              icon: Icon(
-                _globalPlayer.loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat,
-                size: 28,
-                color: _globalPlayer.loopMode != LoopMode.off ? themeColor : Colors.white54,
-              ),
-              onPressed: () {
-                if (_globalPlayer.loopMode == LoopMode.off) {
-                  _globalPlayer.setLoopMode(LoopMode.all);
-                  print("🔁 Loop: All");
-                } else if (_globalPlayer.loopMode == LoopMode.all) {
-                  _globalPlayer.setLoopMode(LoopMode.one);
-                  print("🔂 Loop: One");
-                } else {
-                  _globalPlayer.setLoopMode(LoopMode.off);
-                  print("➡️ Loop: Off");
-                }
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.skip_next, size: 32),
-              color: themeColor,
-              onPressed: _playNextSong,
-            ),
+                  },
+                ),
+              );
+            }).toList(),
           ],
         ),
-      ],
-    ),
-  ),
-),
-        ],
-      );
-    }
-  return const SizedBox.shrink(); // fallback in case no album is selected
-  }
+      ),
+    );
+  } else {
+    // === ALBUM DETAIL PAGE ===
+    final albumData = _albums[_selectedAlbum]!;
+    final albumName = _selectedAlbum!;
+    final albumTheme = _getAlbumThemeColor(albumName);
+    final songs = albumData['songs'] as List<dynamic>? ?? [];
 
+    return Column(
+      children: [
+        // Back button
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 48, 16, 8),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              icon: Icon(Icons.arrow_back, color: albumTheme),
+              label: const Text("Back to Albums", style: TextStyle(fontSize: 17)),
+              onPressed: () => setState(() => _selectedAlbum = null),
+            ),
+          ),
+        ),
+
+        // Rotating Album Art
+        Padding(
+          padding: const EdgeInsets.only(top: 12, bottom: 15),
+          child: Center(
+            child: GestureDetector(
+              onTap: () => _showAlbumStory(albumName),
+              child: RotationTransition(
+                turns: _vinylController,
+                child: Container(
+                  width: 220,
+                  height: 220,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: albumTheme.withOpacity(0.6),
+                        blurRadius: 40,
+                        spreadRadius: 10,
+                      ),
+                    ],
+                  ),
+                  child: ClipOval(
+                    child: CachedNetworkImage(
+                      imageUrl: albumData['rotatingArtUrl'] as String? ?? albumData['artUrl'] as String? ?? "",
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => const CircularProgressIndicator(color: Colors.greenAccent),
+                      errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 80, color: Colors.grey),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        // Album Title
+        Text(
+          albumName,
+          style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
+          textAlign: TextAlign.center,
+        ),
+
+        const SizedBox(height: 12),
+
+        // Song List
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            itemCount: songs.length,
+            itemBuilder: (context, index) {
+              final song = songs[index] as Map<String, dynamic>;
+              final title = song['Title'] as String? ?? "Unknown Track";
+              final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+              final isFree = song['isFree'] as bool? ?? false;
+              final emailUnlock = song['emailUnlock'] as bool? ?? false;
+              final bool isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
+
+              return ListTile(
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: CachedNetworkImage(
+                    imageUrl: artUrl,
+                    width: 48,
+                    height: 48,
+                    fit: BoxFit.cover,
+                    errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
+                  ),
+                ),
+                title: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 16.5,
+                    color: isLocked ? Colors.white54 : Colors.white,
+                    fontWeight: isLocked ? FontWeight.normal : FontWeight.w500,
+                  ),
+                ),
+                trailing: isLocked ? const Icon(Icons.lock, color: Colors.white54, size: 20) : null,
+                onTap: isLocked ? () => _showPaywall() : () => _playSong(albumName, index),
+                onLongPress: () => _showSongOptions(song, albumName, index),
+              );
+            },
+          ),
+        ),
+
+        // Bottom Player Bar
+        Container(
+          decoration: BoxDecoration(
+            color: albumTheme.withOpacity(0.15),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _currentSongTitle.isEmpty ? "Nothing playing" : _currentSongTitle,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Slider(
+                  value: _position.inMilliseconds.toDouble().clamp(0, _duration.inMilliseconds.toDouble() > 0 ? _duration.inMilliseconds.toDouble() : 1),
+                  max: _duration.inMilliseconds.toDouble() > 0 ? _duration.inMilliseconds.toDouble() : 1,
+                  activeColor: albumTheme,
+                  onChanged: (v) => _globalPlayer.seek(Duration(milliseconds: v.toInt())),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(_formatDuration(_position), style: const TextStyle(fontSize: 11)),
+                      Text(_formatDuration(_duration), style: const TextStyle(fontSize: 11)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.skip_previous, size: 32),
+                      color: albumTheme,
+                      onPressed: _playPreviousSong,
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        Icons.shuffle,
+                        size: 28,
+                        color: _globalPlayer.shuffleModeEnabled ? albumTheme : Colors.white54,
+                      ),
+                      onPressed: () async {
+                        final bool newShuffle = !_globalPlayer.shuffleModeEnabled;
+                        await _globalPlayer.setShuffleModeEnabled(newShuffle);
+                        setState(() {});
+                      },
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        _globalPlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                        size: 48,
+                        color: albumTheme,
+                      ),
+                      onPressed: () async {
+                        if (_globalPlayer.playing) {
+                          await _globalPlayer.pause();
+                          return;
+                        }
+                        if (_currentSongTitle.isNotEmpty && _currentSongIndex >= 0) {
+                          await _globalPlayer.play();
+                          return;
+                        }
+                        String albumToPlay = _currentViewedAlbum ?? _currentAlbum ?? "";
+                        if (albumToPlay.isEmpty || !_albums.containsKey(albumToPlay)) {
+                          if (_albums.isNotEmpty) albumToPlay = _albums.keys.first;
+                        }
+                        await _playSong(albumToPlay, 0);
+                      },
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        _globalPlayer.loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat,
+                        size: 28,
+                        color: _globalPlayer.loopMode != LoopMode.off ? albumTheme : Colors.white54,
+                      ),
+                      onPressed: () {
+                        if (_globalPlayer.loopMode == LoopMode.off) {
+                          _globalPlayer.setLoopMode(LoopMode.all);
+                        } else if (_globalPlayer.loopMode == LoopMode.all) {
+                          _globalPlayer.setLoopMode(LoopMode.one);
+                        } else {
+                          _globalPlayer.setLoopMode(LoopMode.off);
+                        }
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.skip_next, size: 32),
+                      color: albumTheme,
+                      onPressed: _playNextSong,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
   void _showAddToPlaylistMenu(Map<String, dynamic> song, String albumName) {
     showModalBottomSheet(
       context: context,
