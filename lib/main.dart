@@ -1,7 +1,9 @@
+import 'package:audio_service/audio_service.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -21,6 +23,22 @@ final AudioPlayer _globalPlayer = AudioPlayer();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Safe JustAudioBackground initialization
+  try {
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.example.melodicsol.channel.audio',
+      androidNotificationChannelName: 'MelodicSol Playback',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: true,
+      notificationColor: Colors.greenAccent,
+      artDownscaleWidth: 512,
+      artDownscaleHeight: 512,
+    );
+    print("✅ JustAudioBackground initialized successfully");
+  } catch (e) {
+    print("⚠️ JustAudioBackground init failed: $e");
+  }
+
   final session = await AudioSession.instance;
   await session.configure(const AudioSessionConfiguration.music());
 
@@ -29,27 +47,6 @@ Future<void> main() async {
   // Longer delay + try/catch to prevent crash on init
   await Future.delayed(const Duration(milliseconds: 800));
 
-  try {
-   /* await JustAudioBackground.init(
-      androidNotificationChannelId: 'com.melodicsol.channel.audio',
-      androidNotificationChannelName: 'MelodicSol Playback',
-      androidNotificationOngoing: true,
-      androidStopForegroundOnPause: true,
-      notificationColor: Colors.black,
-      androidShowNotificationBadge: true,
-      artDownscaleWidth: 512,
-      artDownscaleHeight: 512,
-      fastForwardInterval: const Duration(seconds: 30),
-      rewindInterval: const Duration(seconds: 15),
-      preloadArtwork: true,
-      // iosCategory: IOSAudioCategory.playback,
-      // iosApplicationCategory: IOSAudioApplicationCategory.audio,
-    );*/
-    print('✅ JustAudioBackground initialized successfully');
-  } catch (e) {
-    print('⚠️ JustAudioBackground init failed (non-fatal): $e');
-  }
-  
 }
 
 
@@ -129,6 +126,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   int _visualizerStyle = 0; // 0=Waveform, 1=Circular, 2=Frequency, 3=Mirror, 4=Pulse Rings
   bool _combineModes = false;
   String? _currentViewedAlbum;   // ← Add this  
+  bool _isQueueTutorialShowing = false;  
 
   late AppLinks _appLinks;
   StreamSubscription? _deepLinkSubscription;
@@ -278,6 +276,15 @@ void initState() {
 
     await _showWelcomeTutorial();
   });
+    // Trigger queue tutorial the first time user swipes to the queue page
+  _pageController.addListener(() {
+    if (_pageController.hasClients) {
+      final currentPage = _pageController.page?.round() ?? 0;
+      if (currentPage == 2) {        // 2 = queue page
+        _showQueueTutorial();
+      }
+    }
+  });
 });
 
   // Start interactive showcase only the very first time
@@ -401,13 +408,12 @@ void initState() {
     _playSong(firstSong["albumName"] as String, 0);
   }
 
-Future<void> _playSong(String albumName, int index, { 
-  int retryCount = 0, 
-  String? directUrl, 
-  String? titleToPlay, 
-  String? artUrl 
+Future<void> _playSong(String albumName, int index, {
+  int retryCount = 0,
+  String? directUrl,
+  String? titleToPlay,
+  String? artUrl
 }) async {
-
   String urlToPlay = directUrl?.trim() ?? '';
   String finalTitle = titleToPlay ?? "Unknown Song";
   String finalArtUrl = artUrl ?? "";
@@ -430,7 +436,7 @@ Future<void> _playSong(String albumName, int index, {
   if (urlToPlay.isEmpty || !urlToPlay.startsWith('http')) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Invalid audio URL"))
+        const SnackBar(content: Text("Invalid audio URL")),
       );
     }
     return;
@@ -441,8 +447,8 @@ Future<void> _playSong(String albumName, int index, {
     print("⏳ Skip throttled");
     return;
   }
-  _lastPlayCall = DateTime.now();
 
+  _lastPlayCall = DateTime.now();
   _currentPlayId++;
   final thisPlayId = _currentPlayId;
 
@@ -451,7 +457,7 @@ Future<void> _playSong(String albumName, int index, {
   _processingSubscription?.cancel();
 
   try {
-    // Always update global state here
+    // Update UI state
     setState(() {
       _currentAlbum = albumName;
       _currentSongIndex = index;
@@ -464,9 +470,10 @@ Future<void> _playSong(String albumName, int index, {
 
     print('>>> TITLE FORCED TO: $finalTitle | Album: $albumName | Index: $index | PlayID: $thisPlayId');
 
+    // Stop and reset player
     await _globalPlayer.stop();
     await _globalPlayer.seek(Duration.zero);
-    await Future.delayed(const Duration(milliseconds: 800));
+    await Future.delayed(const Duration(milliseconds: 300));
 
     final source = HlsAudioSource(
       Uri.parse(urlToPlay),
@@ -476,11 +483,25 @@ Future<void> _playSong(String albumName, int index, {
       },
     );
 
+    // Set the audio source
+    // Set the audio source
     await _globalPlayer.setAudioSource(source);
-    print('✅ HlsAudioSource set successfully | PlayID: $thisPlayId');
 
-    await Future.delayed(const Duration(milliseconds: 400));
+    // Correct and simple way for just_audio_background
+    /*final mediaItem = MediaItem(
+      id: urlToPlay,
+      title: finalTitle,
+      album: albumName,
+      artUri: finalArtUrl.isNotEmpty ? Uri.parse(finalArtUrl) : null,
+    );
+
+    await AudioServiceBackground.setMediaItem(mediaItem);*/
+
+    print('✅ HlsAudioSource + MediaItem set successfully | PlayID: $thisPlayId');
+
+    await Future.delayed(const Duration(milliseconds: 300));
     await _globalPlayer.play();
+
     print('▶️ Play command sent | PlayID: $thisPlayId');
 
     _setupProcessingListener();
@@ -491,15 +512,27 @@ Future<void> _playSong(String albumName, int index, {
 
   } catch (e) {
     print("❌ HLS ERROR (attempt ${retryCount + 1}): $e");
+
     if (retryCount < 2) {
       await Future.delayed(const Duration(seconds: 2));
-      return _playSong(albumName, index, retryCount: retryCount + 1, directUrl: directUrl, titleToPlay: titleToPlay, artUrl: artUrl);
+      return _playSong(
+        albumName,
+        index,
+        retryCount: retryCount + 1,
+        directUrl: directUrl,
+        titleToPlay: titleToPlay,
+        artUrl: artUrl,
+      );
     }
+
     if (mounted) {
       setState(() {
         _currentSongTitle = "Playback failed";
         _hasPlaybackError = true;
       });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Playback error: $e")),
+      );
     }
   }
 }
@@ -691,9 +724,14 @@ Future<void> _showAlbumDetailTutorial() async {
 }
 
 // 4. Queue Tutorial (when user first sees the queue page)
+// 4. Queue Tutorial - Shows only once when user first reaches the queue page
 Future<void> _showQueueTutorial() async {
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getBool('hasSeenQueueTutorial') ?? false) return;
+
+  // Prevent multiple calls while the dialog is open
+  if (_isQueueTutorialShowing) return;
+  _isQueueTutorialShowing = true;
 
   await showDialog(
     context: context,
@@ -711,6 +749,7 @@ Future<void> _showQueueTutorial() async {
           onPressed: () {
             prefs.setBool('hasSeenQueueTutorial', true);
             Navigator.of(context).pop();
+            _isQueueTutorialShowing = false;   // Reset flag
           },
           child: const Text("Got it"),
         ),
