@@ -278,7 +278,7 @@ void initState() {
   });
 
   // Start interactive showcase only the very first time
-  WidgetsBinding.instance.addPostFrameCallback((_) async {
+  /*WidgetsBinding.instance.addPostFrameCallback((_) async {
     final prefs = await SharedPreferences.getInstance();
     final hasSeenShowcase = prefs.getBool('hasSeenInteractiveTutorial') ?? false;
 
@@ -296,7 +296,7 @@ void initState() {
       }
       await prefs.setBool('hasSeenInteractiveTutorial', true);
     }
-  });
+  });*/
 
   Timer.periodic(const Duration(seconds: 30), (timer) {
     _checkLivestreamStatus();
@@ -1356,7 +1356,7 @@ Future<void> _playPreviousSong() async {
 
     if (_selectedAlbum == null) {
       // === MAIN SPINE PAGE WITH VIDEO BACKGROUND ===
-return SingleChildScrollView(
+    child: SingleChildScrollView(
     physics: const BouncingScrollPhysics(),
     child: SizedBox(
       height: screenHeight * 1.45,
@@ -1806,6 +1806,7 @@ Container(
         ],
       );
     }
+  return const SizedBox.shrink(); // fallback in case no album is selected
   }
 
   void _showAddToPlaylistMenu(Map<String, dynamic> song, String albumName) {
