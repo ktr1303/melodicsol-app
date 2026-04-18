@@ -24,7 +24,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Safe JustAudioBackground initialization
-  try {
+try {
     await JustAudioBackground.init(
       androidNotificationChannelId: 'com.example.melodicsol.channel.audio',
       androidNotificationChannelName: 'MelodicSol Playback',
@@ -33,14 +33,16 @@ Future<void> main() async {
       notificationColor: Colors.greenAccent,
       artDownscaleWidth: 512,
       artDownscaleHeight: 512,
+      preloadArtwork: true,
     );
     print("✅ JustAudioBackground initialized successfully");
-  } catch (e) {
-    print("⚠️ JustAudioBackground init failed: $e");
+  } catch (e, stack) {
+    print("❌ JustAudioBackground init failed: $e");
+    print("Stack: $stack");
   }
-
+/*
   final session = await AudioSession.instance;
-  await session.configure(const AudioSessionConfiguration.music());
+  await session.configure(const AudioSessionConfiguration.music());*/
 
   runApp(const MelodicSolApp());
 
@@ -488,14 +490,14 @@ Future<void> _playSong(String albumName, int index, {
     await _globalPlayer.setAudioSource(source);
 
     // Correct and simple way for just_audio_background
-    /*final mediaItem = MediaItem(
+    final mediaItem = MediaItem(
       id: urlToPlay,
       title: finalTitle,
       album: albumName,
       artUri: finalArtUrl.isNotEmpty ? Uri.parse(finalArtUrl) : null,
     );
 
-    await AudioServiceBackground.setMediaItem(mediaItem);*/
+    await AudioServiceBackground.setMediaItem(mediaItem);
 
     print('✅ HlsAudioSource + MediaItem set successfully | PlayID: $thisPlayId');
 
