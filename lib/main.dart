@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -13,13 +16,25 @@ import 'dart:async';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';         // For Platform.isAndroid / Platform.isIOS
 import 'package:app_links/app_links.dart';
+
    // For deep links
 
 final AudioPlayer _globalPlayer = AudioPlayer();
 
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  print("Handling a background message: ${message.messageId}");
+
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Firebase initialization
+  await Firebase.initializeApp();
+
+  // Background message handler
+FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
   // Safe JustAudioBackground initialization
 try {
@@ -253,6 +268,7 @@ void initState() {
   _boneStaggerController = AnimationController(
       duration: const Duration(milliseconds: 1800), vsync: this)
     ..forward();
+  _setupNotifications();  
 
   // Deep link listener
   _appLinks = AppLinks();
@@ -2824,9 +2840,10 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text(
-                    "Melodic Sol",
-                    style: TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 4),
+                  Image.asset(
+                    'assets/logo.png',
+                    height: 120,
+                    fit: BoxFit.contain,
                   ),
                   const SizedBox(height: 80),
                   ElevatedButton(
@@ -3129,4 +3146,36 @@ class EmailConfirmedScreen extends StatelessWidget {
       ),
     );
   }
+  Future<void> _setupNotifications() async {
+  final messaging = FirebaseMessaging.instance;
+
+  // Request permission
+  NotificationSettings settings = await messaging.requestPermission(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+
+  if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+    print('User granted permission');
+    
+    // Get device token (send this to HighLevel for targeting)
+    String? token = await messaging.getToken();
+    print("FCM Token: $token");
+    
+    // TODO: Send token to your backend / HighLevel contact record
+  }
+
+  // Handle foreground notifications
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    print('Foreground message: ${message.notification?.title}');
+    // Show local notification or in-app banner
+  });
+
+  // Handle when user taps notification
+  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+    print('Notification opened: ${message.data}');
+    // Navigate to specific screen (e.g., live show)
+  });
+}
 }
