@@ -16,15 +16,15 @@ import 'dart:async';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';         // For Platform.isAndroid / Platform.isIOS
 import 'package:app_links/app_links.dart';
-
-   // For deep links
-
-final AudioPlayer _globalPlayer = AudioPlayer();
-
+// ==================== BACKGROUND HANDLER (MUST BE TOP-LEVEL) ====================
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
   print("Handling a background message: ${message.messageId}");
+}
+   // For deep links
+
+final AudioPlayer _globalPlayer = AudioPlayer();  
 
 
 Future<void> main() async {
@@ -99,6 +99,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late AnimationController _visualizerController;
   late PageController _pageController;
   late AnimationController _boneStaggerController;
+
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
 
 
   bool _ignoreProcessingListener = false;
@@ -268,7 +271,8 @@ void initState() {
   _boneStaggerController = AnimationController(
       duration: const Duration(milliseconds: 1800), vsync: this)
     ..forward();
-  _setupNotifications();  
+
+    
 
   // Deep link listener
   _appLinks = AppLinks();
@@ -279,6 +283,9 @@ void initState() {
       _handleDeepLink(uri);
     }
   });
+  
+  _initializeLocalNotifications();
+  _setupNotifications();
 
   WidgetsBinding.instance.addPostFrameCallback((_) async {
   await _showWelcomeTutorial();
@@ -2634,6 +2641,75 @@ onPressed: () async {
     }
   }
 }
+  Future<void> _setupNotifications() async {
+    final messaging = FirebaseMessaging.instance;
+
+    // Request permission
+    NotificationSettings settings = await messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+      print('✅ User granted notification permission');
+
+      String? token = await messaging.getToken();
+      if (token != null) {
+        print("FCM Token: $token");
+        // TODO: Send token to HighLevel
+      }
+    }
+
+    // Foreground messages → show as local notification
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+      print('Foreground notification received: ${message.notification?.title}');
+      await _showLocalNotification(message);
+    });
+
+    // Notification tapped from background
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      print('Notification opened: ${message.data}');
+      // TODO: Navigate based on data
+    });
+  }
+  Future<void> _initializeLocalNotifications() async {
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+
+    const InitializationSettings initializationSettings =
+        InitializationSettings(android: androidSettings);
+
+    await flutterLocalNotificationsPlugin.initialize(
+      initializationSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
+        print("Notification tapped: ${response.payload}");
+        // TODO: Handle deep linking here later
+      },
+    );
+  }
+  // Show local notification when message arrives in foreground
+  Future<void> _showLocalNotification(RemoteMessage message) async {
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'melodicsol_channel',
+      'MelodicSol Notifications',
+      importance: Importance.high,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+    );
+
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidDetails,
+    );
+
+    await flutterLocalNotificationsPlugin.show(
+      message.hashCode,
+      message.notification?.title ?? "MelodicSol",
+      message.notification?.body ?? "New update available",
+      notificationDetails,
+      payload: message.data.toString(),
+    );
+  }
 
 // ====================== VISUALIZER PAINTER ======================
 class VisualizerPainter extends CustomPainter {
@@ -3146,36 +3222,4 @@ class EmailConfirmedScreen extends StatelessWidget {
       ),
     );
   }
-  Future<void> _setupNotifications() async {
-  final messaging = FirebaseMessaging.instance;
-
-  // Request permission
-  NotificationSettings settings = await messaging.requestPermission(
-    alert: true,
-    badge: true,
-    sound: true,
-  );
-
-  if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-    print('User granted permission');
-    
-    // Get device token (send this to HighLevel for targeting)
-    String? token = await messaging.getToken();
-    print("FCM Token: $token");
-    
-    // TODO: Send token to your backend / HighLevel contact record
-  }
-
-  // Handle foreground notifications
-  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-    print('Foreground message: ${message.notification?.title}');
-    // Show local notification or in-app banner
-  });
-
-  // Handle when user taps notification
-  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-    print('Notification opened: ${message.data}');
-    // Navigate to specific screen (e.g., live show)
-  });
-}
 }
