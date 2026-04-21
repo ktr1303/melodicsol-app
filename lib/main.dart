@@ -33,6 +33,12 @@ Future<void> main() async {
   // Background message handler
 FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
+// RevenueCat initialization
+  await Purchases.setLogLevel(LogLevel.debug);
+  await Purchases.configure(
+    PurchasesConfiguration("test_ZBLCyGBvSMTFCEvmTmrzCwZVBPR"),  // ← Put your public key here
+  );
+
   // Safe JustAudioBackground initialization
 try {
     await JustAudioBackground.init(
@@ -142,6 +148,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _combineModes = false;
   String? _currentViewedAlbum;   // ← Add this  
   bool _isQueueTutorialShowing = false;  
+
+  Future<bool> hasEntitlement(String entitlementId) async {
+  try {
+    final customerInfo = await Purchases.getCustomerInfo();
+    return customerInfo.entitlements.active.containsKey(entitlementId);
+  } catch (e) {
+    print("RevenueCat error: $e");
+    return false;
+  }
+}
 
   late AppLinks _appLinks;
   StreamSubscription? _deepLinkSubscription;
@@ -438,14 +454,45 @@ Future<void> _playSong(String albumName, int index, {
   String finalTitle = titleToPlay ?? "Unknown Song";
   String finalArtUrl = artUrl ?? "";
 
+  // Get song data for unlock check
+  final songList = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
+  Map<String, dynamic> song = {};
+
   if (urlToPlay.isEmpty) {
-    final songList = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
     if (index < 0 || index >= songList.length) return;
-    final song = songList[index] as Map<String, dynamic>;
+
+    song = songList[index] as Map<String, dynamic>;
     urlToPlay = (song['url'] as String?)?.trim() ?? '';
     finalTitle = (song['Title'] as String?) ?? "Unknown Song";
     finalArtUrl = (song['artUrl'] as String?) ?? (song['songArtUrl'] as String?) ?? "";
   }
+
+  // === Unlock Check (RevenueCat + Existing Logic) ===
+  final bool isFree = song['isFree'] as bool? ?? false;
+  final bool emailUnlock = song['emailUnlock'] as bool? ?? false;
+
+  bool isLocked = !isFree && 
+                  !_hasOpenAccess && 
+                  !(_hasConfirmedEmail && emailUnlock);
+
+  // Check RevenueCat if still locked
+  if (isLocked) {
+    final hasLifetime = await hasEntitlement('lifetime_access');
+    final hasCatalog = await hasEntitlement('catalog_access');
+    final hasIndividual = await hasEntitlement('individual_album_access');
+
+    isLocked = !hasLifetime && !hasCatalog && !hasIndividual;
+  }
+
+  if (isLocked) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("This song requires purchase or Lifetime Access")),
+      );
+    }
+    return; // Stop here — don't play
+  }
+  // === End Unlock Check ===
 
   // Fix malformed URLs
   if (urlToPlay.startsWith('https:/') && !urlToPlay.startsWith('https://')) {
@@ -494,7 +541,7 @@ Future<void> _playSong(String albumName, int index, {
     await _globalPlayer.seek(Duration.zero);
     await Future.delayed(const Duration(milliseconds: 300));
 
-    // Create HLS source WITH MediaItem tag (REQUIRED for just_audio_background)
+    // Create HLS source WITH MediaItem tag
     final source = HlsAudioSource(
       Uri.parse(urlToPlay),
       headers: {
@@ -509,7 +556,6 @@ Future<void> _playSong(String albumName, int index, {
       ),
     );
 
-    // Set the audio source
     await _globalPlayer.setAudioSource(source);
     print('✅ HlsAudioSource with MediaItem set successfully | PlayID: $thisPlayId');
 
@@ -524,7 +570,6 @@ Future<void> _playSong(String albumName, int index, {
     }
   } catch (e) {
     print("❌ HLS ERROR (attempt ${retryCount + 1}): $e");
-
     if (retryCount < 2) {
       await Future.delayed(const Duration(seconds: 2));
       return _playSong(
@@ -536,7 +581,6 @@ Future<void> _playSong(String albumName, int index, {
         artUrl: artUrl,
       );
     }
-
     if (mounted) {
       setState(() {
         _currentSongTitle = "Playback failed";

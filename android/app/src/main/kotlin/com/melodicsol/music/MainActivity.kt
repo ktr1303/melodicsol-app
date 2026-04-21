@@ -1,4 +1,4 @@
-package com.example.melodicsol
+package com.melodicsol.music
 
 import io.flutter.embedding.android.FlutterActivity
 import com.ryanheise.audioservice.AudioServiceActivity   // ← This is the key line

@@ -9,7 +9,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:234115792186:android:98f20ed4d1207afaaa6403",
         "android_client_info": {
-          "package_name": "com.example.melodicsol"
+          "package_name": "com.melodicsol.music"
         }
       },
       "oauth_client": [],
