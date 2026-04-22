@@ -51,7 +51,10 @@ dependencies:
   firebase_core: ^3.6.0
   firebase_messaging: ^15.1.0
   flutter_local_notifications: ^17.2.0
-  change_app_package_name: ^1.5.0   # For foreground + custom handling
+  change_app_package_name: ^1.5.0
+  aws_dynamodb_api: ^2.0.0
+  flutter_dotenv: ^5.1.0
+     # For foreground + custom handling
  
      # Modern and reliable package for deep links 
 

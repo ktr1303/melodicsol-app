@@ -16,6 +16,7 @@ import 'dart:async';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';         // For Platform.isAndroid / Platform.isIOS
 import 'package:app_links/app_links.dart';
+import 'package:aws_dynamodb_api/dynamodb-2012-08-10.dart';
 // ==================== BACKGROUND HANDLER (MUST BE TOP-LEVEL) ====================
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -56,9 +57,7 @@ try {
     print("❌ JustAudioBackground init failed: $e");
     print("Stack: $stack");
   } 
-/*
-  final session = await AudioSession.instance;
-  await session.configure(const AudioSessionConfiguration.music());*/
+  
 
   runApp(const MelodicSolApp());
 
@@ -295,6 +294,8 @@ void initState() {
     if (uri != null) {
       _handleDeepLink(uri);
     }
+ 
+
   });
   
   /*_initializeLocalNotifications();
@@ -319,6 +320,12 @@ void initState() {
       if (currentPage == 2) {        // 2 = queue page
         _showQueueTutorial();
       }
+    }
+  });
+  SharedPreferences.getInstance().then((prefs) {
+    final hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
+    if (hasLifetime) {
+      setState(() => _hasOpenAccess = true);
     }
   });
 });
@@ -382,6 +389,7 @@ void initState() {
   _loadPlaylists();
   _fetchAlbums();
   _setupProcessingListener();
+  _loadAlbumConfigFromDynamoDB();
 
   _globalPlayer.playerStateStream.listen((playerState) {
     if (playerState.playing) {
@@ -395,6 +403,41 @@ void initState() {
   _globalPlayer.durationStream.listen((dur) => setState(() => _duration = dur ?? Duration.zero));
 }
 
+Map<String, bool> _albumPurchaseConfig = {};
+
+Future<void> _loadAlbumConfigFromDynamoDB() async {
+  try {
+    // TODO: Replace with your real credentials for now (we'll secure later)
+    final dynamoDb = DynamoDB(
+      region: 'us-east-1',
+      credentials: AwsClientCredentials(
+        accessKey: 'AKIA2XT5JS6QOAPJ6O47',
+        secretKey: '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',
+      ),
+    );
+
+    final response = await dynamoDb.scan(
+      tableName: 'MelodicSol_AlbumConfig',
+    );
+
+    for (var item in response.items ?? []) {
+      final slug = item['albumSlug']?.s;
+      final canBuy = item['canPurchaseIndividually']?.boolValue ?? false;
+
+      if (slug != null && _albums.containsKey(slug)) {
+        _albums[slug]!['canPurchaseIndividually'] = canBuy;
+        print('✅ DynamoDB: $slug canPurchaseIndividually = $canBuy');
+      }
+    }
+    print('✅ Loaded album purchase config from DynamoDB');
+  } catch (e) {
+    print('⚠️ DynamoDB load failed (using local defaults): $e');
+    // Fallback: set some defaults
+    _albums['stone']?['canPurchaseIndividually'] = true;
+    _albums['central']?['canPurchaseIndividually'] = true;
+    // add more as needed
+  }
+}
   Future<void> _loadPlaylists() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonString = prefs.getString('playlists');
@@ -1157,8 +1200,16 @@ Future<void> _playPreviousSong() async {
         setState(() {
           _albums = data.map((key, value) {
             if (value is! Map<String, dynamic>) {
-              return MapEntry(key, {'artUrl': '', 'rotatingArtUrl': '', 'songs': [], 'themeColor': '#4CAF50', 'order': 999});
+              return MapEntry(key, {
+                'artUrl': '',
+                'rotatingArtUrl': '',
+                'songs': [],
+                'themeColor': '#4CAF50',
+                'order': 999,
+                'canPurchaseIndividually': false,   // ← Default false
+              });
             }
+
             final songs = value['songs'] as List? ?? [];
             for (var song in songs) {
               if (song is Map) {
@@ -1166,10 +1217,16 @@ Future<void> _playPreviousSong() async {
                 song['url'] ??= '';
               }
             }
+
             value['themeColor'] ??= '#4CAF50';
             value['rotatingArtUrl'] ??= value['artUrl'] ?? '';
+
             dynamic raw = value['order'];
             value['order'] = (raw is num) ? raw.toInt() : (raw is String ? int.tryParse(raw) ?? 999 : 999);
+
+            // Add this line for each album
+            value['canPurchaseIndividually'] ??= false;   // ← Set true/false per album here
+
             return MapEntry(key, value);
           });
           _isLoading = false;
@@ -1448,6 +1505,22 @@ Future<void> _playPreviousSong() async {
     Navigator.pop(context);
   }
 
+  TextStyle _getAlbumFont(String albumName) {
+    return _albumFonts[albumName] ?? GoogleFonts.inter(
+      fontSize: 17.5,
+      fontWeight: FontWeight.w700,
+      color: Colors.white,
+      letterSpacing: 0.4,
+      shadows: [
+        Shadow(
+          offset: const Offset(1.5, 1.5),
+          blurRadius: 6,
+          color: Colors.black.withOpacity(0.9),
+        ),
+      ],
+    );
+  }
+
 Widget _buildMainAlbumPage(double screenHeight) {
   final logoGlowColor = _getLogoGlowColor();
   final isPlaying = _globalPlayer.playing;
@@ -1596,19 +1669,7 @@ Widget _buildMainAlbumPage(double screenHeight) {
                             alignment: Alignment.center,
                             child: Text(
                               albumName,
-                              style: _albumFonts[albumName] ?? GoogleFonts.inter(
-                                fontSize: 17.5,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                                letterSpacing: 0.4,
-                                shadows: [
-                                  Shadow(
-                                    offset: const Offset(1.5, 1.5),
-                                    blurRadius: 6,
-                                    color: Colors.black.withOpacity(0.9),
-                                  ),
-                                ],
-                              ),
+                              style: _getAlbumFont(albumName),
                               textAlign: TextAlign.center,
                             ),
                           ),
@@ -2447,37 +2508,51 @@ Widget _buildSocialPage() {
       ),
     );
   }
-    Future<void> _redeemPromoCode(String code) async {
-    final trimmed = code.trim().toUpperCase();
+Future<void> _redeemPromoCode(String code) async {
+  final trimmed = code.trim().toUpperCase();
+  final prefs = await SharedPreferences.getInstance();
 
-    if (trimmed == "SOLFULL" || trimmed == "SOLFULL2026") {
-      setState(() => _hasOpenAccess = true);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("✅ All songs unlocked! (Test promo code)"),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } else if (trimmed == "RESETACCESS" || trimmed == "LOCKALL") {
-      setState(() => _hasOpenAccess = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("🔒 All songs locked again (Test reset)"),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("❌ Invalid promo code")),
-        );
-      }
-    }
+  if (trimmed == "SOLFULL" || trimmed == "MASTERACCESS") {
+    // Permanent Lifetime Access
+    await prefs.setBool('hasLifetimeAccess', true);
+    setState(() => _hasOpenAccess = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("✅ Lifetime access granted permanently!"),
+        backgroundColor: Colors.green,
+      ),
+    );
+  } 
+  else if (trimmed.startsWith("UNLOCK_")) {
+    // Individual album unlock, e.g. UNLOCK_STONE
+    final albumSlug = trimmed.replaceFirst("UNLOCK_", "").toLowerCase();
+    await prefs.setBool('unlocked_$albumSlug', true);
+    setState(() {}); // refresh UI
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("✅ Album unlocked permanently!"),
+        backgroundColor: Colors.green,
+      ),
+    );
+  } 
+  else if (trimmed == "LOCKALL" || trimmed == "RESETACCESS") {
+    // Reset all paid unlocks for testing
+    await prefs.setBool('hasLifetimeAccess', false);
+    // Clear individual unlocks if you want
+    setState(() => _hasOpenAccess = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("🔒 All paid unlocks cleared (test mode)"),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  } 
+  else {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Invalid promo code")),
+    );
   }
+}
     Future<void> _setupNotifications() async {
     final messaging = FirebaseMessaging.instance;
 
@@ -2505,7 +2580,7 @@ Widget _buildSocialPage() {
       print('Foreground notification received: ${message.notification?.title}');
       await _showLocalNotification(message);
     });
-
+  
     // When user taps a notification while app is in background/terminated
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       print('Notification opened from background: ${message.data}');
@@ -2513,19 +2588,20 @@ Widget _buildSocialPage() {
     });
   }
 
-  void _showPaywall() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.78,
-        decoration: const BoxDecoration(
-          color: Colors.black,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
+void _showPaywall() {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => Container(
+      height: MediaQuery.of(context).size.height * 0.82,
+      decoration: const BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: SingleChildScrollView(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -2546,8 +2622,9 @@ Widget _buildSocialPage() {
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 16.5, color: Colors.white70, height: 1.7),
               ),
-              const SizedBox(height: 48),
+              const SizedBox(height: 40),
 
+              // Lifetime Access Button
               ElevatedButton(
                 onPressed: () async {
                   Navigator.pop(context);
@@ -2555,21 +2632,20 @@ Widget _buildSocialPage() {
                     final offerings = await Purchases.getOfferings();
                     if (offerings.current != null) {
                       final package = offerings.current!.availablePackages.firstWhere(
-                        (p) => p.identifier.toLowerCase().contains("lifetime") || 
-                               p.packageType == PackageType.lifetime,
+                        (p) => p.identifier.toLowerCase().contains("lifetime_access") ||
+                               p.identifier.toLowerCase() == "lifetime",
                         orElse: () => offerings.current!.availablePackages.first,
                       );
-
                       await Purchases.purchasePackage(package);
 
                       final customerInfo = await Purchases.getCustomerInfo();
-                      final hasAccess = customerInfo.entitlements.active.containsKey("premium_access");
+                      final hasAccess = customerInfo.entitlements.active.containsKey("lifetime_access");
 
                       if (hasAccess && mounted) {
                         setState(() => _hasOpenAccess = true);
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text("✅ Thank you! Open Access granted."),
+                            content: Text("✅ Thank you! Lifetime Access granted."),
                             backgroundColor: Colors.green,
                           ),
                         );
@@ -2589,11 +2665,91 @@ Widget _buildSocialPage() {
                   minimumSize: const Size(double.infinity, 68),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                 ),
-                child: const Text("Purchase Lifetime Open Access — One Time", 
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                child: const Text("Purchase Lifetime Open Access — \$47 One Time",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
               ),
 
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
+
+              // Catalog Access Button
+              ElevatedButton(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  try {
+                    final offerings = await Purchases.getOfferings();
+                    if (offerings.current != null) {
+                      final package = offerings.current!.availablePackages.firstWhere(
+                        (p) => p.identifier.toLowerCase().contains("catalog_access") ||
+                               p.identifier.toLowerCase().contains("catalog"),
+                        orElse: () => offerings.current!.availablePackages.first,
+                      );
+                      await Purchases.purchasePackage(package);
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("✅ Catalog Access granted!")),
+                        );
+                      }
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Purchase cancelled or failed.")),
+                      );
+                    }
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white24,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 68),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                ),
+                child: const Text("Unlock Current Catalog — \$37 One Time",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Individual Album Button (only if allowed)
+              if (_selectedAlbum != null && 
+                  _albums[_selectedAlbum!]?["canPurchaseIndividually"] == true)
+                ElevatedButton(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    try {
+                      final offerings = await Purchases.getOfferings();
+                      if (offerings.current != null) {
+                        final package = offerings.current!.availablePackages.firstWhere(
+                          (p) => p.identifier == "album_${_selectedAlbum!.toLowerCase()}",
+                          orElse: () => offerings.current!.availablePackages.first,
+                        );
+                        await Purchases.purchasePackage(package);
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text("✅ Album unlocked!")),
+                          );
+                        }
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("Purchase cancelled or failed.")),
+                        );
+                      }
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white24,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(double.infinity, 68),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  ),
+                  child: Text("Unlock ${_selectedAlbum ?? 'This Album'} — \$17 One Time",
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                ),
+
+              const SizedBox(height: 24),
+
               TextButton(
                 onPressed: () => Navigator.pop(context),
                 child: const Text("Not now", style: TextStyle(color: Colors.white60, fontSize: 16)),
@@ -2602,8 +2758,9 @@ Widget _buildSocialPage() {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
     Future<void> _showLocalNotification(RemoteMessage message) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'melodicsol_channel',
