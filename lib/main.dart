@@ -411,8 +411,8 @@ Future<void> _loadAlbumConfigFromDynamoDB() async {
     final dynamoDb = DynamoDB(
       region: 'us-east-1',
       credentials: AwsClientCredentials(
-        accessKey: 'AKIA2XT5JS6QOAPJ6O47',
-        secretKey: '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',
+        accessKey: 'x',
+        secretKey: 'x',
       ),
     );
 
