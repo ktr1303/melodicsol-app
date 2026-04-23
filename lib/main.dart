@@ -389,7 +389,7 @@ void initState() {
   _loadPlaylists();
   _fetchAlbums();
   _setupProcessingListener();
-  _loadAlbumConfigFromDynamoDB();
+  /*_loadAlbumConfigFromDynamoDB();*/
 
   _globalPlayer.playerStateStream.listen((playerState) {
     if (playerState.playing) {
@@ -405,7 +405,7 @@ void initState() {
 
 Map<String, bool> _albumPurchaseConfig = {};
 
-Future<void> _loadAlbumConfigFromDynamoDB() async {
+/*Future<void> _loadAlbumConfigFromDynamoDB() async {
   try {
     // TODO: Replace with your real credentials for now (we'll secure later)
     final dynamoDb = DynamoDB(
@@ -437,7 +437,7 @@ Future<void> _loadAlbumConfigFromDynamoDB() async {
     _albums['central']?['canPurchaseIndividually'] = true;
     // add more as needed
   }
-}
+}*/
   Future<void> _loadPlaylists() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonString = prefs.getString('playlists');
@@ -1230,6 +1230,21 @@ Future<void> _playPreviousSong() async {
             return MapEntry(key, value);
           });
           _isLoading = false;
+
+          // === HARD-CODED: Which albums can be bought individually for $17 ===
+          final List<String> individuallyPurchasableAlbums = [
+            'live',      // change these to your exact album keys
+            'cabin',
+            'centrale',
+            'centrala',
+            // Add or remove albums here as needed
+          ];
+
+          for (var album in individuallyPurchasableAlbums) {
+            if (_albums.containsKey(album)) {
+              _albums[album]!['canPurchaseIndividually'] = true;
+            }
+          }
 
           // Create truly independent glow controller for each album
           for (var albumName in _albums.keys) {
