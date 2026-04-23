@@ -1,0 +1,271 @@
+[33mcommit 26453e1a95e111b62a87bfd4db93403a943c3964[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Wed Apr 22 20:17:31 2026 -0400
+
+    revenue
+
+[33mcommit 1384be6262159db12dae4f47da1720fb3103f9c7[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Wed Apr 22 18:59:15 2026 -0400
+
+    Revenue-fix
+
+[33mcommit 22664d503c36e721989015f4c7204100af5dcb90[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Wed Apr 22 18:55:07 2026 -0400
+
+    Revenue-fix
+
+[33mcommit 411b63ccd9705b7c6a5c9e633cc56902b290a4a7[m[33m ([m[1;31morigin/main[m[33m)[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Tue Apr 21 10:33:26 2026 -0400
+
+    RevenueCat Testing
+
+[33mcommit bb76a5f55fa9f5167176431748048b5934548e76[m[33m ([m[1;31morigin/notifications-fix[m[33m, [m[1;32mnotifications-fix[m[33m)[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Mon Apr 20 13:59:45 2026 -0400
+
+    Notifcations & high level segments
+
+[33mcommit 6f733d6935774b87a48c1a29c5be4ed5d0302c22[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Mon Apr 20 08:42:44 2026 -0400
+
+    Final updates to onboarding form and HighLevel integration
+
+[33mcommit 03d68bb4259cae3850153cd98673102d62a6d8fc[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sun Apr 19 10:12:24 2026 -0400
+
+    notifications setup
+
+[33mcommit dc2eeb4c382d8b1a2cd67ca246393960dd87a824[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sun Apr 19 09:29:45 2026 -0400
+
+    WIP: notifications setup - main.dart has paste errors
+
+[33mcommit a0ef6d0b1b4b839bb1bf3e0fc8d46cb43eafcac6[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sat Apr 18 19:26:16 2026 -0400
+
+    Background Audio Update
+
+[33mcommit c9a0bc905c73241fb64336051097aed8ed70b2f7[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sat Apr 18 18:06:48 2026 -0400
+
+    background audio fix
+
+[33mcommit 9be3863f2fbab166530d3e1784092ea6ced06b49[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sat Apr 18 13:41:50 2026 -0400
+
+    just_audio implement
+
+[33mcommit 48cf9e9e043addaa73bc14f1d42efe1f62a140a5[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sat Apr 18 12:22:36 2026 -0400
+
+    tutorials working
+
+[33mcommit 76692230b1d218cebcdd0d056aad53215b72be98[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sat Apr 18 09:39:17 2026 -0400
+
+    clean _buildmainalbumpage
+
+[33mcommit 0a653b4ef2286d11fbcbfe4eff180e40af6b3b4a[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Fri Apr 17 23:00:14 2026 -0400
+
+    Showcase Install App Freeze
+
+[33mcommit 5bbca816f80544f051fd6ece6f472ffd8339d663[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Fri Apr 17 22:23:18 2026 -0400
+
+    installing/updating showcase tutorials
+
+[33mcommit d4aaa093e3ed0100803070cb52f824ecac2040d3[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Fri Apr 17 20:45:48 2026 -0400
+
+    showcase tutorial progress - added keys and initstate
+
+[33mcommit 9b22486af3341bf00d5f533de53e2eb0fd50b032[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Fri Apr 17 19:57:23 2026 -0400
+
+    upgraded tutorial
+
+[33mcommit e3dfe03261286af2237e997bcfb2ddb9c5bf127f[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Fri Apr 17 16:22:51 2026 -0400
+
+    tutorials added
+
+[33mcommit d64fbd54f80f52415f881dd027a9b29f4fc2081f[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Fri Apr 17 14:52:44 2026 -0400
+
+    tutorial updates
+
+[33mcommit 43bb53702388da1dd9719acec5079b26766a20d4[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Fri Apr 17 14:41:00 2026 -0400
+
+    tutorial updates
+
+[33mcommit 1480f5ccfd567f440220467c64c3ad3812886142[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Thu Apr 16 20:34:45 2026 -0400
+
+    task list item 1-2-3
+
+[33mcommit 4f07fcfa7c0a7c91fc297b7d920018c27899fdc0[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Thu Apr 16 20:02:23 2026 -0400
+
+    task list item 1-2-3
+
+[33mcommit 4ed5352244257143c9c7a4b975e0b9e10b0ae928[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Wed Apr 15 07:50:11 2026 -0400
+
+    latest email confirmed screen update
+
+[33mcommit fa7afa3d05ac15b4b534f6441faed9864314f9d0[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Tue Apr 14 13:39:12 2026 -0400
+
+    email update
+
+[33mcommit 9a041ddf2d6fb48cbb29f870d4d0c75080e3c742[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Mon Apr 13 20:12:53 2026 -0400
+
+    email update
+
+[33mcommit fae47a1da5adf46a0fd306569ee1fe9296d3fc27[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Mon Apr 13 17:15:14 2026 -0400
+
+    deep link fix attempt - 4 errors after paste
+
+[33mcommit e14ad05fd5e3090bfd35878c742bb80d55c2fed9[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Mon Apr 13 11:09:21 2026 -0400
+
+    current state before deep link fix - emailController error
+
+[33mcommit da3f7aefdd50774124f89e456f3e0d13a4f7d957[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sun Apr 12 20:44:13 2026 -0400
+
+    email song unlock
+
+[33mcommit 4eb5ca7132a1f1da349d265048a952bb702f9d7a[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sun Apr 12 19:12:03 2026 -0400
+
+    email-bonus-test
+
+[33mcommit 656211f9a0d84f5394820b9819dc0844aec97f9f[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sun Apr 12 13:03:13 2026 -0400
+
+    Email confirmation attempt
+
+[33mcommit 0af546fba9b4fd161ba7d6533a3a64276ab3f16d[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Mon Apr 6 14:05:52 2026 -0400
+
+    Song Story Fix
+
+[33mcommit 12888ac09e574935135f1564e708cc8c553518d8[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sat Apr 4 19:21:04 2026 -0400
+
+    promo code testing
+
+[33mcommit ed33b1121ea81e080e4fcdc9603f2246c0229f7f[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sat Apr 4 18:39:48 2026 -0400
+
+    player locked in
+
+[33mcommit e44c5f615be7e34c6a75970911f8c5cf9efc3e41[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sat Apr 4 15:13:18 2026 -0400
+
+    queue song options update
+
+[33mcommit 82b18e057ad492719c1dc3d3576d184187f38268[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sat Apr 4 14:14:24 2026 -0400
+
+    cleanup udate
+
+[33mcommit fa17fdde8961deba676e76ff36b09d45d9005aa4[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sat Apr 4 13:46:39 2026 -0400
+
+    Queue now works correctly
+
+[33mcommit 8deef4d476184f3f5d98213c019bc863a38f729f[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Sat Apr 4 11:51:00 2026 -0400
+
+    Queue click still playing wrong song - latest test2
+
+[33mcommit de5bd90a61cc1bf422784dc0465ab5f021cdf47e[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Fri Apr 3 21:44:25 2026 -0400
+
+    Queue click still playing wrong song - latest test
+
+[33mcommit 6ec275006bc870639279b98d1520cc29b9c94b1f[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Fri Apr 3 11:02:40 2026 -0400
+
+    Queue click issues - some songs fail with invalid URL or wrong title
+
+[33mcommit 24c4e5f0e10bea19dbe763a19256be6a11127d38[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Fri Apr 3 10:19:42 2026 -0400
+
+    Song titles now work in queue
+
+[33mcommit 7bddda4247fed172ede6429970165d67d48873ae[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Fri Apr 3 09:05:01 2026 -0400
+
+    Moved Now Playing section down on a queue page
+
+[33mcommit f29aa4eb94683db07d39f92457147ad87902c020[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Fri Apr 3 07:30:56 2026 -0400
+
+    Stable working base - spine video, Google Fonts, full album pages with player
+
+[33mcommit 0c93e7b3bce2787c2e0733a68ec7150c1ab67b97[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Thu Apr 2 08:02:35 2026 -0400
+
+    Spine.mp4
+
+[33mcommit 71098ef418015a23d33e08e7b45bcc1da24e476a[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Thu Apr 2 07:43:30 2026 -0400
+
+    LIVE NOW
+
+[33mcommit a4e1f858e865fda933a36c1ac77062d36e91eb01[m
+Author: Melodicsol <toyourdoormusic@live.com>
+Date:   Wed Apr 1 22:27:30 2026 -0400
+
+    Improved queue and song completion logic - now respects locked songs and shows proper messages
+
+[33mcommit 124ccaceff8c539e1fcb2d64b720a01c59d07f57[m
