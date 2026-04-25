@@ -257,6 +257,23 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     ),
   };
 
+  // Display names shown on the main spine page
+final Map<String, String> _albumDisplayNames = {
+  "live": "Live",
+  "cabin": "Cabin",
+  "Centrale": "Central (2)",
+  "Centrala": "Central",
+  "Stone": "Stone",
+  "Asraya": "Asraya",
+  "GEMINI": "Gemini",
+  "609": "609",
+  "Roger": "Roger",
+  "Free": "Free",
+  "GOLD": "GOLD",
+  "Track": "Track",
+  "Base": "Base",
+};
+
   final Map<String, Map<String, dynamic>> _socialLinks = {
     "YouTube": {"icon": Icons.play_circle_fill, "color": Colors.red, "url": "https://youtube.com/@melodicsol"},
     "Instagram": {"icon": Icons.camera_alt, "color": const Color(0xFFE1306C), "url": "https://www.instagram.com/melodicsol_/"},
@@ -1229,14 +1246,12 @@ Future<void> _playPreviousSong() async {
 
             return MapEntry(key, value);
           });
-          _isLoading = false;
 
-          // === HARD-CODED: Which albums can be bought individually for $17 ===
-          final List<String> individuallyPurchasableAlbums = [
+                    final List<String> individuallyPurchasableAlbums = [
             'live',      // change these to your exact album keys
             'cabin',
-            'centrale',
-            'centrala',
+            'Centrale',
+            'Centrala',
             // Add or remove albums here as needed
           ];
 
@@ -1245,6 +1260,11 @@ Future<void> _playPreviousSong() async {
               _albums[album]!['canPurchaseIndividually'] = true;
             }
           }
+          print("🎯 Available album keys in _albums: ${_albums.keys.toList()}");
+          print("🎯 Marked for \$17 purchase: $individuallyPurchasableAlbums");
+          _isLoading = false;
+
+          // === HARD-CODED: Which albums can be bought individually for $17 ===
 
           // Create truly independent glow controller for each album
           for (var albumName in _albums.keys) {
@@ -1520,21 +1540,50 @@ Future<void> _playPreviousSong() async {
     Navigator.pop(context);
   }
 
-  TextStyle _getAlbumFont(String albumName) {
-    return _albumFonts[albumName] ?? GoogleFonts.inter(
-      fontSize: 17.5,
-      fontWeight: FontWeight.w700,
-      color: Colors.white,
-      letterSpacing: 0.4,
-      shadows: [
-        Shadow(
-          offset: const Offset(1.5, 1.5),
-          blurRadius: 6,
-          color: Colors.black.withOpacity(0.9),
-        ),
-      ],
-    );
+TextStyle _getAlbumFont(String albumName) {
+  // Explicit mapping for the top 4 + others
+  final fontMapping = {
+    "live": "Base",
+    "cabin": "Base",
+    "Centrale": "Central (2)",
+    "Centrala": "Central",
+    "Stone": "Stone",
+    "Asraya": "Asraya",
+    "GEMINI": "Gemini",
+    "609": "609",
+    "Roger": "Roger",
+    "Free": "Free",
+    "GOLD": "Gold",
+    "Track": "Track",
+    "Base": "Base",
+  };
+
+  String? fontKey = fontMapping[albumName];
+
+  // Fallback to exact key if it exists
+  if (fontKey == null && _albumFonts.containsKey(albumName)) {
+    fontKey = albumName;
   }
+
+  if (fontKey != null && _albumFonts.containsKey(fontKey)) {
+    return _albumFonts[fontKey]!;
+  }
+
+  // Default fallback
+  return GoogleFonts.inter(
+    fontSize: 17.5,
+    fontWeight: FontWeight.w700,
+    color: Colors.white,
+    letterSpacing: 0.4,
+    shadows: [
+      Shadow(
+        offset: const Offset(1.5, 1.5),
+        blurRadius: 6,
+        color: Colors.black.withOpacity(0.9),
+      ),
+    ],
+  );
+}
 
 Widget _buildMainAlbumPage(double screenHeight) {
   final logoGlowColor = _getLogoGlowColor();
@@ -1682,9 +1731,9 @@ Widget _buildMainAlbumPage(double screenHeight) {
                           child: Container(
                             height: 52,
                             alignment: Alignment.center,
-                            child: Text(
-                              albumName,
-                              style: _getAlbumFont(albumName),
+                                  child: Text(
+                              _albumDisplayNames[albumName] ?? albumName,   // ← Show nice name
+                              style: _getAlbumFont(albumName),              // ← Use internal key for font
                               textAlign: TextAlign.center,
                             ),
                           ),
