@@ -16,7 +16,6 @@ import 'dart:async';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';         // For Platform.isAndroid / Platform.isIOS
 import 'package:app_links/app_links.dart';
-import 'package:aws_dynamodb_api/dynamodb-2012-08-10.dart';
 // ==================== BACKGROUND HANDLER (MUST BE TOP-LEVEL) ====================
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -42,21 +41,21 @@ FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
   // Safe JustAudioBackground initialization
 try {
-    await JustAudioBackground.init(
-      androidNotificationChannelId: 'com.example.melodicsol.channel.audio',
-      androidNotificationChannelName: 'MelodicSol Playback',
-      androidNotificationOngoing: true,
-      androidStopForegroundOnPause: true,
-      notificationColor: Colors.greenAccent,
-      artDownscaleWidth: 512,
-      artDownscaleHeight: 512,
-      preloadArtwork: true,
-    );
-    print("✅ JustAudioBackground initialized successfully");
-  } catch (e, stack) {
-    print("❌ JustAudioBackground init failed: $e");
-    print("Stack: $stack");
-  } 
+  await JustAudioBackground.init(
+    androidNotificationChannelId: 'com.melodicsol.channel.audio',
+    androidNotificationChannelName: 'MelodicSol Playback',
+    androidNotificationOngoing: true,
+    androidStopForegroundOnPause: true,
+    notificationColor: Colors.greenAccent,
+    artDownscaleWidth: 512,
+    artDownscaleHeight: 512,
+    preloadArtwork: true,
+    androidShowNotificationBadge: true,
+  );
+  print("✅ JustAudioBackground initialized");
+} catch (e) {
+  print("❌ JustAudioBackground init failed: $e");
+}
   
 
   runApp(const MelodicSolApp());
@@ -109,7 +108,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _ignoreProcessingListener = false;
   bool _ignorePendingTitle = false;
   StreamSubscription? _processingSubscription;   // ← Add this line
-  String _currentSongTitle = "Nothing playing";
+  String _currentSongTitle = "Play song-swipe left queue";
   String? _currentSongArtUrl;
   String? _selectedAlbum;
   Duration _position = Duration.zero;
@@ -167,24 +166,21 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   final Map<String, String> _albumStories = {
     "Base": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
     "Track": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Gold": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Free": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Roger": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
     "609": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
+    "Roger": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
     "Gemini": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
     "Asraya": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Stone": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
     "Central": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Central (2)": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Self": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
+    "Live": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
     "Sol": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
+    "Melodic": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
   };
 
   final Map<String, dynamic> _melodicSolBio = {
-    "title": "Melodic Sol",
+    "title": "Melodicsol",
     "imageUrl": "assets/logo.png",        // Change to a full bio image if you prefer
-    "story": "Melodic Sol is an independent music collective born from late-night basement sessions, raw emotion, and a relentless pursuit of sound that moves the soul. "
-        "We blend genres, break rules, and create moments that feel alive. Every track is a piece of our journey — from the first distorted guitar riff to the final polished master. "
+    "story": "Melodicsol emerges as a live multi-instrumental singer-songwriter powerhouse, crafting a unique blend of Psychedelic Indie Rock that empowers listeners to find their own freedom and independence. A self-taught guitar maestro, he conjures the expansive sonic tapestry of an entire live rock band, delivering a psyche rock aesthetic for the mind, body, and soul through soaring guitar/bass melodies and captivating drum set rhythms combined through ingenious looping wizardry."
+        "Blend genres, break rules, and create moments that feel alive. Every track is a piece of our journey — from the first riff to the final master. "
         "Thank you for being part of the Sol family.",
     "themeColor": Colors.greenAccent,     // or any color you like
   };
@@ -200,22 +196,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
-    "Gold": GoogleFonts.bungeeSpice(
+    "609": GoogleFonts.kalniaGlaze(
       fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
-    "Free": GoogleFonts.matemasie(
-      fontSize: 28,
-      fontWeight: FontWeight.w700,
-      color: Colors.white,
-    ),
-    "Roger": GoogleFonts.kalniaGlaze(
-      fontSize: 28,
-      fontWeight: FontWeight.w700,
-      color: Colors.white,
-    ),
-    "609": GoogleFonts.boldonse(
+    "Roger": GoogleFonts.boldonse(
       fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
@@ -230,27 +216,22 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
-    "Stone": GoogleFonts.bungee(
-      fontSize: 28,
-      fontWeight: FontWeight.w700,
-      color: Colors.white,
-    ),
     "Central": GoogleFonts.nabla(
       fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
-    "Central (2)": GoogleFonts.nabla(
+    "Live": GoogleFonts.nabla(
       fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
-    "Self": GoogleFonts.fruktur(
+    "Sol": GoogleFonts.fruktur(
       fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
-    "Sol": GoogleFonts.oi(
+    "Melodic": GoogleFonts.oi(
       fontSize: 28,
       fontWeight: FontWeight.w700,
       color: Colors.white,
@@ -259,17 +240,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   // Display names shown on the main spine page
 final Map<String, String> _albumDisplayNames = {
-  "live": "Live",
-  "cabin": "Cabin",
-  "Centrale": "Central (2)",
+  "Melodic": "Melodic",
+  "Sol": "Sol",
+  "Live": "Live",
   "Centrala": "Central",
-  "Stone": "Stone",
   "Asraya": "Asraya",
-  "GEMINI": "Gemini",
-  "609": "609",
+  "Gemini": "Gemini",
   "Roger": "Roger",
-  "Free": "Free",
-  "GOLD": "GOLD",
+  "609": "609",
   "Track": "Track",
   "Base": "Base",
 };
@@ -422,39 +400,7 @@ void initState() {
 
 Map<String, bool> _albumPurchaseConfig = {};
 
-/*Future<void> _loadAlbumConfigFromDynamoDB() async {
-  try {
-    // TODO: Replace with your real credentials for now (we'll secure later)
-    final dynamoDb = DynamoDB(
-      region: 'us-east-1',
-      credentials: AwsClientCredentials(
-        accessKey: 'x',
-        secretKey: 'x',
-      ),
-    );
 
-    final response = await dynamoDb.scan(
-      tableName: 'MelodicSol_AlbumConfig',
-    );
-
-    for (var item in response.items ?? []) {
-      final slug = item['albumSlug']?.s;
-      final canBuy = item['canPurchaseIndividually']?.boolValue ?? false;
-
-      if (slug != null && _albums.containsKey(slug)) {
-        _albums[slug]!['canPurchaseIndividually'] = canBuy;
-        print('✅ DynamoDB: $slug canPurchaseIndividually = $canBuy');
-      }
-    }
-    print('✅ Loaded album purchase config from DynamoDB');
-  } catch (e) {
-    print('⚠️ DynamoDB load failed (using local defaults): $e');
-    // Fallback: set some defaults
-    _albums['stone']?['canPurchaseIndividually'] = true;
-    _albums['central']?['canPurchaseIndividually'] = true;
-    // add more as needed
-  }
-}*/
   Future<void> _loadPlaylists() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonString = prefs.getString('playlists');
@@ -612,7 +558,9 @@ Future<void> _playSong(String albumName, int index, {
         id: urlToPlay,
         title: finalTitle,
         album: albumName,
+        artist: "Melodic Sol",
         artUri: finalArtUrl.isNotEmpty ? Uri.parse(finalArtUrl) : null,
+        playable: true,
       ),
     );
 
@@ -1585,6 +1533,35 @@ TextStyle _getAlbumFont(String albumName) {
   );
 }
 
+Future<void> _purchaseIndividualAlbum(String albumName) async {
+  try {
+    final offerings = await Purchases.getOfferings();
+    if (offerings.current == null) return;
+
+    final package = offerings.current!.availablePackages.firstWhere(
+      (p) => p.identifier.toLowerCase().contains(albumName.toLowerCase()),
+      orElse: () => offerings.current!.availablePackages.first,
+    );
+
+    await Purchases.purchasePackage(package);
+
+    if (mounted) {
+      setState(() {
+        _albums[albumName]?['hasPurchased'] = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("✅ $albumName unlocked!")),
+      );
+    }
+  } catch (e) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Purchase cancelled or failed.")),
+      );
+    }
+  }
+}
+
 Widget _buildMainAlbumPage(double screenHeight) {
   final logoGlowColor = _getLogoGlowColor();
   final isPlaying = _globalPlayer.playing;
@@ -1749,7 +1726,7 @@ Widget _buildMainAlbumPage(double screenHeight) {
       ),    
     );
   } else {
-    // === ALBUM DETAIL PAGE ===
+  // === ALBUM DETAIL PAGE ===
     final albumData = _albums[_selectedAlbum]!;
     final albumName = _selectedAlbum!;
     final albumTheme = _getAlbumThemeColor(albumName);
@@ -1826,7 +1803,6 @@ Widget _buildMainAlbumPage(double screenHeight) {
               final isFree = song['isFree'] as bool? ?? false;
               final emailUnlock = song['emailUnlock'] as bool? ?? false;
               final bool isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
-
               return ListTile(
                 leading: ClipRRect(
                   borderRadius: BorderRadius.circular(6),
@@ -1854,54 +1830,67 @@ Widget _buildMainAlbumPage(double screenHeight) {
           ),
         ),
 
-        // Bottom Player Bar
+        // === ULTRA-COMPACT PLAYER BAR - Minimal spacing above it ===
+        const SizedBox(height: 4), // Very small gap
         Container(
           decoration: BoxDecoration(
-            color: albumTheme.withOpacity(0.15),
+            color: albumTheme.withOpacity(0.18),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           ),
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
           child: SafeArea(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Song Title
                 Text(
                   _currentSongTitle.isEmpty ? "Nothing playing" : _currentSongTitle,
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                  style: const TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
                 ),
-                Slider(
-                  value: _position.inMilliseconds.toDouble().clamp(0, _duration.inMilliseconds.toDouble() > 0 ? _duration.inMilliseconds.toDouble() : 1),
-                  max: _duration.inMilliseconds.toDouble() > 0 ? _duration.inMilliseconds.toDouble() : 1,
-                  activeColor: albumTheme,
-                  onChanged: (v) => _globalPlayer.seek(Duration(milliseconds: v.toInt())),
+
+                const SizedBox(height: 4),
+
+                // Progress Bar + Times
+                Row(
+                  children: [
+                    Text(_formatDuration(_position), style: const TextStyle(fontSize: 11, color: Colors.white54)),
+                    Expanded(
+                      child: SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 2.5,
+                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                        ),
+                        child: Slider(
+                          value: _duration.inMilliseconds > 0
+                              ? _position.inMilliseconds / _duration.inMilliseconds
+                              : 0,
+                          max: _duration.inMilliseconds > 0 ? _duration.inMilliseconds.toDouble() : 1,
+                          activeColor: albumTheme,
+                          inactiveColor: Colors.white24,
+                          onChanged: (v) => _globalPlayer.seek(Duration(milliseconds: v.toInt())),
+                        ),
+                      ),
+                    ),
+                    Text(_formatDuration(_duration), style: const TextStyle(fontSize: 11, color: Colors.white54)),
+                  ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(_formatDuration(_position), style: const TextStyle(fontSize: 11)),
-                      Text(_formatDuration(_duration), style: const TextStyle(fontSize: 11)),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 8),
+
+                const SizedBox(height: 2),
+
+                // Controls
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
+                    IconButton(icon: const Icon(Icons.skip_previous, size: 26), color: albumTheme, onPressed: _playPreviousSong),
                     IconButton(
-                      icon: const Icon(Icons.skip_previous, size: 32),
-                      color: albumTheme,
-                      onPressed: _playPreviousSong,
-                    ),
-                    IconButton(
-                      icon: Icon(
-                        Icons.shuffle,
-                        size: 28,
-                        color: _globalPlayer.shuffleModeEnabled ? albumTheme : Colors.white54,
-                      ),
+                      icon: Icon(Icons.shuffle, size: 24, color: _globalPlayer.shuffleModeEnabled ? albumTheme : Colors.white54),
                       onPressed: () async {
                         final bool newShuffle = !_globalPlayer.shuffleModeEnabled;
                         await _globalPlayer.setShuffleModeEnabled(newShuffle);
@@ -1909,33 +1898,17 @@ Widget _buildMainAlbumPage(double screenHeight) {
                       },
                     ),
                     IconButton(
-                      icon: Icon(
-                        _globalPlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                        size: 48,
-                        color: albumTheme,
-                      ),
+                      icon: Icon(_globalPlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 40, color: albumTheme),
                       onPressed: () async {
                         if (_globalPlayer.playing) {
                           await _globalPlayer.pause();
-                          return;
-                        }
-                        if (_currentSongTitle.isNotEmpty && _currentSongIndex >= 0) {
+                        } else {
                           await _globalPlayer.play();
-                          return;
                         }
-                        String albumToPlay = _currentViewedAlbum ?? _currentAlbum ?? "";
-                        if (albumToPlay.isEmpty || !_albums.containsKey(albumToPlay)) {
-                          if (_albums.isNotEmpty) albumToPlay = _albums.keys.first;
-                        }
-                        await _playSong(albumToPlay, 0);
                       },
                     ),
                     IconButton(
-                      icon: Icon(
-                        _globalPlayer.loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat,
-                        size: 28,
-                        color: _globalPlayer.loopMode != LoopMode.off ? albumTheme : Colors.white54,
-                      ),
+                      icon: Icon(_globalPlayer.loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat, size: 24, color: _globalPlayer.loopMode != LoopMode.off ? albumTheme : Colors.white54),
                       onPressed: () {
                         if (_globalPlayer.loopMode == LoopMode.off) {
                           _globalPlayer.setLoopMode(LoopMode.all);
@@ -1946,11 +1919,7 @@ Widget _buildMainAlbumPage(double screenHeight) {
                         }
                       },
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.skip_next, size: 32),
-                      color: albumTheme,
-                      onPressed: _playNextSong,
-                    ),
+                    IconButton(icon: const Icon(Icons.skip_next, size: 26), color: albumTheme, onPressed: _playNextSong),
                   ],
                 ),
               ],
@@ -2374,111 +2343,132 @@ Widget _buildSocialPage() {
   );
 }
 
-  void _showAlbumStory(String albumName) {
-    final album = _albums[albumName];
-    if (album == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Album data not found")),
-      );
-      return;
-    }
+void _showAlbumStory(String albumName) {
+  final album = _albums[albumName];
+  if (album == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Album data not found")),
+    );
+    return;
+  }
 
-    final story = _albumStories[albumName] ?? "Story coming soon for $albumName...";
-    final themeColor = _getAlbumThemeColor(albumName);
-    final artUrl = album['artUrl'] as String? ?? '';
+  final story = _albumStories[albumName] ?? "Story coming soon for $albumName...";
+  final themeColor = _getAlbumThemeColor(albumName);
+  final artUrl = album['artUrl'] as String? ?? '';
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.88,
-        decoration: BoxDecoration(
-          color: Colors.black,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [themeColor.withOpacity(0.15), Colors.black],
-          ),
-        ),
-        child: Column(
-          children: [
-            const SizedBox(height: 12),
-            Container(
-              width: 50,
-              height: 5,
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            // Album Art using artUrl
-            if (artUrl.isNotEmpty)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: CachedNetworkImage(
-                  imageUrl: artUrl,
-                  width: 240,
-                  height: 240,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => Container(
-                    width: 240,
-                    height: 240,
-                    color: Colors.grey[900],
-                    child: const Center(child: CircularProgressIndicator()),
-                  ),
-                  errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 100, color: Colors.white54),
-                ),
-              )
-            else
-              const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
-
-            const SizedBox(height: 24),
-
-            Text(
-              albumName,
-              style: _albumFonts[albumName] ?? GoogleFonts.inter(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-              textAlign: TextAlign.center,
-            ),
-
-            const SizedBox(height: 28),
-
-            // Story Text
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Text(
-                  story,
-                  style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ),
-
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: themeColor,
-                  minimumSize: const Size(double.infinity, 56),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                ),
-                child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
-              ),
-            ),
-          ],
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => Container(
+      height: MediaQuery.of(context).size.height * 0.88,
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [themeColor.withOpacity(0.15), Colors.black],
         ),
       ),
-    );
-  }
+      child: Column(
+        children: [
+          const SizedBox(height: 12),
+          Container(
+            width: 50,
+            height: 5,
+            decoration: BoxDecoration(
+              color: Colors.grey[600],
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Album Art
+          if (artUrl.isNotEmpty)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: CachedNetworkImage(
+                imageUrl: artUrl,
+                width: 240,
+                height: 240,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => Container(
+                  width: 240,
+                  height: 240,
+                  color: Colors.grey[900],
+                  child: const Center(child: CircularProgressIndicator()),
+                ),
+                errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 100, color: Colors.white54),
+              ),
+            )
+          else
+            const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
+
+          const SizedBox(height: 24),
+
+          // Album Title
+          Text(
+            albumName,
+            style: _albumFonts[albumName] ?? GoogleFonts.inter(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+            textAlign: TextAlign.center,
+          ),
+
+          const SizedBox(height: 28),
+
+          // Story Text
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                story,
+                style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+
+          // === INDIVIDUAL ALBUM PURCHASE BUTTON ===
+          if (_albums[albumName]?['canPurchaseIndividually'] == true)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
+              child: ElevatedButton(
+                onPressed: () => _purchaseIndividualAlbum(albumName),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.greenAccent,
+                  foregroundColor: Colors.black87,
+                  minimumSize: const Size(double.infinity, 62),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                ),
+                child: const Text(
+                  "Unlock This Album — \$17 One Time",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+
+          // Close Button
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: themeColor,
+                minimumSize: const Size(double.infinity, 56),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 
   void _showMelodicSolBio() {
     final bio = _melodicSolBio;
@@ -2653,171 +2643,173 @@ Future<void> _redeemPromoCode(String code) async {
   }
 
 void _showPaywall() {
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    builder: (context) => Container(
-      height: MediaQuery.of(context).size.height * 0.82,
-      decoration: const BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: SingleChildScrollView(
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => Scaffold(
+        backgroundColor: Colors.black,
+        body: SingleChildScrollView(
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.music_note, size: 90, color: Colors.greenAccent),
-              const SizedBox(height: 24),
-              const Text(
-                "Open Access",
-                style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
+              // Top Bar with Back Button
+              SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Row(
+                    children: [
+                      TextButton.icon(
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                        label: const Text(
+                          "Back to Music",
+                          style: TextStyle(color: Colors.white, fontSize: 16),
+                        ),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      const Spacer(),
+                    ],
+                  ),
+                ),
               ),
-              const SizedBox(height: 12),
-              const Text(
-                "Support Melodic Sol",
-                style: TextStyle(fontSize: 18, color: Colors.white70),
+
+              // Top Image
+              Container(
+                height: 230,
+                width: double.infinity,
+                decoration: const BoxDecoration(
+                  image: DecorationImage(
+                    image: NetworkImage("https://dhufx08tsdp2a.cloudfront.net/Melodicsol.png"),
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.transparent, Colors.black.withOpacity(0.85)],
+                    ),
+                  ),
+                ),
               ),
-              const SizedBox(height: 32),
+
+              const SizedBox(height: 20),
+
+              // Title
               const Text(
-                "Unlock every album forever with a one-time purchase.\n\nGet instant access to all tracks, behind-the-scenes stories, and help independent music thrive.",
+                "Gain Lifetime Access",
+                style: TextStyle(
+                  fontSize: 27,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 16.5, color: Colors.white70, height: 1.7),
               ),
+
+              const SizedBox(height: 8),
+
+              const Text(
+                "Support Melodicsol",
+                style: TextStyle(fontSize: 13, color: Colors.white70),
+                textAlign: TextAlign.center,
+              ),
+
+              const SizedBox(height: 28),
+
+              // Benefits
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("• UNLOCK ALL SONGS ALL ALBUMS FOREVER (Current + ALL Future Releases)", 
+                         style: TextStyle(fontSize: 11, color: Colors.white70, height: 1.6)),
+                    SizedBox(height: 10),
+                    Text("", 
+                         style: TextStyle(fontSize: 11, color: Colors.white70, height: 1.6)),
+                    SizedBox(height: 10),
+                    Text("• GAIN ACCESS TO BEHIND-THE-SCENES ARCHIVE", 
+                         style: TextStyle(fontSize: 11, color: Colors.white70, height: 1.6)),
+                    SizedBox(height: 10),
+                    Text("YOUR FULL SUPPORT GOES DIRECTLY TO THE ARTIST", 
+                         style: TextStyle(fontSize: 11, color: Colors.white70, height: 1.6)),
+                  ],
+                ),
+              ),
+
               const SizedBox(height: 40),
 
-              // Lifetime Access Button
-              ElevatedButton(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  try {
-                    final offerings = await Purchases.getOfferings();
-                    if (offerings.current != null) {
-                      final package = offerings.current!.availablePackages.firstWhere(
-                        (p) => p.identifier.toLowerCase().contains("lifetime_access") ||
-                               p.identifier.toLowerCase() == "lifetime",
-                        orElse: () => offerings.current!.availablePackages.first,
-                      );
-                      await Purchases.purchasePackage(package);
+              // Purchase Buttons
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  children: [
+                    // Lifetime $47
+                    ElevatedButton(
+                      onPressed: () async {
+                        Navigator.pop(context);
+                        // Your existing lifetime purchase logic here
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00FF85),
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                        minimumSize: const Size(double.infinity, 62),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      ),
+                      child: const Text(
+                        "LIFETIME ACCESS FOR \$47",
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                    ),
 
-                      final customerInfo = await Purchases.getCustomerInfo();
-                      final hasAccess = customerInfo.entitlements.active.containsKey("lifetime_access");
+                    const SizedBox(height: 14),
 
-                      if (hasAccess && mounted) {
-                        setState(() => _hasOpenAccess = true);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text("✅ Thank you! Lifetime Access granted."),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                      }
-                    }
-                  } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Purchase cancelled or failed.")),
-                      );
-                    }
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.greenAccent,
-                  foregroundColor: Colors.black87,
-                  minimumSize: const Size(double.infinity, 68),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    // Catalog $37
+                    ElevatedButton(
+                      onPressed: () async {
+                        Navigator.pop(context);
+                        // Your existing catalog purchase logic here
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white24,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                        minimumSize: const Size(double.infinity, 56),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      ),
+                      child: const Text(
+                        "Current Catalog Unlock — \$37",
+                        style: TextStyle(fontSize: 13),
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // Individual Album (if applicable)
+                    if (_selectedAlbum != null && 
+                        _albums[_selectedAlbum!]?["canPurchaseIndividually"] == true)
+                      ElevatedButton(
+                        onPressed: () async {
+                          Navigator.pop(context);
+                          // Your existing individual album logic here
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white24,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                          minimumSize: const Size(double.infinity, 56),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        ),
+                        child: Text(
+                          "Buy ${_selectedAlbum ?? 'This Album'} — \$17",
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                  ],
                 ),
-                child: const Text("Purchase Lifetime Open Access — \$47 One Time",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
               ),
 
-              const SizedBox(height: 16),
-
-              // Catalog Access Button
-              ElevatedButton(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  try {
-                    final offerings = await Purchases.getOfferings();
-                    if (offerings.current != null) {
-                      final package = offerings.current!.availablePackages.firstWhere(
-                        (p) => p.identifier.toLowerCase().contains("catalog_access") ||
-                               p.identifier.toLowerCase().contains("catalog"),
-                        orElse: () => offerings.current!.availablePackages.first,
-                      );
-                      await Purchases.purchasePackage(package);
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("✅ Catalog Access granted!")),
-                        );
-                      }
-                    }
-                  } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Purchase cancelled or failed.")),
-                      );
-                    }
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white24,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size(double.infinity, 68),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                ),
-                child: const Text("Unlock Current Catalog — \$37 One Time",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-              ),
-
-              const SizedBox(height: 16),
-
-              // Individual Album Button (only if allowed)
-              if (_selectedAlbum != null && 
-                  _albums[_selectedAlbum!]?["canPurchaseIndividually"] == true)
-                ElevatedButton(
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    try {
-                      final offerings = await Purchases.getOfferings();
-                      if (offerings.current != null) {
-                        final package = offerings.current!.availablePackages.firstWhere(
-                          (p) => p.identifier == "album_${_selectedAlbum!.toLowerCase()}",
-                          orElse: () => offerings.current!.availablePackages.first,
-                        );
-                        await Purchases.purchasePackage(package);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text("✅ Album unlocked!")),
-                          );
-                        }
-                      }
-                    } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Purchase cancelled or failed.")),
-                        );
-                      }
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white24,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(double.infinity, 68),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  ),
-                  child: Text("Unlock ${_selectedAlbum ?? 'This Album'} — \$17 One Time",
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                ),
-
-              const SizedBox(height: 24),
-
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text("Not now", style: TextStyle(color: Colors.white60, fontSize: 16)),
-              ),
+              const SizedBox(height: 40),
             ],
           ),
         ),
@@ -2846,103 +2838,125 @@ void _showPaywall() {
     );
   }
   
-  void _showSongStory(String albumName, int songIndex) {
-    final album = _albums[albumName];
-    if (album == null) return;
+void _showSongStory(String albumName, int songIndex) {
+  final album = _albums[albumName];
+  if (album == null) return;
 
-    final songs = album['songs'] as List<dynamic>? ?? [];
-    if (songIndex < 0 || songIndex >= songs.length) return;
+  final songs = album['songs'] as List<dynamic>? ?? [];
+  if (songIndex < 0 || songIndex >= songs.length) return;
 
-    final song = songs[songIndex] as Map<String, dynamic>;
-    final title = song['title'] as String? ?? 'Unknown Song';
-    final story = song['story'] as String? ?? "Story coming soon for $title...";
-    final themeColor = _getAlbumThemeColor(albumName);
+  final song = songs[songIndex] as Map<String, dynamic>;
+  final title = song['title'] as String? ?? 'Unknown Song';
+  final story = song['story'] as String? ?? "Story coming soon for $title...";
+  final themeColor = _getAlbumThemeColor(albumName);
+  final songArtUrl = song['artUrl'] as String? ??
+                     song['songArtUrl'] as String? ??
+                     song['coverUrl'] as String? ??
+                     album['artUrl'] as String? ?? '';
 
-    final songArtUrl = song['artUrl'] as String? ?? 
-                       song['songArtUrl'] as String? ?? 
-                       song['coverUrl'] as String? ?? 
-                       album['artUrl'] as String? ?? '';
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.88,
-        decoration: BoxDecoration(
-          color: Colors.black,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [themeColor.withOpacity(0.15), Colors.black],
-          ),
-        ),
-        child: Column(
-          children: [
-            const SizedBox(height: 12),
-            Container(
-              width: 50,
-              height: 5,
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            if (songArtUrl.isNotEmpty)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: CachedNetworkImage(
-                  imageUrl: songArtUrl,
-                  width: 240,
-                  height: 240,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => const CircularProgressIndicator(),
-                  errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 100),
-                ),
-              )
-            else
-              const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
-
-            const SizedBox(height: 24),
-
-            Text(
-              title,
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: themeColor),
-              textAlign: TextAlign.center,
-            ),
-
-            const SizedBox(height: 28),
-
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Text(
-                  story,
-                  style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ),
-
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: themeColor,
-                  minimumSize: const Size(double.infinity, 56),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                ),
-                child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
-              ),
-            ),
-          ],
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => Container(
+      height: MediaQuery.of(context).size.height * 0.88,
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [themeColor.withOpacity(0.15), Colors.black],
         ),
       ),
-    );
+      child: Column(
+        children: [
+          const SizedBox(height: 12),
+          Container(
+            width: 50,
+            height: 5,
+            decoration: BoxDecoration(
+              color: Colors.grey[600],
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Song Art
+          if (songArtUrl.isNotEmpty)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: CachedNetworkImage(
+                imageUrl: songArtUrl,
+                width: 240,
+                height: 240,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => const CircularProgressIndicator(),
+                errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 100),
+              ),
+            )
+          else
+            const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
+
+          const SizedBox(height: 24),
+
+          // Song Title
+          Text(
+            title,
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: themeColor),
+            textAlign: TextAlign.center,
+          ),
+
+          const SizedBox(height: 28),
+
+          // Story Text
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                story,
+                style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+
+          // === UNLOCK ALBUM BUTTON (Only if album is available for individual sale) ===
+          if (_albums[albumName]?['canPurchaseIndividually'] == true)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
+              child: ElevatedButton(
+                onPressed: () => _purchaseIndividualAlbum(albumName),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.greenAccent,
+                  foregroundColor: Colors.black87,
+                  minimumSize: const Size(double.infinity, 62),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                ),
+                child: const Text(
+                  "Unlock This Album — \$17 One Time",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+
+          // Close Button
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: themeColor,
+                minimumSize: const Size(double.infinity, 56),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
   Future<void> _launchUrl(String url) async {
