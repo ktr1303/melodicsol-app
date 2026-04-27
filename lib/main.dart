@@ -108,7 +108,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _ignoreProcessingListener = false;
   bool _ignorePendingTitle = false;
   StreamSubscription? _processingSubscription;   // ← Add this line
-  String _currentSongTitle = "Play song-swipe left queue";
+  String _currentSongTitle = "Play song or swipe left for queue";
   String? _currentSongArtUrl;
   String? _selectedAlbum;
   Duration _position = Duration.zero;
@@ -243,7 +243,7 @@ final Map<String, String> _albumDisplayNames = {
   "Melodic": "Melodic",
   "Sol": "Sol",
   "Live": "Live",
-  "Centrala": "Central",
+  "Central": "Central",
   "Asraya": "Asraya",
   "Gemini": "Gemini",
   "Roger": "Roger",
@@ -558,7 +558,7 @@ Future<void> _playSong(String albumName, int index, {
         id: urlToPlay,
         title: finalTitle,
         album: albumName,
-        artist: "Melodic Sol",
+        artist: "Melodicsol",
         artUri: finalArtUrl.isNotEmpty ? Uri.parse(finalArtUrl) : null,
         playable: true,
       ),
@@ -1197,9 +1197,8 @@ Future<void> _playPreviousSong() async {
 
                     final List<String> individuallyPurchasableAlbums = [
             'live',      // change these to your exact album keys
-            'cabin',
-            'Centrale',
-            'Centrala',
+            'sol',
+            'melodic',
             // Add or remove albums here as needed
           ];
 
@@ -1491,19 +1490,16 @@ Future<void> _playPreviousSong() async {
 TextStyle _getAlbumFont(String albumName) {
   // Explicit mapping for the top 4 + others
   final fontMapping = {
-    "live": "Base",
-    "cabin": "Base",
-    "Centrale": "Central (2)",
-    "Centrala": "Central",
-    "Stone": "Stone",
-    "Asraya": "Asraya",
-    "GEMINI": "Gemini",
+    "melodic": "Melodic",
+    "sol": "Sol",
+    "live": "Live",
+    "central": "Central",
+    "asraya": "Asraya",
+    "gemini": "Gemini",
+    "roger": "Roger",
     "609": "609",
-    "Roger": "Roger",
-    "Free": "Free",
-    "GOLD": "Gold",
-    "Track": "Track",
-    "Base": "Base",
+    "track": "Track",
+    "base": "Base",
   };
 
   String? fontKey = fontMapping[albumName];
@@ -1574,7 +1570,7 @@ Widget _buildMainAlbumPage(double screenHeight) {
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
       child: SizedBox(
-        height: screenHeight * 1.45,
+        height: screenHeight * 1.75,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -1671,8 +1667,8 @@ Widget _buildMainAlbumPage(double screenHeight) {
               final index = e.key;
               final albumName = e.value;
               final albumTheme = _getAlbumThemeColor(albumName);
-              const baseTop = 205.0;
-              const spacing = 57.0;
+              const baseTop = 240.0;
+              const spacing = 52.0;
               final itemTop = baseTop + (index * spacing);
 
               final stagger = CurvedAnimation(
@@ -3465,7 +3461,7 @@ Future<void> _submitToHighLevel() async {
       "slI4j8daum6R2q1EBPHF": _giveaways ? "Yes" : "No",
     },
     "tags": tags,
-    "source": "MelodicSol App - Sign Up",
+    "source": "Melodicsol App - Sign Up",
   };
 
   print("📤 Sending with tags: ${jsonEncode(payload)}");
