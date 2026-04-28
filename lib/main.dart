@@ -1032,7 +1032,7 @@ void _handleDeepLink(Uri uri) {
 void _setupProcessingListener() {
   _processingSubscription?.cancel();
 
-  // Visual progress
+  // Visual progress bar update
   _processingSubscription = _globalPlayer.positionStream.listen((position) {
     if (mounted) {
       setState(() => _position = position);
@@ -1046,17 +1046,14 @@ void _setupProcessingListener() {
     }
   });
 
-  // Completion & title
+  // Song completion / title updates
   _globalPlayer.processingStateStream.listen((state) {
-    print('>>> ProcessingState: $state | PlayID: $_currentPlayId');
-
     if (_pendingSongTitle != null && (state == ProcessingState.ready || state == ProcessingState.buffering)) {
       setState(() {
         _currentSongTitle = _pendingSongTitle!;
         _pendingSongTitle = null;
       });
     }
-
     if (state == ProcessingState.completed) {
       _handleSongCompletion();
     }
@@ -1871,88 +1868,129 @@ Widget _buildMainAlbumPage(double screenHeight) {
           ),
         ),
 
-        // === RELIABLE PLAYER BAR ===
-        Container(
-          decoration: BoxDecoration(
-            color: albumTheme.withOpacity(0.18),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-          child: SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _currentSongTitle.isEmpty ? "Nothing playing" : _currentSongTitle,
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Text(_formatDuration(_position), style: const TextStyle(fontSize: 12, color: Colors.white54)),
-                    Expanded(
-                      child: SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          trackHeight: 4.0,
-                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
-                        ),
-                        child: Slider(
-                          value: _duration.inMilliseconds > 0 
-                              ? (_position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0) 
-                              : 0.0,
-                          max: _duration.inMilliseconds > 0 ? _duration.inMilliseconds.toDouble() : 1.0,
-                          activeColor: albumTheme,
-                          inactiveColor: Colors.white24,
-                          onChanged: null,                    // ← No live updates while dragging
-                          onChangeEnd: (value) {              // ← Seek ONLY when finger is released
-                            if (_duration.inMilliseconds > 0) {
-                              final seekPosition = Duration(
-                                milliseconds: (value * _duration.inMilliseconds).toInt(),
-                              );
-                              _globalPlayer.seek(seekPosition);
-                            }
-                          },
+// === FINAL CUSTOM PROGRESS BAR - Bypasses Slider Issues ===
+Container(
+  decoration: BoxDecoration(
+    color: albumTheme.withOpacity(0.18),
+    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+  ),
+  padding: const EdgeInsets.fromLTRB(16, 14, 16, 22),
+  child: SafeArea(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          _currentSongTitle.isEmpty ? "Nothing playing" : _currentSongTitle,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+        ),
+
+        const SizedBox(height: 12),
+
+        // Custom Progress Bar
+        StreamBuilder<Duration>(
+          stream: _globalPlayer.positionStream,
+          builder: (context, snapshot) {
+            final position = snapshot.data ?? _position;
+            final progress = _duration.inMilliseconds > 0 
+                ? (position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0) 
+                : 0.0;
+
+            return GestureDetector(
+              onTapDown: (details) {
+                if (_duration.inMilliseconds > 0) {
+                  final RenderBox box = context.findRenderObject() as RenderBox;
+                  final localX = details.localPosition.dx;
+                  final width = box.size.width;
+                  final newProgress = (localX / width).clamp(0.0, 1.0);
+                  _globalPlayer.seek(Duration(
+                    milliseconds: (newProgress * _duration.inMilliseconds).toInt(),
+                  ));
+                }
+              },
+              onHorizontalDragUpdate: (details) {
+                if (_duration.inMilliseconds > 0) {
+                  final RenderBox box = context.findRenderObject() as RenderBox;
+                  final localX = details.localPosition.dx;
+                  final width = box.size.width;
+                  final newProgress = (localX / width).clamp(0.0, 1.0);
+                  _globalPlayer.seek(Duration(
+                    milliseconds: (newProgress * _duration.inMilliseconds).toInt(),
+                  ));
+                }
+              },
+              child: Column(
+                children: [
+                  Container(
+                    height: 6,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: FractionallySizedBox(
+                      alignment: Alignment.centerLeft,
+                      widthFactor: progress,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: albumTheme,
+                          borderRadius: BorderRadius.circular(3),
                         ),
                       ),
                     ),
-                    Text(_formatDuration(_duration), style: const TextStyle(fontSize: 12, color: Colors.white54)),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    IconButton(icon: const Icon(Icons.skip_previous, size: 32), color: albumTheme, onPressed: _playPreviousSong),
-                    IconButton(icon: Icon(Icons.shuffle, size: 28, color: _globalPlayer.shuffleModeEnabled ? albumTheme : Colors.white54), onPressed: () async {
-                      await _globalPlayer.setShuffleModeEnabled(!_globalPlayer.shuffleModeEnabled);
-                      setState(() {});
-                    }),
-                    IconButton(
-                      icon: Icon(_globalPlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 48, color: albumTheme),
-                      onPressed: () async {
-                        if (_globalPlayer.playing) await _globalPlayer.pause();
-                        else await _globalPlayer.play();
-                      },
-                    ),
-                    IconButton(
-                      icon: Icon(_globalPlayer.loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat, size: 28, color: _globalPlayer.loopMode != LoopMode.off ? albumTheme : Colors.white54),
-                      onPressed: () {
-                        if (_globalPlayer.loopMode == LoopMode.off) _globalPlayer.setLoopMode(LoopMode.all);
-                        else if (_globalPlayer.loopMode == LoopMode.all) _globalPlayer.setLoopMode(LoopMode.one);
-                        else _globalPlayer.setLoopMode(LoopMode.off);
-                      },
-                    ),
-                    IconButton(icon: const Icon(Icons.skip_next, size: 32), color: albumTheme, onPressed: _playNextSong),
-                  ],
-                ),
-              ],
-            ),
-          ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(_formatDuration(position), style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                      Text(_formatDuration(_duration), style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
         ),
+
+        const SizedBox(height: 12),
+
+        // Controls
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            IconButton(icon: const Icon(Icons.skip_previous, size: 32), color: albumTheme, onPressed: _playPreviousSong),
+            IconButton(
+              icon: Icon(Icons.shuffle, size: 28, color: _globalPlayer.shuffleModeEnabled ? albumTheme : Colors.white54),
+              onPressed: () async {
+                await _globalPlayer.setShuffleModeEnabled(!_globalPlayer.shuffleModeEnabled);
+                setState(() {});
+              },
+            ),
+            IconButton(
+              icon: Icon(_globalPlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 48, color: albumTheme),
+              onPressed: () async {
+                if (_globalPlayer.playing) await _globalPlayer.pause();
+                else await _globalPlayer.play();
+              },
+            ),
+            IconButton(
+              icon: Icon(_globalPlayer.loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat, size: 28, color: _globalPlayer.loopMode != LoopMode.off ? albumTheme : Colors.white54),
+              onPressed: () {
+                if (_globalPlayer.loopMode == LoopMode.off) _globalPlayer.setLoopMode(LoopMode.all);
+                else if (_globalPlayer.loopMode == LoopMode.all) _globalPlayer.setLoopMode(LoopMode.one);
+                else _globalPlayer.setLoopMode(LoopMode.off);
+              },
+            ),
+            IconButton(icon: const Icon(Icons.skip_next, size: 32), color: albumTheme, onPressed: _playNextSong),
+          ],
+        ),
+      ],
+    ),
+  ),
+),
       ],
     );
   }
