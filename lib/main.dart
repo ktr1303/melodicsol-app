@@ -16,6 +16,9 @@ import 'dart:async';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';         // For Platform.isAndroid / Platform.isIOS
 import 'package:app_links/app_links.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/auth_service.dart';
+
 // ==================== BACKGROUND HANDLER (MUST BE TOP-LEVEL) ====================
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -479,30 +482,42 @@ Future<void> _playSong(String albumName, int index, {
   // Get song data for unlock check
   final songList = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
   Map<String, dynamic> song = {};
-
   if (urlToPlay.isEmpty) {
     if (index < 0 || index >= songList.length) return;
-
     song = songList[index] as Map<String, dynamic>;
     urlToPlay = (song['url'] as String?)?.trim() ?? '';
     finalTitle = (song['Title'] as String?) ?? "Unknown Song";
     finalArtUrl = (song['artUrl'] as String?) ?? (song['songArtUrl'] as String?) ?? "";
   }
 
-  // === Unlock Check (RevenueCat + Existing Logic) ===
+  // === Unlock Check ===
+  // === Unlock Check (Email Unlock + RevenueCat) ===
   final bool isFree = song['isFree'] as bool? ?? false;
   final bool emailUnlock = song['emailUnlock'] as bool? ?? false;
 
-  bool isLocked = !isFree && 
-                  !_hasOpenAccess && 
+  // 1. Special handling for emailUnlock songs
+  if (!isFree && emailUnlock && !_hasConfirmedEmail) {
+    // Show the SAME form as the Welcome Screen "Login / Sign Up" button
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierColor: Colors.transparent,
+        builder: (context) => const UserInfoScreen(),
+      );
+    }
+    return; // Stop — wait for user to sign up / verify email
+  }
+
+  // 2. Normal locked check
+  bool isLocked = !isFree &&
+                  !_hasOpenAccess &&
                   !(_hasConfirmedEmail && emailUnlock);
 
-  // Check RevenueCat if still locked
+  // Check RevenueCat entitlements if still locked
   if (isLocked) {
     final hasLifetime = await hasEntitlement('lifetime_access');
     final hasCatalog = await hasEntitlement('catalog_access');
     final hasIndividual = await hasEntitlement('individual_album_access');
-
     isLocked = !hasLifetime && !hasCatalog && !hasIndividual;
   }
 
@@ -512,15 +527,15 @@ Future<void> _playSong(String albumName, int index, {
         const SnackBar(content: Text("This song requires purchase or Lifetime Access")),
       );
     }
-    return; // Stop here — don't play
+    return;
   }
+  // === End Unlock Check ===
   // === End Unlock Check ===
 
   // Fix malformed URLs
   if (urlToPlay.startsWith('https:/') && !urlToPlay.startsWith('https://')) {
     urlToPlay = urlToPlay.replaceFirst('https:/', 'https://');
   }
-
   if (urlToPlay.isEmpty || !urlToPlay.startsWith('http')) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -563,7 +578,7 @@ Future<void> _playSong(String albumName, int index, {
     await _globalPlayer.seek(Duration.zero);
     await Future.delayed(const Duration(milliseconds: 300));
 
-    // Create HLS source WITH MediaItem tag
+    // Create HLS source
     final source = HlsAudioSource(
       Uri.parse(urlToPlay),
       headers: {
@@ -1830,43 +1845,66 @@ Widget _buildMainAlbumPage(double screenHeight) {
         const SizedBox(height: 12),
 
         // Song List
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            itemCount: songs.length,
-            itemBuilder: (context, index) {
-              final song = songs[index] as Map<String, dynamic>;
-              final title = song['Title'] as String? ?? "Unknown Track";
-              final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-              final isFree = song['isFree'] as bool? ?? false;
-              final emailUnlock = song['emailUnlock'] as bool? ?? false;
-              final bool isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
-              return ListTile(
-                leading: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: CachedNetworkImage(
-                    imageUrl: artUrl,
-                    width: 48,
-                    height: 48,
-                    fit: BoxFit.cover,
-                    errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
-                  ),
-                ),
-                title: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 16.5,
-                    color: isLocked ? Colors.white54 : Colors.white,
-                    fontWeight: isLocked ? FontWeight.normal : FontWeight.w500,
-                  ),
-                ),
-                trailing: isLocked ? const Icon(Icons.lock, color: Colors.white54, size: 20) : null,
-                onTap: isLocked ? () => _showPaywall() : () => _playSong(albumName, index),
-                onLongPress: () => _showSongOptions(song, albumName, index),
-              );
-            },
-          ),
-        ),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                itemCount: songs.length,
+                itemBuilder: (context, index) {
+                  final song = songs[index] as Map<String, dynamic>;
+                  final title = song['Title'] as String? ?? "Unknown Track";
+                  final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+                  final isFree = song['isFree'] as bool? ?? false;
+                  final emailUnlock = song['emailUnlock'] as bool? ?? false;
+
+                  // Calculate locked status
+                  final bool isLocked = !isFree &&
+                      !_hasOpenAccess &&
+                      !(_hasConfirmedEmail && emailUnlock);
+
+                  return ListTile(
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: CachedNetworkImage(
+                        imageUrl: artUrl,
+                        width: 48,
+                        height: 48,
+                        fit: BoxFit.cover,
+                        errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
+                      ),
+                    ),
+                    title: Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 16.5,
+                        color: isLocked ? Colors.white54 : Colors.white,
+                        fontWeight: isLocked ? FontWeight.normal : FontWeight.w500,
+                      ),
+                    ),
+                    trailing: isLocked ? const Icon(Icons.lock, color: Colors.white54, size: 20) : null,
+                    
+                    // UPDATED onTap LOGIC
+                    onTap: () {
+                      if (emailUnlock && !_hasConfirmedEmail) {
+                        // Show the SAME email form as welcome screen
+                        showDialog(
+                          context: context,
+                          barrierColor: Colors.transparent,
+                          builder: (context) => const UserInfoScreen(),
+                        );
+                      } else if (isLocked) {
+                        // Normal paid song → show paywall
+                        _showPaywall();
+                      } else {
+                        // Free or unlocked → play the song
+                        _playSong(albumName, index);
+                      }
+                    },
+                    
+                    onLongPress: () => _showSongOptions(song, albumName, index),
+                  );
+                },
+              ),
+            ),
 
 // === FINAL CUSTOM PROGRESS BAR - Bypasses Slider Issues ===
 Container(
@@ -2398,6 +2436,20 @@ Widget _buildSocialPage() {
                     foregroundColor: Colors.black,
                   ),
                   child: const Text("Redeem"),
+                ),
+                // Example: Add this button in your HomePage or a settings drawer
+                ElevatedButton(
+                  onPressed: () async {
+                    await AuthService().logout();           // This clears everything
+                    if (mounted) {
+                      Navigator.pushAndRemoveUntil(
+                        context,
+                        MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+                        (route) => false,
+                      );
+                    }
+                  },
+                  child: const Text("Logout (for testing)"),
                 ),
               ],
             ),
@@ -3110,6 +3162,7 @@ class VisualizerPainter extends CustomPainter {
 
 // ====================== WELCOME / LOGIN SCREEN (First Screen) ======================
 // ====================== WELCOME / LOGIN SCREEN (First Screen) ======================
+         // Your existing sign up / login dialog
 class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
 
@@ -3119,10 +3172,17 @@ class WelcomeScreen extends StatefulWidget {
 
 class _WelcomeScreenState extends State<WelcomeScreen> {
   late VideoPlayerController _welcomeVideoController;
+  final AuthService _authService = AuthService();
+  bool _isCheckingAutoLogin = true;
 
   @override
   void initState() {
     super.initState();
+    _initializeVideo();
+    _checkAutoLogin();
+  }
+
+  void _initializeVideo() {
     _welcomeVideoController = VideoPlayerController.networkUrl(
       Uri.parse("https://dhufx08tsdp2a.cloudfront.net/Website+vid.mp4"),
     )..initialize().then((_) {
@@ -3134,6 +3194,39 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       });
   }
 
+  Future<void> _checkAutoLogin() async {
+    final state = await _authService.loadLoginState();
+
+    if (state['isLoggedIn'] == true) {
+      final bool isConfirmed = await _authService.checkEmailVerification();
+
+      if (mounted) {
+        if (isConfirmed) {
+          // Fully verified → Go to main app
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const HomePage()),
+          );
+        } else {
+          // Logged in but email NOT confirmed → Show welcome + reminder
+          setState(() => _isCheckingAutoLogin = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Please verify your email to unlock full access"),
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+      }
+      return;
+    }
+
+    // No saved login → Show welcome screen normally
+    if (mounted) {
+      setState(() => _isCheckingAutoLogin = false);
+    }
+  }
+
   @override
   void dispose() {
     _welcomeVideoController.dispose();
@@ -3142,11 +3235,18 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isCheckingAutoLogin) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(child: CircularProgressIndicator(color: Colors.white)),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Video Background
+          // Video Background (unchanged)
           SizedBox.expand(
             child: FittedBox(
               fit: BoxFit.cover,
@@ -3158,7 +3258,6 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
             ),
           ),
 
-          // Dark overlay
           Container(color: Colors.black.withOpacity(0.55)),
 
           SafeArea(
@@ -3166,21 +3265,14 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Logo
-                  Image.asset(
-                    'assets/logo.png',
-                    height: 120,
-                    fit: BoxFit.contain,
-                  ),
-
+                  Image.asset('assets/logo.png', height: 120, fit: BoxFit.contain),
                   const SizedBox(height: 80),
 
-                  // Login / Sign Up Button
                   ElevatedButton(
                     onPressed: () {
                       showDialog(
                         context: context,
-                        barrierColor: Colors.transparent,   // ← This makes the video visible
+                        barrierColor: Colors.transparent,
                         builder: (context) => const UserInfoScreen(),
                       );
                     },
@@ -3194,7 +3286,6 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 
                   const SizedBox(height: 20),
 
-                  // Skip for now
                   TextButton(
                     onPressed: () {
                       Navigator.pushReplacement(
