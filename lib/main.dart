@@ -45,11 +45,29 @@ Future<void> main() async {
   FirebaseDynamicLinks.instance.onLink.listen((PendingDynamicLinkData? dynamicLinkData) async {
     final Uri? deepLink = dynamicLinkData?.link;
     if (deepLink != null) {
-      await _handleDeepLink(deepLink);
+      // Handle deep link (email confirmation)
+// Handle deep link (email confirmation)
+      if (deepLink != null) {
+        print("🔗 Deep link received in main.dart: $deepLink");
+
+        if (deepLink.path.contains('confirm') || deepLink.queryParameters['email'] != null) {
+          final email = deepLink.queryParameters['email'] ?? '';
+
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('isLoggedIn', true);
+          await prefs.setBool('email_confirmed', true);
+
+          print("💾 Deep link confirmed email: $email → Saved to prefs");
+
+          // Instead of navigating here, just save and let HomePage handle it
+          print("✅ Deep link processed - saved confirmation");
+        }
+      }
     }
   }).onError((error) {
     print('Deep link error: $error');
   });
+  
 
   // Background message handler
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
@@ -80,29 +98,6 @@ Future<void> main() async {
 
   runApp(const MelodicSolApp());
 }
-
-Future<void> _handleDeepLink(Uri link) async {
-  print("🔗 Deep link received: $link");
-
-  if (link.path.contains('verify-email') || link.queryParameters['mode'] == 'verifyEmail') {
-    final authService = AuthService();
-    final user = authService.currentUser;
-
-    if (user != null) {
-      await user.reload();
-      if (user.emailVerified) {
-        await authService.checkEmailVerification();
-        print("✅ Email verified via deep link!");
-
-        // TODO: Auto-play the song the user was trying to access (we'll add this next)
-        // For now, just go to Home
-        // You can use a GlobalKey or a static callback later
-      }
-    }
-  }
-}
-
-
 
 class MelodicSolApp extends StatelessWidget {
   const MelodicSolApp({super.key});
@@ -337,9 +332,35 @@ void initState() {
   _deepLinkSubscription = _appLinks.uriLinkStream.listen((Uri? uri) {
     print("uriLinkStream fired with: $uri");
     if (uri != null) {
-      _handleDeepLink(uri);
     }
   });
+  Future<void> _handleDeepLink(Uri uri) async {
+  print("🔗 Deep link received in HomePage: $uri");
+
+  if (uri.path.contains('confirm') || uri.queryParameters['email'] != null) {
+    final email = uri.queryParameters['email'] ?? '';
+
+    if (email.isNotEmpty && mounted) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isLoggedIn', true);
+      await prefs.setBool('email_confirmed', true);
+
+      print("💾 Deep link → Saved email as confirmed");
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("✅ Email confirmed! Welcome to MelodicSol."),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        // Force reload confirmed status
+        await _loadConfirmedStatus();
+      }
+    }
+  }
+}
 
   /*_initializeLocalNotifications();
   _setupNotifications();*/
@@ -917,7 +938,7 @@ Future<void> _checkLivestreamStatus() async {
     // Silently fail if offline or file not found
   }
 }
-void _handleDeepLink(Uri uri) {
+void handleDeepLink(Uri uri) {
   print("🔗 Deep link received: $uri");
 
   final String fullUriString = uri.toString().toLowerCase();
@@ -3239,10 +3260,38 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       });
   }
 
+  Future<void> _handleDeepLink(Uri uri) async {
+  print("🔗 Deep link received: $uri");
+
+  if (uri.path.contains('confirm') || uri.queryParameters['email'] != null) {
+    final email = uri.queryParameters['email'] ?? '';
+
+    print("✅ Valid confirmation email: $email");
+
+    if (email.isNotEmpty && mounted) {   // ← mounted is now safe
+      final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('isLoggedIn', true);
+        await prefs.setBool('email_confirmed', false);   // Start as false
+        print("💾 New user created - email_confirmed set to FALSE");
+
+      ScaffoldMessenger.of(context).showSnackBar(   // ← context is now safe
+        const SnackBar(
+          content: Text("✅ Email confirmed! Welcome to MelodicSol."),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      // Go to main app
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const HomePage()),
+      );
+    }
+  }
+}
+
 Future<void> _checkAutoLogin() async {
   if (!mounted) return;
-
-  setState(() => _isCheckingAutoLogin = true);
 
   try {
     final prefs = await SharedPreferences.getInstance();
@@ -3259,16 +3308,12 @@ Future<void> _checkAutoLogin() async {
           MaterialPageRoute(builder: (_) => const HomePage()),
         );
       }
-      return; // Important: Stop here
     } else {
-      print("⚠️ No valid saved login found - showing WelcomeScreen");
+      print("⚠️ Auto-login skipped - not fully confirmed (showing WelcomeScreen)");
+      // Stay on WelcomeScreen - do nothing
     }
   } catch (e) {
     print("❌ Auto-login error: $e");
-  } finally {
-    if (mounted) {
-      setState(() => _isCheckingAutoLogin = false);
-    }
   }
 }
 
@@ -3617,6 +3662,7 @@ class EmailConfirmedScreen extends StatelessWidget {
     );
   }
 }
+
 class UserInfoScreen extends StatefulWidget {
   final String? pendingAlbumName;
   final int? pendingSongIndex;
@@ -3642,7 +3688,6 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
   bool _liveShows = true;
   bool _livestreams = true;
   bool _giveaways = true;
-
   bool _isSubmitting = false;
 
   final AuthService _authService = AuthService();
@@ -3665,92 +3710,95 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
     });
   }
 
-Future<void> _submitToHighLevel() async {
-  if (!_formKey.currentState!.validate()) return;
+  Future<void> _submitToHighLevel() async {
+    if (!_formKey.currentState!.validate()) return;
 
-  setState(() => _isSubmitting = true);
+    setState(() => _isSubmitting = true);
 
-  try {
-    final String token = await FirebaseMessaging.instance.getToken() ?? "";
+    try {
+      final String token = await FirebaseMessaging.instance.getToken() ?? "";
+      List<String> tags = ["melodicsol-app"];
 
-    List<String> tags = ["melodicsol-app"];
-    if (_wantsNotifications) {
-      if (_newMusic) tags.add("opt_in_new_music");
-      if (_liveShows) tags.add("opt_in_live_shows");
-      if (_livestreams) tags.add("opt_in_livestream");
-      if (_giveaways) tags.add("opt_in_giveaways");
-    }
+      if (_wantsNotifications) {
+        if (_newMusic) tags.add("opt_in_new_music");
+        if (_liveShows) tags.add("opt_in_live_shows");
+        if (_livestreams) tags.add("opt_in_livestream");
+        if (_giveaways) tags.add("opt_in_giveaways");
+      }
 
-    final payload = {
-      "name": _nameController.text.trim(),
-      "email": _emailController.text.trim().toLowerCase(),
-      "customField": {
-        "2kx1hmvcDBvKJ7vLqnQ2": _zipController.text.trim(),
-        "76EIOSnGiezG9oLSH7Sq": token,
-        "493AUidrObK3WBNugX3j": _wantsNotifications ? "Yes" : "No",
-        "thZdMuEnumktzhkHG7bi": _newMusic ? "Yes" : "No",
-        "zN4kxIDkm7rtiwM7oNLU": _liveShows ? "Yes" : "No",
-        "iLD4QkXTyyGe31rBtqEw": _livestreams ? "Yes" : "No",
-        "slI4j8daum6R2q1EBPHF": _giveaways ? "Yes" : "No",
-      },
-      "tags": tags,
-      "source": "Melodicsol App - Sign Up",
-    };
+      final payload = {
+        "name": _nameController.text.trim(),
+        "email": _emailController.text.trim().toLowerCase(),
+        "customField": {
+          "2kx1hmvcDBvKJ7vLqnQ2": _zipController.text.trim(),
+          "76EIOSnGiezG9oLSH7Sq": token,
+          "493AUidrObK3WBNugX3j": _wantsNotifications ? "Yes" : "No",
+          "thZdMuEnumktzhkHG7bi": _newMusic ? "Yes" : "No",
+          "zN4kxIDkm7rtiwM7oNLU": _liveShows ? "Yes" : "No",
+          "iLD4QkXTyyGe31rBtqEw": _livestreams ? "Yes" : "No",
+          "slI4j8daum6R2q1EBPHF": _giveaways ? "Yes" : "No",
+        },
+        "tags": tags,
+        "source": "Melodicsol App - Sign Up",
+      };
 
-    print("📤 Sending with tags: ${jsonEncode(payload)}");
+      print("📤 Sending with tags: ${jsonEncode(payload)}");
 
-    // Send to HighLevel
-    final response = await http.post(
-      Uri.parse("https://rest.gohighlevel.com/v1/contacts/"),
-      headers: {
-        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U",
-        "Content-Type": "application/json",
-      },
-      body: jsonEncode(payload),
-    );
-
-    if ((response.statusCode == 200 || response.statusCode == 201) && mounted) {
-      // === REAL FIREBASE AUTH CREATION ===
-      final User? user = await _authService.signUpWithEmail(
-        _emailController.text.trim().toLowerCase(),
-        _nameController.text.trim(),
+      final response = await http.post(
+        Uri.parse("https://rest.gohighlevel.com/v1/contacts/"),
+        headers: {
+          "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U",
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode(payload),
       );
 
-      if (user != null) {
-        print("✅ Firebase user created + HighLevel contact saved");
-        
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => EmailVerificationScreen(
-              pendingAlbumName: widget.pendingAlbumName,
-              pendingSongIndex: widget.pendingSongIndex,
+      if ((response.statusCode == 200 || response.statusCode == 201) && mounted) {
+        // === FIREBASE AUTH CREATION ===
+        final User? user = await _authService.signUpWithEmail(
+          _emailController.text.trim().toLowerCase(),
+          _nameController.text.trim(),
+        );
+
+        if (user != null) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('isLoggedIn', true);
+          await prefs.setBool('email_confirmed', false);   // ← IMPORTANT FIX
+
+          print("✅ Firebase user created - email_confirmed set to FALSE");
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => EmailVerificationScreen(
+                pendingAlbumName: widget.pendingAlbumName,
+                pendingSongIndex: widget.pendingSongIndex,
+              ),
             ),
-          ),
-        );
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Failed to create Firebase account")),
+          );
+        }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Failed to create Firebase account")),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("HighLevel failed: ${response.statusCode}")),
+          );
+        }
       }
-    } else {
+    } catch (e) {
+      print("❌ Signup error: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("HighLevel failed: ${response.statusCode}")),
+          const SnackBar(content: Text("Network error. Please try again.")),
         );
       }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
     }
-  } catch (e) {
-    print("❌ Signup error: $e");
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Network error. Please try again.")),
-      );
-    }
-  } finally {
-    if (mounted) setState(() => _isSubmitting = false);
   }
-}
 
   @override
   Widget build(BuildContext context) {
@@ -3775,30 +3823,27 @@ Future<void> _submitToHighLevel() async {
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
                 ),
                 const SizedBox(height: 12),
-
                 TextFormField(
                   controller: _nameController,
                   decoration: const InputDecoration(labelText: "Name"),
                   validator: (v) => v!.isEmpty ? "Required" : null,
                 ),
                 const SizedBox(height: 8),
-
                 TextFormField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: "Email Address (optional)"),
+                  decoration: const InputDecoration(labelText: "Email Address"),
                 ),
                 const SizedBox(height: 12),
-
                 CheckboxListTile(
-                  title: const Text("I want to receive notifications!", style: TextStyle(fontSize: 15.5, color: Colors.white, fontWeight: FontWeight.w600)),
+                  title: const Text("I want to receive notifications!", 
+                      style: TextStyle(fontSize: 15.5, color: Colors.white, fontWeight: FontWeight.w600)),
                   value: _wantsNotifications,
                   onChanged: (val) => val != null ? _updateAllNotifications(val) : null,
                   controlAffinity: ListTileControlAffinity.leading,
                   dense: true,
                   contentPadding: EdgeInsets.zero,
                 ),
-
                 if (_wantsNotifications) ...[
                   const SizedBox(height: 4),
                   CheckboxListTile(
@@ -3838,29 +3883,26 @@ Future<void> _submitToHighLevel() async {
                     dense: true,
                     contentPadding: const EdgeInsets.only(left: 36),
                   ),
-                if (_liveShows)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 36, right: 8, top: 4),
-                    child: TextFormField(
-                      controller: _zipController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: "Zip Code (for live shows)",
-                        isDense: true,
+                  if (_liveShows)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 36, right: 8, top: 4),
+                      child: TextFormField(
+                        controller: _zipController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: "Zip Code (for live shows)",
+                          isDense: true,
+                        ),
+                        validator: (v) {
+                          if (_liveShows && (v == null || v.trim().isEmpty)) {
+                            return "Zip code required for live shows";
+                          }
+                          return null;
+                        },
                       ),
-                      validator: (v) {
-                        // Explicitly check bool
-                        if (_liveShows == true && (v == null || v.trim().isEmpty)) {
-                          return "Zip code required for live shows";
-                        }
-                        return null;
-                      },
                     ),
-                  ),
                 ],
-
                 const SizedBox(height: 24),
-
                 ElevatedButton(
                   onPressed: _isSubmitting ? null : _submitToHighLevel,
                   style: ElevatedButton.styleFrom(
