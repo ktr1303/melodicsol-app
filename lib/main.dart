@@ -36,38 +36,22 @@ Future<void> main() async {
   // Initialize Firebase FIRST
   await Firebase.initializeApp();
 
-  // Temporarily disable App Check (to avoid the previous error)
-  // await FirebaseAppCheck.instance.activate(
-  //   androidProvider: AndroidProvider.debug,
-  // );
+  // === GLOBAL DEEP LINK LISTENER (Always active) ===
+  final appLinks = AppLinks();
+  appLinks.uriLinkStream.listen((Uri? uri) async {
+    print("🔗 [GLOBAL] Deep link received: $uri");
+    if (uri == null) return;
 
-  // Deep Link Handling
-  FirebaseDynamicLinks.instance.onLink.listen((PendingDynamicLinkData? dynamicLinkData) async {
-    final Uri? deepLink = dynamicLinkData?.link;
-    if (deepLink != null) {
-      // Handle deep link (email confirmation)
-// Handle deep link (email confirmation)
-      if (deepLink != null) {
-        print("🔗 Deep link received in main.dart: $deepLink");
+    final full = uri.toString().toLowerCase();
+    if (full.contains('confirm') || uri.queryParameters.containsKey('email')) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isLoggedIn', true);
+      await prefs.setBool('email_confirmed', true);
+      await prefs.reload();
 
-        if (deepLink.path.contains('confirm') || deepLink.queryParameters['email'] != null) {
-          final email = deepLink.queryParameters['email'] ?? '';
-
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setBool('isLoggedIn', true);
-          await prefs.setBool('email_confirmed', true);
-
-          print("💾 Deep link confirmed email: $email → Saved to prefs");
-
-          // Instead of navigating here, just save and let HomePage handle it
-          print("✅ Deep link processed - saved confirmation");
-        }
-      }
+      print("✅ [GLOBAL] DEEP LINK SUCCESS — email_confirmed = true");
     }
-  }).onError((error) {
-    print('Deep link error: $error');
   });
-  
 
   // Background message handler
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
@@ -79,22 +63,23 @@ Future<void> main() async {
   );
 
   // JustAudioBackground
-  try {
-    await JustAudioBackground.init(
-      androidNotificationChannelId: 'com.melodicsol.channel.audio',
-      androidNotificationChannelName: 'MelodicSol Playback',
-      androidNotificationOngoing: true,
-      androidStopForegroundOnPause: true,
-      notificationColor: Colors.greenAccent,
-      artDownscaleWidth: 512,
-      artDownscaleHeight: 512,
-      preloadArtwork: true,
-      androidShowNotificationBadge: true,
-    );
-    print("✅ JustAudioBackground initialized");
-  } catch (e) {
-    print("❌ JustAudioBackground init failed: $e");
-  }
+try {
+  await JustAudioBackground.init(
+    androidNotificationChannelId: 'com.melodicsol.channel.audio',
+    androidNotificationChannelName: 'MelodicSol Playback',
+    androidNotificationOngoing: true,
+    androidStopForegroundOnPause: true,
+    notificationColor: Colors.greenAccent,
+    artDownscaleWidth: 512,
+    artDownscaleHeight: 512,
+    preloadArtwork: true,
+  );
+  print("✅ JustAudioBackground initialized (basic controls)");
+} catch (e) {
+  print("❌ JustAudioBackground init failed: $e");
+}
+print("✅ JustAudioBackground initialized with full controls");
+
 
   runApp(const MelodicSolApp());
 }
@@ -325,40 +310,48 @@ void initState() {
   _boneStaggerController = AnimationController(
       duration: const Duration(milliseconds: 1800), vsync: this)
     ..forward();
+  // Sync background notification controls with your app logic
+_globalPlayer.playbackEventStream.listen((event) {
+  // This helps just_audio_background know the current state
+});
 
-  // Deep link listener
-  _appLinks = AppLinks();
-  print("Deep link listener registered in HomePageState");
-  _deepLinkSubscription = _appLinks.uriLinkStream.listen((Uri? uri) {
-    print("uriLinkStream fired with: $uri");
-    if (uri != null) {
+
+Future<void> _handleDeepLink(Uri? uri) async {
+  print("🔗 === DEEP LINK HANDLER STARTED ===");
+  if (uri == null) {
+    print("❌ uri was null");
+    return;
+  }
+
+  print("🔗 Full URI received: $uri");
+
+  final full = uri.toString().toLowerCase();
+  if (full.contains('confirm') || uri.queryParameters.containsKey('email')) {
+    final prefs = await SharedPreferences.getInstance();
+    
+    await prefs.setBool('isLoggedIn', true);
+    await prefs.setBool('email_confirmed', true);
+    await prefs.reload(); // Force disk write
+
+    final actualValue = prefs.getBool('email_confirmed') ?? false;
+    print("✅ DEEP LINK SUCCESS — Saved email_confirmed = $actualValue");
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("✅ Email confirmed! Redirecting to app..."),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const HomePage()),
+        (route) => false,
+      );
     }
-  });
-  Future<void> _handleDeepLink(Uri uri) async {
-  print("🔗 Deep link received in HomePage: $uri");
-
-  if (uri.path.contains('confirm') || uri.queryParameters['email'] != null) {
-    final email = uri.queryParameters['email'] ?? '';
-
-    if (email.isNotEmpty && mounted) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('isLoggedIn', true);
-      await prefs.setBool('email_confirmed', true);
-
-      print("💾 Deep link → Saved email as confirmed");
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("✅ Email confirmed! Welcome to MelodicSol."),
-            backgroundColor: Colors.green,
-          ),
-        );
-
-        // Force reload confirmed status
-        await _loadConfirmedStatus();
-      }
-    }
+  } else {
+    print("❌ URI did not contain 'confirm'");
   }
 }
 
@@ -535,6 +528,7 @@ Future<void> _playSong(String albumName, int index, {
   String? titleToPlay,
   String? artUrl
 }) async {
+  print("🎵 _playSong CALLED → Album: $albumName | Index: $index | Title: ${titleToPlay ?? 'N/A'}");
   String urlToPlay = directUrl?.trim() ?? '';
   String finalTitle = titleToPlay ?? "Unknown Song";
   String finalArtUrl = artUrl ?? "";
@@ -542,6 +536,7 @@ Future<void> _playSong(String albumName, int index, {
   // Get song data for unlock check
   final songList = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
   Map<String, dynamic> song = {};
+
   if (urlToPlay.isEmpty) {
     if (index < 0 || index >= songList.length) return;
     song = songList[index] as Map<String, dynamic>;
@@ -550,14 +545,32 @@ Future<void> _playSong(String albumName, int index, {
     finalArtUrl = (song['artUrl'] as String?) ?? (song['songArtUrl'] as String?) ?? "";
   }
 
-  // === Unlock Check ===
-  // === Unlock Check (Email Unlock + RevenueCat) ===
+  // === ULTRA LOUD UNLOCK DEBUG (replace from // === IMPROVED UNLOCK CHECK === to the end of the locked check) ===
   final bool isFree = song['isFree'] as bool? ?? false;
   final bool emailUnlock = song['emailUnlock'] as bool? ?? false;
 
-  // 1. Special handling for emailUnlock songs
-  if (!isFree && emailUnlock && !_hasConfirmedEmail) {
-    // Show the SAME form as the Welcome Screen "Login / Sign Up" button
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.reload();
+
+  final bool hasLifetimeLocal = prefs.getBool('hasLifetimeAccess') ?? false;
+  final hasLifetimeRevenueCat = await hasEntitlement('lifetime_access');
+  final hasCatalog = await hasEntitlement('catalog_access');
+
+  final bool hasFullAccess = hasLifetimeLocal || hasLifetimeRevenueCat || hasCatalog;
+
+  print("🔓 === UNLOCK DEBUG START ===");
+  print("🔓 Song: $finalTitle | isFree: $isFree | emailUnlock: $emailUnlock");
+  print("🔓 Local Lifetime (SOLFULL): $hasLifetimeLocal");
+  print("🔓 RevenueCat Lifetime: $hasLifetimeRevenueCat");
+  print("🔓 RevenueCat Catalog: $hasCatalog");
+  print("🔓 Final hasFullAccess: $hasFullAccess | _hasOpenAccess: $_hasOpenAccess");
+  print("🔓 === UNLOCK DEBUG END ===");
+
+  if (hasFullAccess) {
+    print("✅ ACCESS GRANTED - Playing song");
+  } 
+  else if (!isFree && emailUnlock && !_hasConfirmedEmail) {
+    print("⛔ Email verification required for this song");
     if (mounted) {
       showDialog(
         context: context,
@@ -565,23 +578,13 @@ Future<void> _playSong(String albumName, int index, {
         builder: (context) => const UserInfoScreen(),
       );
     }
-    return; // Stop — wait for user to sign up / verify email
+    return;
   }
 
-  // 2. Normal locked check
-  bool isLocked = !isFree &&
-                  !_hasOpenAccess &&
-                  !(_hasConfirmedEmail && emailUnlock);
-
-  // Check RevenueCat entitlements if still locked
-  if (isLocked) {
-    final hasLifetime = await hasEntitlement('lifetime_access');
-    final hasCatalog = await hasEntitlement('catalog_access');
-    final hasIndividual = await hasEntitlement('individual_album_access');
-    isLocked = !hasLifetime && !hasCatalog && !hasIndividual;
-  }
+  bool isLocked = !isFree && !hasFullAccess && !(_hasConfirmedEmail && emailUnlock);
 
   if (isLocked) {
+    print("⛔ SONG IS LOCKED - blocking playback");
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("This song requires purchase or Lifetime Access")),
@@ -589,13 +592,13 @@ Future<void> _playSong(String albumName, int index, {
     }
     return;
   }
-  // === End Unlock Check ===
-  // === End Unlock Check ===
 
+  print("▶️ All unlock checks passed - proceeding to play");
   // Fix malformed URLs
   if (urlToPlay.startsWith('https:/') && !urlToPlay.startsWith('https://')) {
     urlToPlay = urlToPlay.replaceFirst('https:/', 'https://');
   }
+
   if (urlToPlay.isEmpty || !urlToPlay.startsWith('http')) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -620,7 +623,6 @@ Future<void> _playSong(String albumName, int index, {
   _processingSubscription?.cancel();
 
   try {
-    // Update UI state
     setState(() {
       _currentAlbum = albumName;
       _currentSongIndex = index;
@@ -631,35 +633,68 @@ Future<void> _playSong(String albumName, int index, {
       _hasPlaybackError = false;
     });
 
-    print('>>> TITLE FORCED TO: $finalTitle | Album: $albumName | Index: $index | PlayID: $thisPlayId');
-
-    // Stop and reset player
     await _globalPlayer.stop();
     await _globalPlayer.seek(Duration.zero);
     await Future.delayed(const Duration(milliseconds: 300));
 
-    // Create HLS source
-    final source = HlsAudioSource(
-      Uri.parse(urlToPlay),
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36',
-        'Accept': 'application/vnd.apple.mpegurl, */*',
-      },
-      tag: MediaItem(
-        id: urlToPlay,
-        title: finalTitle,
-        album: albumName,
-        artist: "Melodicsol",
-        artUri: finalArtUrl.isNotEmpty ? Uri.parse(finalArtUrl) : null,
-        playable: true,
-      ),
-    );
+    // === SAFE QUEUE FOR BACKGROUND CONTROLS ===
+    List<AudioSource> queueSources = [];
 
-    await _globalPlayer.setAudioSource(source);
-    print('✅ HlsAudioSource with MediaItem set successfully | PlayID: $thisPlayId');
+    final List<dynamic> safeQueue = _queue ?? [];
+
+    if (safeQueue.isNotEmpty) {
+      for (var item in safeQueue) {
+        final String? itemArt = item['artUrl'] as String?;
+        queueSources.add(
+          HlsAudioSource(
+            Uri.parse(item['url'] as String),
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36',
+              'Accept': 'application/vnd.apple.mpegurl, */*',
+            },
+            tag: MediaItem(
+              id: item['url'] as String,
+              title: item['title'] as String? ?? "Unknown Track",
+              album: item['albumName'] as String? ?? albumName,
+              artist: "Melodic Sol",
+              artUri: itemArt?.isNotEmpty == true 
+                  ? Uri.parse(itemArt!) 
+                  : (finalArtUrl.isNotEmpty ? Uri.parse(finalArtUrl) : null),
+              playable: true,
+            ),
+          ),
+        );
+      }
+    } else {
+      // Single song fallback
+      queueSources.add(
+        HlsAudioSource(
+          Uri.parse(urlToPlay),
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36',
+            'Accept': 'application/vnd.apple.mpegurl, */*',
+          },
+          tag: MediaItem(
+            id: urlToPlay,
+            title: finalTitle,
+            album: albumName,
+            artist: "Melodic Sol",
+            artUri: finalArtUrl.isNotEmpty ? Uri.parse(finalArtUrl) : null,
+            playable: true,
+          ),
+        ),
+      );
+    }
+
+    final queueSource = ConcatenatingAudioSource(children: queueSources);
+
+    await _globalPlayer.setAudioSource(queueSource, initialIndex: 0);
+
+    print('✅ Queue set for background controls | Songs: ${queueSources.length} | PlayID: $thisPlayId');
 
     await Future.delayed(const Duration(milliseconds: 300));
     await _globalPlayer.play();
+
     print('▶️ Play command sent | PlayID: $thisPlayId');
 
     _setupProcessingListener();
@@ -691,7 +726,20 @@ Future<void> _playSong(String albumName, int index, {
     }
   }
 }
+Widget _buildSongTrailingIcon({
+  required bool isUnlocked,
+  required bool emailUnlock,
+}) {
+  if (isUnlocked) {
+    return const Icon(Icons.play_circle, color: Colors.greenAccent, size: 26);
+  }
 
+  if (emailUnlock) {
+    return const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22);
+  }
+
+  return const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20);
+}
     // NEW: Queue song to play immediately after current one
   // Improved Queue Song Next
 void _queueSongNext(Map<String, dynamic> song, String albumName, int songIndex) {
@@ -1904,72 +1952,77 @@ Widget _buildMainAlbumPage(double screenHeight) {
 
         const SizedBox(height: 12),
 
-        // Song List
-      // Song List
-      // === SONG LIST - RELIABLE VERSION ===
-      Expanded(
-        child: ListView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          itemCount: songs.length,
-          itemBuilder: (context, index) {
-            final song = songs[index] as Map<String, dynamic>;
-            final title = song['Title'] as String? ?? "Unknown Track";
-            final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-            final isFree = song['isFree'] as bool? ?? false;
-            final emailUnlock = song['emailUnlock'] as bool? ?? false;
+// === FINAL SONG LIST - Clean trailing icons ===
+Expanded(
+  child: ListView.builder(
+    padding: const EdgeInsets.symmetric(horizontal: 24),
+    itemCount: songs.length,
+    itemBuilder: (context, index) {
+      final song = songs[index] as Map<String, dynamic>;
+      final title = song['Title'] as String? ?? "Unknown Track";
+      final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+      final isFree = song['isFree'] as bool? ?? false;
+      final emailUnlock = song['emailUnlock'] as bool? ?? false;
 
-            // Simple synchronous check using prefs (fast & reliable)
-            final bool isUnlocked = isFree || 
-                (emailUnlock && _hasConfirmedEmail);   // ← Use the state variable
+      // Strong unlock check
+      final bool isUnlockedByEmail = emailUnlock && _hasConfirmedEmail;
+      final bool isUnlocked = isFree || isUnlockedByEmail || _hasOpenAccess;
 
-            return ListTile(
-              leading: ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: CachedNetworkImage(
-                  imageUrl: artUrl,
-                  width: 48,
-                  height: 48,
-                  fit: BoxFit.cover,
-                  errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
-                ),
-              ),
-              title: Text(
-                title,
-                style: TextStyle(
-                  fontSize: 16.5,
-                  color: isUnlocked ? Colors.white : Colors.white70,
-                  fontWeight: isUnlocked ? FontWeight.w500 : FontWeight.normal,
-                ),
-              ),
-              trailing: isUnlocked 
-                  ? null 
-                  : (emailUnlock 
-                      ? const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22)
-                      : const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20)),
-
-              onTap: () {
-                if (!isUnlocked && emailUnlock) {
-                  // Show signup form
-                  showDialog(
-                    context: context,
-                    barrierColor: Colors.transparent,
-                    builder: (context) => UserInfoScreen(
-                      pendingAlbumName: albumName,
-                      pendingSongIndex: index,
-                    ),
-                  );
-                } else if (!isUnlocked) {
-                  _showPaywall();
-                } else {
-                  _playSong(albumName, index);
-                }
-              },
-
-              onLongPress: () => _showSongOptions(song, albumName, index),
-            );
-          },
+      return ListTile(
+        leading: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: CachedNetworkImage(
+            imageUrl: artUrl,
+            width: 48,
+            height: 48,
+            fit: BoxFit.cover,
+            errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
+          ),
         ),
-      ),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontSize: 16.5,
+            color: isUnlocked ? Colors.white : Colors.white70,
+            fontWeight: isUnlocked ? FontWeight.w500 : FontWeight.normal,
+          ),
+        ),
+        // === Clean trailing logic ===
+        trailing: isUnlocked
+            ? null                                      // No icon for unlocked songs
+            : (emailUnlock
+                ? const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22)
+                : const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20)),
+        
+        onTap: () async {
+          final prefs = await SharedPreferences.getInstance();
+          final bool hasLifetimeLocal = prefs.getBool('hasLifetimeAccess') ?? false;
+          
+          final bool hasRevenueCatAccess = await hasEntitlement('lifetime_access') ||
+                                          await hasEntitlement('catalog_access');
+          
+          final bool isActuallyUnlocked = isUnlocked || hasLifetimeLocal || hasRevenueCatAccess;
+
+          if (!isActuallyUnlocked && emailUnlock) {
+            showDialog(
+              context: context,
+              barrierColor: Colors.transparent,
+              builder: (context) => UserInfoScreen(
+                pendingAlbumName: albumName,
+                pendingSongIndex: index,
+              ),
+            );
+          } else if (!isActuallyUnlocked) {
+            _showPaywall();
+          } else {
+            _playSong(albumName, index);
+          }
+        },
+        onLongPress: () => _showSongOptions(song, albumName, index),
+      );
+    },
+  ),
+),
 
 // === FINAL CUSTOM PROGRESS BAR - Bypasses Slider Issues ===
 Container(
@@ -2503,19 +2556,15 @@ Widget _buildSocialPage() {
                   child: const Text("Redeem"),
                 ),
                 // Example: Add this button in your HomePage or a settings drawer
-                ElevatedButton(
-                  onPressed: () async {
-                    await AuthService().logout();           // This clears everything
-                    if (mounted) {
-                      Navigator.pushAndRemoveUntil(
-                        context,
-                        MaterialPageRoute(builder: (_) => const WelcomeScreen()),
-                        (route) => false,
-                      );
-                    }
-                  },
-                  child: const Text("Logout (for testing)"),
-                ),
+                ElevatedButton.icon(
+                  onPressed: _logout,
+                  icon: const Icon(Icons.logout, color: Colors.white),
+                  label: const Text("Logout (Testing)", style: TextStyle(color: Colors.white)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.redAccent,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  ),
+                )                
               ],
             ),
           ],
@@ -2523,6 +2572,39 @@ Widget _buildSocialPage() {
       ),
     ],
   );
+}
+
+Future<void> _logout() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // Clear all login data
+    await prefs.setBool('isLoggedIn', false);
+    await prefs.setBool('email_confirmed', false);
+    await prefs.remove('userEmail'); // optional
+
+    // Logout from Firebase
+    final authService = AuthService();   // Create instance here
+    await authService.logout();
+
+    print("🚪 User logged out successfully - all data cleared");
+
+    if (mounted) {
+      // Go back to WelcomeScreen and clear navigation stack
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+        (route) => false,
+      );
+    }
+  } catch (e) {
+    print("❌ Logout error: $e");
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Logout failed. Please try again.")),
+      );
+    }
+  }
 }
 
 void _showAlbumStory(String albumName) {
@@ -2745,38 +2827,33 @@ Future<void> _redeemPromoCode(String code) async {
   final prefs = await SharedPreferences.getInstance();
 
   if (trimmed == "SOLFULL" || trimmed == "MASTERACCESS") {
-    // Permanent Lifetime Access
     await prefs.setBool('hasLifetimeAccess', true);
     setState(() => _hasOpenAccess = true);
+
+    print("✅ SOLFULL → Lifetime Access ENABLED");
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("✅ Lifetime access granted!"), backgroundColor: Colors.green),
+    );
+  } 
+  else if (trimmed == "LOCKALL" || trimmed == "RESETACCESS") {
+    // Reset everything for testing
+    await prefs.setBool('hasLifetimeAccess', false);
+    setState(() => _hasOpenAccess = false);
+
+    print("🔒 LOCKALL → All paid access RESET");
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text("✅ Lifetime access granted permanently!"),
-        backgroundColor: Colors.green,
+        content: Text("🔒 All paid unlocks cleared for testing"),
+        backgroundColor: Colors.orange,
       ),
     );
   } 
   else if (trimmed.startsWith("UNLOCK_")) {
-    // Individual album unlock, e.g. UNLOCK_STONE
     final albumSlug = trimmed.replaceFirst("UNLOCK_", "").toLowerCase();
     await prefs.setBool('unlocked_$albumSlug', true);
-    setState(() {}); // refresh UI
+    setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text("✅ Album unlocked permanently!"),
-        backgroundColor: Colors.green,
-      ),
-    );
-  } 
-  else if (trimmed == "LOCKALL" || trimmed == "RESETACCESS") {
-    // Reset all paid unlocks for testing
-    await prefs.setBool('hasLifetimeAccess', false);
-    // Clear individual unlocks if you want
-    setState(() => _hasOpenAccess = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("🔒 All paid unlocks cleared (test mode)"),
-        backgroundColor: Colors.orange,
-      ),
+      const SnackBar(content: Text("✅ Album unlocked!"), backgroundColor: Colors.green),
     );
   } 
   else {
@@ -2784,6 +2861,9 @@ Future<void> _redeemPromoCode(String code) async {
       const SnackBar(content: Text("Invalid promo code")),
     );
   }
+
+  // Force UI refresh
+  if (mounted) setState(() {});
 }
     Future<void> _setupNotifications() async {
     final messaging = FirebaseMessaging.instance;
@@ -3245,6 +3325,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     super.initState();
     _initializeVideo();
     _checkAutoLogin();
+    bool _isCheckingAutoLogin = false;
   }
   
 
@@ -3260,38 +3341,44 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       });
   }
 
-  Future<void> _handleDeepLink(Uri uri) async {
+Future<void> _handleDeepLink(Uri? uri) async {
+  if (uri == null) return;
+
   print("🔗 Deep link received: $uri");
 
-  if (uri.path.contains('confirm') || uri.queryParameters['email'] != null) {
-    final email = uri.queryParameters['email'] ?? '';
+  final fullUri = uri.toString().toLowerCase();
 
-    print("✅ Valid confirmation email: $email");
+  if (fullUri.contains('confirm') || uri.queryParameters.containsKey('email')) {
+    final prefs = await SharedPreferences.getInstance();
+    
+    await prefs.setBool('isLoggedIn', true);
+    await prefs.setBool('email_confirmed', true);
+    await prefs.reload();
 
-    if (email.isNotEmpty && mounted) {   // ← mounted is now safe
-      final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('isLoggedIn', true);
-        await prefs.setBool('email_confirmed', false);   // Start as false
-        print("💾 New user created - email_confirmed set to FALSE");
+    print("💾 DEEP LINK SUCCESS → email_confirmed FORCED TO TRUE");
 
-      ScaffoldMessenger.of(context).showSnackBar(   // ← context is now safe
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("✅ Email confirmed! Welcome to MelodicSol."),
+          content: Text("✅ Email confirmed! Welcome to MelodicSol 🎉"),
           backgroundColor: Colors.green,
+          duration: Duration(seconds: 4),
         ),
       );
 
-      // Go to main app
-      Navigator.pushReplacement(
+      Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (_) => const HomePage()),
+        (route) => false,
       );
     }
   }
 }
-
 Future<void> _checkAutoLogin() async {
   if (!mounted) return;
+
+  // Show loading only briefly
+  setState(() => _isCheckingAutoLogin = true);
 
   try {
     final prefs = await SharedPreferences.getInstance();
@@ -3309,11 +3396,16 @@ Future<void> _checkAutoLogin() async {
         );
       }
     } else {
-      print("⚠️ Auto-login skipped - not fully confirmed (showing WelcomeScreen)");
-      // Stay on WelcomeScreen - do nothing
+      print("⚠️ Auto-login skipped - not fully confirmed");
+      // Stay on WelcomeScreen
     }
   } catch (e) {
     print("❌ Auto-login error: $e");
+  } finally {
+    // ALWAYS hide the loading spinner
+    if (mounted) {
+      setState(() => _isCheckingAutoLogin = false);
+    }
   }
 }
 
@@ -3922,7 +4014,6 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
       ),
     );
   }
-}
   // NEW: Check if a song should be unlocked based on email verification
   // RELIABLE email unlock check (ignores flaky Firebase session)
   Future<bool> _isSongUnlocked(bool emailUnlock, bool isFree) async {
@@ -3935,3 +4026,4 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
     print("🔓 Email unlock check → Confirmed in prefs: $isConfirmed");
     return isConfirmed;
   }
+}
