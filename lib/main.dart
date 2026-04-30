@@ -18,6 +18,9 @@ import 'package:shared_preferences/shared_preferences.dart';         // For Plat
 import 'package:app_links/app_links.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
+import 'package:firebase_dynamic_links/firebase_dynamic_links.dart';
+import 'email_verification_screen.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 
 // ==================== BACKGROUND HANDLER (MUST BE TOP-LEVEL) ====================
 @pragma('vm:entry-point')
@@ -30,42 +33,73 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Firebase initialization
+  // Initialize Firebase FIRST
   await Firebase.initializeApp();
 
-  // Background message handler
-FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  // Temporarily disable App Check (to avoid the previous error)
+  // await FirebaseAppCheck.instance.activate(
+  //   androidProvider: AndroidProvider.debug,
+  // );
 
-// RevenueCat initialization
+  // Deep Link Handling
+  FirebaseDynamicLinks.instance.onLink.listen((PendingDynamicLinkData? dynamicLinkData) async {
+    final Uri? deepLink = dynamicLinkData?.link;
+    if (deepLink != null) {
+      await _handleDeepLink(deepLink);
+    }
+  }).onError((error) {
+    print('Deep link error: $error');
+  });
+
+  // Background message handler
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // RevenueCat
   await Purchases.setLogLevel(LogLevel.debug);
   await Purchases.configure(
-    PurchasesConfiguration("test_ZBLCyGBvSMTFCEvmTmrzCwZVBPR"),  // ← Put your public key here
+    PurchasesConfiguration("test_ZBLCyGBvSMTFCEvmTmrzCwZVBPR"),
   );
 
-  // Safe JustAudioBackground initialization
-try {
-  await JustAudioBackground.init(
-    androidNotificationChannelId: 'com.melodicsol.channel.audio',
-    androidNotificationChannelName: 'MelodicSol Playback',
-    androidNotificationOngoing: true,
-    androidStopForegroundOnPause: true,
-    notificationColor: Colors.greenAccent,
-    artDownscaleWidth: 512,
-    artDownscaleHeight: 512,
-    preloadArtwork: true,
-    androidShowNotificationBadge: true,
-  );
-  print("✅ JustAudioBackground initialized");
-} catch (e) {
-  print("❌ JustAudioBackground init failed: $e");
-}
-  
+  // JustAudioBackground
+  try {
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.melodicsol.channel.audio',
+      androidNotificationChannelName: 'MelodicSol Playback',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: true,
+      notificationColor: Colors.greenAccent,
+      artDownscaleWidth: 512,
+      artDownscaleHeight: 512,
+      preloadArtwork: true,
+      androidShowNotificationBadge: true,
+    );
+    print("✅ JustAudioBackground initialized");
+  } catch (e) {
+    print("❌ JustAudioBackground init failed: $e");
+  }
 
   runApp(const MelodicSolApp());
+}
 
-  // Longer delay + try/catch to prevent crash on init
-  await Future.delayed(const Duration(milliseconds: 800));
+Future<void> _handleDeepLink(Uri link) async {
+  print("🔗 Deep link received: $link");
 
+  if (link.path.contains('verify-email') || link.queryParameters['mode'] == 'verifyEmail') {
+    final authService = AuthService();
+    final user = authService.currentUser;
+
+    if (user != null) {
+      await user.reload();
+      if (user.emailVerified) {
+        await authService.checkEmailVerification();
+        print("✅ Email verified via deep link!");
+
+        // TODO: Auto-play the song the user was trying to access (we'll add this next)
+        // For now, just go to Home
+        // You can use a GlobalKey or a static callback later
+      }
+    }
+  }
 }
 
 
@@ -76,7 +110,7 @@ class MelodicSolApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'MelodicSol',
+      title: 'Melodicsol',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         primaryColor: Colors.greenAccent,
@@ -88,6 +122,7 @@ class MelodicSolApp extends StatelessWidget {
 }
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
+  static Function(String albumName, int index)? playSongStatic;
   @override
   State<HomePage> createState() => _HomePageState();
 }
@@ -212,7 +247,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     "Gemini": GoogleFonts.danfo(
       fontSize: 28,
       fontWeight: FontWeight.w700,
-      color: const Color.fromARGB(255, 177, 220, 6),
+      color: const Color.fromARGB(255, 255, 0, 38),
     ),
     "Asraya": GoogleFonts.foldit(
       fontSize: 40,
@@ -287,7 +322,6 @@ final Map<String, double> _albumHorizontalOffset = {
   bool _hasOpenAccess = false;           // renamed from premium to "Open"
   bool _isCheckingSubscription = true;
   String? _revenueCatError;
-
 @override
 void initState() {
   super.initState();
@@ -297,8 +331,6 @@ void initState() {
       duration: const Duration(milliseconds: 1800), vsync: this)
     ..forward();
 
-    
-
   // Deep link listener
   _appLinks = AppLinks();
   print("Deep link listener registered in HomePageState");
@@ -307,47 +339,48 @@ void initState() {
     if (uri != null) {
       _handleDeepLink(uri);
     }
- 
-
   });
-  
+
   /*_initializeLocalNotifications();
   _setupNotifications();*/
 
   WidgetsBinding.instance.addPostFrameCallback((_) async {
-  await _showWelcomeTutorial();
+    await _showWelcomeTutorial();
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('hasSeenWelcomeTutorial');
-    await prefs.remove('hasSeenMainAlbumTutorial');
-    await prefs.remove('hasSeenAlbumDetailTutorial');
-    await prefs.remove('hasSeenQueueTutorial');
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('hasSeenWelcomeTutorial');
+      await prefs.remove('hasSeenMainAlbumTutorial');
+      await prefs.remove('hasSeenAlbumDetailTutorial');
+      await prefs.remove('hasSeenQueueTutorial');
+      await _showWelcomeTutorial();
+    });
 
-    await _showWelcomeTutorial();
-  });
     // Trigger queue tutorial the first time user swipes to the queue page
-  _pageController.addListener(() {
-    if (_pageController.hasClients) {
-      final currentPage = _pageController.page?.round() ?? 0;
-      if (currentPage == 2) {        // 2 = queue page
-        _showQueueTutorial();
+    _pageController.addListener(() {
+      if (_pageController.hasClients) {
+        final currentPage = _pageController.page?.round() ?? 0;
+        if (currentPage == 2) { // 2 = queue page
+          _showQueueTutorial();
+        }
       }
-    }
+    });
+
+    SharedPreferences.getInstance().then((prefs) {
+      final hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
+      if (hasLifetime) {
+        setState(() => _hasOpenAccess = true);
+      }
+    });
+
+    // === NEW: Load persistent email confirmation status ===
+    await _loadConfirmedStatus();
   });
-  SharedPreferences.getInstance().then((prefs) {
-    final hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
-    if (hasLifetime) {
-      setState(() => _hasOpenAccess = true);
-    }
-  });
-});
 
   // Start interactive showcase only the very first time
   /*WidgetsBinding.instance.addPostFrameCallback((_) async {
     final prefs = await SharedPreferences.getInstance();
     final hasSeenShowcase = prefs.getBool('hasSeenInteractiveTutorial') ?? false;
-
     if (!hasSeenShowcase) {
       await Future.delayed(const Duration(milliseconds: 1200));
       if (mounted) {
@@ -367,11 +400,7 @@ void initState() {
   Timer.periodic(const Duration(seconds: 30), (timer) {
     _checkLivestreamStatus();
   });
-
   _checkLivestreamStatus();
-
-  Container(color: Colors.black,
-  );
 
   _videoController = VideoPlayerController.asset(
     'assets/spine_video.mp4',
@@ -402,7 +431,7 @@ void initState() {
   _loadPlaylists();
   _fetchAlbums();
   _setupProcessingListener();
-  
+
   /*_loadAlbumConfigFromDynamoDB();*/
 
   _globalPlayer.playerStateStream.listen((playerState) {
@@ -412,7 +441,6 @@ void initState() {
       _vinylController.stop();
     }
   });
-
   _globalPlayer.positionStream.listen((pos) => setState(() => _position = pos));
   _globalPlayer.durationStream.listen((dur) => setState(() => _duration = dur ?? Duration.zero));
 }
@@ -467,6 +495,17 @@ Map<String, bool> _albumPurchaseConfig = {};
 
     final firstSong = playlist["songs"][0] as Map<String, dynamic>;
     _playSong(firstSong["albumName"] as String, 0);
+  }
+Future<void> _loadConfirmedStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final bool confirmed = prefs.getBool('email_confirmed') ?? false;
+    
+    if (mounted) {
+      setState(() {
+        _hasConfirmedEmail = confirmed;
+      });
+      print("🔄 Loaded confirmed status from prefs: $_hasConfirmedEmail");
+    }
   }
 
 Future<void> _playSong(String albumName, int index, {
@@ -899,7 +938,7 @@ void _handleDeepLink(Uri uri) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("✅ Email confirmed! Tap 'Back to App' to continue to the album with bonus songs."),
+            content: Text("✅ Email confirmed! bonus songs unlocked."),
             backgroundColor: Colors.green,
             duration: Duration(seconds: 6),
           ),
@@ -1845,66 +1884,71 @@ Widget _buildMainAlbumPage(double screenHeight) {
         const SizedBox(height: 12),
 
         // Song List
-            Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                itemCount: songs.length,
-                itemBuilder: (context, index) {
-                  final song = songs[index] as Map<String, dynamic>;
-                  final title = song['Title'] as String? ?? "Unknown Track";
-                  final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-                  final isFree = song['isFree'] as bool? ?? false;
-                  final emailUnlock = song['emailUnlock'] as bool? ?? false;
+      // Song List
+      // === SONG LIST - RELIABLE VERSION ===
+      Expanded(
+        child: ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          itemCount: songs.length,
+          itemBuilder: (context, index) {
+            final song = songs[index] as Map<String, dynamic>;
+            final title = song['Title'] as String? ?? "Unknown Track";
+            final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+            final isFree = song['isFree'] as bool? ?? false;
+            final emailUnlock = song['emailUnlock'] as bool? ?? false;
 
-                  // Calculate locked status
-                  final bool isLocked = !isFree &&
-                      !_hasOpenAccess &&
-                      !(_hasConfirmedEmail && emailUnlock);
+            // Simple synchronous check using prefs (fast & reliable)
+            final bool isUnlocked = isFree || 
+                (emailUnlock && _hasConfirmedEmail);   // ← Use the state variable
 
-                  return ListTile(
-                    leading: ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: CachedNetworkImage(
-                        imageUrl: artUrl,
-                        width: 48,
-                        height: 48,
-                        fit: BoxFit.cover,
-                        errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
-                      ),
-                    ),
-                    title: Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 16.5,
-                        color: isLocked ? Colors.white54 : Colors.white,
-                        fontWeight: isLocked ? FontWeight.normal : FontWeight.w500,
-                      ),
-                    ),
-                    trailing: isLocked ? const Icon(Icons.lock, color: Colors.white54, size: 20) : null,
-                    
-                    // UPDATED onTap LOGIC
-                    onTap: () {
-                      if (emailUnlock && !_hasConfirmedEmail) {
-                        // Show the SAME email form as welcome screen
-                        showDialog(
-                          context: context,
-                          barrierColor: Colors.transparent,
-                          builder: (context) => const UserInfoScreen(),
-                        );
-                      } else if (isLocked) {
-                        // Normal paid song → show paywall
-                        _showPaywall();
-                      } else {
-                        // Free or unlocked → play the song
-                        _playSong(albumName, index);
-                      }
-                    },
-                    
-                    onLongPress: () => _showSongOptions(song, albumName, index),
-                  );
-                },
+            return ListTile(
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: CachedNetworkImage(
+                  imageUrl: artUrl,
+                  width: 48,
+                  height: 48,
+                  fit: BoxFit.cover,
+                  errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
+                ),
               ),
-            ),
+              title: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 16.5,
+                  color: isUnlocked ? Colors.white : Colors.white70,
+                  fontWeight: isUnlocked ? FontWeight.w500 : FontWeight.normal,
+                ),
+              ),
+              trailing: isUnlocked 
+                  ? null 
+                  : (emailUnlock 
+                      ? const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22)
+                      : const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20)),
+
+              onTap: () {
+                if (!isUnlocked && emailUnlock) {
+                  // Show signup form
+                  showDialog(
+                    context: context,
+                    barrierColor: Colors.transparent,
+                    builder: (context) => UserInfoScreen(
+                      pendingAlbumName: albumName,
+                      pendingSongIndex: index,
+                    ),
+                  );
+                } else if (!isUnlocked) {
+                  _showPaywall();
+                } else {
+                  _playSong(albumName, index);
+                }
+              },
+
+              onLongPress: () => _showSongOptions(song, albumName, index),
+            );
+          },
+        ),
+      ),
 
 // === FINAL CUSTOM PROGRESS BAR - Bypasses Slider Issues ===
 Container(
@@ -3181,6 +3225,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     _initializeVideo();
     _checkAutoLogin();
   }
+  
 
   void _initializeVideo() {
     _welcomeVideoController = VideoPlayerController.networkUrl(
@@ -3194,38 +3239,38 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       });
   }
 
-  Future<void> _checkAutoLogin() async {
-    final state = await _authService.loadLoginState();
+Future<void> _checkAutoLogin() async {
+  if (!mounted) return;
 
-    if (state['isLoggedIn'] == true) {
-      final bool isConfirmed = await _authService.checkEmailVerification();
+  setState(() => _isCheckingAutoLogin = true);
 
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final bool isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
+    final bool isEmailConfirmed = prefs.getBool('email_confirmed') ?? false;
+
+    print("🔍 Auto-login check → isLoggedIn: $isLoggedIn | isEmailConfirmed: $isEmailConfirmed");
+
+    if (isLoggedIn && isEmailConfirmed) {
+      print("🎉 AUTO-LOGIN SUCCESS - Going straight to HomePage");
       if (mounted) {
-        if (isConfirmed) {
-          // Fully verified → Go to main app
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const HomePage()),
-          );
-        } else {
-          // Logged in but email NOT confirmed → Show welcome + reminder
-          setState(() => _isCheckingAutoLogin = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Please verify your email to unlock full access"),
-              duration: Duration(seconds: 5),
-            ),
-          );
-        }
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const HomePage()),
+        );
       }
-      return;
+      return; // Important: Stop here
+    } else {
+      print("⚠️ No valid saved login found - showing WelcomeScreen");
     }
-
-    // No saved login → Show welcome screen normally
+  } catch (e) {
+    print("❌ Auto-login error: $e");
+  } finally {
     if (mounted) {
       setState(() => _isCheckingAutoLogin = false);
     }
   }
+}
 
   @override
   void dispose() {
@@ -3235,18 +3280,11 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isCheckingAutoLogin) {
-      return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(child: CircularProgressIndicator(color: Colors.white)),
-      );
-    }
-
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Video Background (unchanged)
+          // Video Background
           SizedBox.expand(
             child: FittedBox(
               fit: BoxFit.cover,
@@ -3258,50 +3296,79 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
             ),
           ),
 
+          // Dark overlay
           Container(color: Colors.black.withOpacity(0.55)),
 
-          SafeArea(
-            child: Center(
+          // Loading Indicator
+          if (_isCheckingAutoLogin)
+            const Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Image.asset('assets/logo.png', height: 120, fit: BoxFit.contain),
-                  const SizedBox(height: 80),
-
-                  ElevatedButton(
-                    onPressed: () {
-                      showDialog(
-                        context: context,
-                        barrierColor: Colors.transparent,
-                        builder: (context) => const UserInfoScreen(),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 16),
-                    ),
-                    child: const Text("Login / Sign Up", style: TextStyle(fontSize: 18)),
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(builder: (_) => const HomePage()),
-                      );
-                    },
-                    child: const Text(
-                      "Skip for now",
-                      style: TextStyle(fontSize: 18, color: Colors.white70),
-                    ),
+                  CircularProgressIndicator(color: Colors.greenAccent),
+                  SizedBox(height: 24),
+                  Text(
+                    "Checking login status...",
+                    style: TextStyle(fontSize: 18, color: Colors.white70),
                   ),
                 ],
               ),
             ),
-          ),
+
+          // Main Welcome Content
+          if (!_isCheckingAutoLogin)
+            SafeArea(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 40),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(height: 60),
+                      Image.asset('assets/logo.png', height: 120, fit: BoxFit.contain),
+                      const SizedBox(height: 80),
+
+                      ElevatedButton(
+                        onPressed: () {
+                          showDialog(
+                            context: context,
+                            barrierColor: Colors.transparent,
+                            builder: (context) => const UserInfoScreen(),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 18),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                        ),
+                        child: const Text(
+                          "Login / Sign Up",
+                          style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      TextButton(
+                        onPressed: () {
+                          Navigator.pushReplacement(
+                            context,
+                            MaterialPageRoute(builder: (_) => const HomePage()),
+                          );
+                        },
+                        child: const Text(
+                          "Skip for now",
+                          style: TextStyle(fontSize: 18, color: Colors.white70),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -3551,7 +3618,14 @@ class EmailConfirmedScreen extends StatelessWidget {
   }
 }
 class UserInfoScreen extends StatefulWidget {
-  const UserInfoScreen({super.key});
+  final String? pendingAlbumName;
+  final int? pendingSongIndex;
+
+  const UserInfoScreen({
+    super.key,
+    this.pendingAlbumName,
+    this.pendingSongIndex,
+  });
 
   @override
   State<UserInfoScreen> createState() => _UserInfoScreenState();
@@ -3568,6 +3642,10 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
   bool _liveShows = true;
   bool _livestreams = true;
   bool _giveaways = true;
+
+  bool _isSubmitting = false;
+
+  final AuthService _authService = AuthService();
 
   @override
   void dispose() {
@@ -3587,42 +3665,41 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
     });
   }
 
-
-
 Future<void> _submitToHighLevel() async {
   if (!_formKey.currentState!.validate()) return;
 
-  final String token = await FirebaseMessaging.instance.getToken() ?? "";
-
-  // Build list of tags based on which boxes were checked
-  List<String> tags = ["melodicsol-app"];
-
-  if (_wantsNotifications) {
-    if (_newMusic) tags.add("opt_in_new_music");
-    if (_liveShows) tags.add("opt_in_live_shows");
-    if (_livestreams) tags.add("opt_in_livestream");
-    if (_giveaways) tags.add("opt_in_giveaways");
-  }
-
-  final payload = {
-    "name": _nameController.text.trim(),
-    "email": _emailController.text.trim().toLowerCase(),
-    "customField": {
-      "2kx1hmvcDBvKJ7vLqnQ2": _zipController.text.trim(),
-      "76EIOSnGiezG9oLSH7Sq": token,
-      "493AUidrObK3WBNugX3j": _wantsNotifications ? "Yes" : "No",
-      "thZdMuEnumktzhkHG7bi": _newMusic ? "Yes" : "No",
-      "zN4kxIDkm7rtiwM7oNLU": _liveShows ? "Yes" : "No",
-      "iLD4QkXTyyGe31rBtqEw": _livestreams ? "Yes" : "No",
-      "slI4j8daum6R2q1EBPHF": _giveaways ? "Yes" : "No",
-    },
-    "tags": tags,
-    "source": "Melodicsol App - Sign Up",
-  };
-
-  print("📤 Sending with tags: ${jsonEncode(payload)}");
+  setState(() => _isSubmitting = true);
 
   try {
+    final String token = await FirebaseMessaging.instance.getToken() ?? "";
+
+    List<String> tags = ["melodicsol-app"];
+    if (_wantsNotifications) {
+      if (_newMusic) tags.add("opt_in_new_music");
+      if (_liveShows) tags.add("opt_in_live_shows");
+      if (_livestreams) tags.add("opt_in_livestream");
+      if (_giveaways) tags.add("opt_in_giveaways");
+    }
+
+    final payload = {
+      "name": _nameController.text.trim(),
+      "email": _emailController.text.trim().toLowerCase(),
+      "customField": {
+        "2kx1hmvcDBvKJ7vLqnQ2": _zipController.text.trim(),
+        "76EIOSnGiezG9oLSH7Sq": token,
+        "493AUidrObK3WBNugX3j": _wantsNotifications ? "Yes" : "No",
+        "thZdMuEnumktzhkHG7bi": _newMusic ? "Yes" : "No",
+        "zN4kxIDkm7rtiwM7oNLU": _liveShows ? "Yes" : "No",
+        "iLD4QkXTyyGe31rBtqEw": _livestreams ? "Yes" : "No",
+        "slI4j8daum6R2q1EBPHF": _giveaways ? "Yes" : "No",
+      },
+      "tags": tags,
+      "source": "Melodicsol App - Sign Up",
+    };
+
+    print("📤 Sending with tags: ${jsonEncode(payload)}");
+
+    // Send to HighLevel
     final response = await http.post(
       Uri.parse("https://rest.gohighlevel.com/v1/contacts/"),
       headers: {
@@ -3632,36 +3709,49 @@ Future<void> _submitToHighLevel() async {
       body: jsonEncode(payload),
     );
 
-    print("📡 Status: ${response.statusCode}");
-    print("📡 Body: ${response.body}");
+    if ((response.statusCode == 200 || response.statusCode == 201) && mounted) {
+      // === REAL FIREBASE AUTH CREATION ===
+      final User? user = await _authService.signUpWithEmail(
+        _emailController.text.trim().toLowerCase(),
+        _nameController.text.trim(),
+      );
 
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ Account created successfully!")),
-        );
-        Navigator.pop(context);
+      if (user != null) {
+        print("✅ Firebase user created + HighLevel contact saved");
+        
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => const HomePage()),
+          MaterialPageRoute(
+            builder: (_) => EmailVerificationScreen(
+              pendingAlbumName: widget.pendingAlbumName,
+              pendingSongIndex: widget.pendingSongIndex,
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to create Firebase account")),
         );
       }
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Failed: ${response.statusCode}")),
+          SnackBar(content: Text("HighLevel failed: ${response.statusCode}")),
         );
       }
     }
   } catch (e) {
-    print("❌ Exception: $e");
+    print("❌ Signup error: $e");
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Network error")),
+        const SnackBar(content: Text("Network error. Please try again.")),
       );
     }
+  } finally {
+    if (mounted) setState(() => _isSubmitting = false);
   }
 }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -3735,7 +3825,6 @@ Future<void> _submitToHighLevel() async {
                     dense: true,
                     contentPadding: const EdgeInsets.only(left: 36),
                   ),
-
                   CheckboxListTile(
                     title: const Text("Live shows in your area", style: TextStyle(fontSize: 14.5, color: Colors.white70)),
                     value: _liveShows,
@@ -3749,36 +3838,40 @@ Future<void> _submitToHighLevel() async {
                     dense: true,
                     contentPadding: const EdgeInsets.only(left: 36),
                   ),
-
-                  if (_liveShows)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 36, right: 8, top: 4),
-                      child: TextFormField(
-                        controller: _zipController,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: "Zip Code (for live shows)",
-                          isDense: true,
-                        ),
-                        validator: (v) => (_liveShows && (v == null || v.isEmpty)) ? "Zip code required" : null,
+                if (_liveShows)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 36, right: 8, top: 4),
+                    child: TextFormField(
+                      controller: _zipController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: "Zip Code (for live shows)",
+                        isDense: true,
                       ),
+                      validator: (v) {
+                        // Explicitly check bool
+                        if (_liveShows == true && (v == null || v.trim().isEmpty)) {
+                          return "Zip code required for live shows";
+                        }
+                        return null;
+                      },
                     ),
+                  ),
                 ],
 
-                const SizedBox(height: 16),
-
-
-                const SizedBox(height: 8),
+                const SizedBox(height: 24),
 
                 ElevatedButton(
-                  onPressed: _submitToHighLevel,
+                  onPressed: _isSubmitting ? null : _submitToHighLevel,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.greenAccent,
                     foregroundColor: Colors.black,
-                    minimumSize: const Size(double.infinity, 48),
+                    minimumSize: const Size(double.infinity, 52),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  child: const Text("Create Account", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                  child: _isSubmitting
+                      ? const CircularProgressIndicator(color: Colors.black)
+                      : const Text("Create Account", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
                 ),
               ],
             ),
@@ -3788,3 +3881,15 @@ Future<void> _submitToHighLevel() async {
     );
   }
 }
+  // NEW: Check if a song should be unlocked based on email verification
+  // RELIABLE email unlock check (ignores flaky Firebase session)
+  Future<bool> _isSongUnlocked(bool emailUnlock, bool isFree) async {
+    if (isFree) return true;
+    if (!emailUnlock) return false;
+
+    final prefs = await SharedPreferences.getInstance();
+    final bool isConfirmed = prefs.getBool('email_confirmed') ?? false;
+    
+    print("🔓 Email unlock check → Confirmed in prefs: $isConfirmed");
+    return isConfirmed;
+  }
