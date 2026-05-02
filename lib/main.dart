@@ -163,7 +163,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   int _visualizerStyle = 0; // 0=Waveform, 1=Circular, 2=Frequency, 3=Mirror, 4=Pulse Rings
   bool _combineModes = false;
   String? _currentViewedAlbum;   // ← Add this  
-  bool _isQueueTutorialShowing = false;  
+  bool _isQueueTutorialShowing = false;
+  List<Map<String, dynamic>>? _currentAlbumSongs;   // Add this if missing  
 
   Future<bool> hasEntitlement(String entitlementId) async {
   try {
@@ -577,12 +578,22 @@ Future<void> _playSong(String albumName, int songIndex, {
   print("✅ ACCESS GRANTED → Playing: $finalTitle");
 
   try {
+    // === UPDATE UI STATE FIRST ===
     setState(() {
       _currentAlbum = albumName;
-      _currentSongIndex = songIndex;
+      _currentSongIndex = songIndex;           // Critical
       _currentSongTitle = finalTitle;
       _currentSongArtUrl = finalArtUrl;
       _hasPlaybackError = false;
+
+      // Robust sync for album fallback
+      if (albumSongs is List) {
+        _currentAlbumSongs = albumSongs.cast<Map<String, dynamic>>();
+        print('📋 Synced _currentAlbumSongs: ${_currentAlbumSongs!.length} songs for album "$albumName"');
+      } else {
+        _currentAlbumSongs = null;
+        print('⚠️ albumSongs was not a List');
+      }
     });
 
     await _globalPlayer.stop();
@@ -591,17 +602,17 @@ Future<void> _playSong(String albumName, int songIndex, {
     List<AudioSource> queueSources = [];
 
     if (fromQueue && safeQueue.isNotEmpty) {
-      // === QUEUE TAP ===
+      // === QUEUE MODE ===
       for (var item in safeQueue) {
         queueSources.add(_createHlsSource(item, albumName));
       }
-      print('✅ Using QUEUE (${queueSources.length} songs) | Starting at $songIndex');
+      print('✅ QUEUE MODE: ${queueSources.length} songs | Starting at index $songIndex');
     } else {
-      // === ALBUM DETAIL TAP ===
+      // === ALBUM MODE ===
       for (var song in albumSongs) {
         queueSources.add(_createHlsSource(song, albumName));
       }
-      print('✅ Building from ALBUM "$albumName" (${queueSources.length} songs) | Starting at $songIndex');
+      print('✅ ALBUM MODE: ${queueSources.length} songs | Starting at index $songIndex');
     }
 
     final queueSource = ConcatenatingAudioSource(children: queueSources);
@@ -612,18 +623,26 @@ Future<void> _playSong(String albumName, int songIndex, {
       initialPosition: Duration.zero,
     );
 
-    await Future.delayed(const Duration(milliseconds: 300));
+    await Future.delayed(const Duration(milliseconds: 250));
     await _globalPlayer.play();
 
     _setupProcessingListener();
     if (!_vinylController.isAnimating) _vinylController.repeat();
 
+    print('▶️ Playback started successfully at index $songIndex');
   } catch (e) {
     print("❌ Playback Error: $e");
     if (retryCount < 2) {
       await Future.delayed(const Duration(seconds: 2));
-      return _playSong(albumName, songIndex, retryCount: retryCount + 1,
-          directUrl: directUrl, titleToPlay: titleToPlay, artUrl: artUrl, fromQueue: fromQueue);
+      return _playSong(
+        albumName,
+        songIndex,
+        retryCount: retryCount + 1,
+        directUrl: directUrl,
+        titleToPlay: titleToPlay,
+        artUrl: artUrl,
+        fromQueue: fromQueue,
+      );
     }
   }
 }
@@ -1006,55 +1025,48 @@ void handleDeepLink(Uri uri) {
     );
   }
 
-  // NEW: Updated long-press menu with Song Story + Play Next
-  void _showSongOptions(Map<String, dynamic> song, String albumName, int songIndex) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.grey[900],
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Column(
+void _showSongOptions(Map<String, dynamic> song, String albumName, int index) {
+  showModalBottomSheet(
+    context: context,
+    builder: (context) => SafeArea(
+      child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           ListTile(
-            leading: const Icon(Icons.auto_stories, color: Colors.amberAccent),
-            title: const Text("View Song Story"),
-            onTap: () {
-              Navigator.pop(context);
-              _navigateToSongStory(song, albumName);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.queue_play_next, color: Colors.greenAccent),
+            leading: const Icon(Icons.playlist_add),
             title: const Text("Add to Queue"),
             onTap: () {
-              _queueSongNext(song, albumName, songIndex);
               Navigator.pop(context);
+              _addToQueue(song, albumName);   // ← Must call this
             },
           ),
-          const Divider(color: Colors.grey),
-          ListTile(
-            leading: const Icon(Icons.playlist_add),
-            title: const Text("Add to Playlist"),
-          ),
-          ..._playlists.map((pl) => ListTile(
-            title: Text(pl["name"] as String),
-            onTap: () {
-              _addSongToPlaylist(pl["id"], song, albumName); // use your existing method
-              Navigator.pop(context);
-            },
-          )).toList(),
-          ListTile(
-            leading: const Icon(Icons.close),
-            title: const Text("Cancel"),
-            onTap: () => Navigator.pop(context),
-          ),
+          // You can keep or remove the "Play Next" option for now
         ],
       ),
+    ),
+  );
+}
+void _addToQueue(Map<String, dynamic> song, String albumName) {
+  setState(() {
+    final songWithAlbum = {...song, 'albumName': albumName};
+    _queue.add(songWithAlbum);
+  });
+  
+  print('✅ Added to queue: ${song['title']} | Total songs: ${_queue.length}');
+
+  // Optional: Auto-play the first added song if nothing is currently playing
+  if (!_globalPlayer.playing && _queue.length == 1) {
+    final firstSong = _queue[0];
+    _playSong(
+      albumName,
+      0,
+      directUrl: firstSong['url'] as String?,
+      titleToPlay: firstSong['title'] as String?,
+      artUrl: firstSong['artUrl'] as String? ?? firstSong['songArtUrl'] as String?,
+      fromQueue: true,
     );
   }
-
+}
 
 void _setupProcessingListener() {
   _processingSubscription?.cancel();
@@ -1105,98 +1117,102 @@ void _setupProcessingListener() {
   }
 
 Future<void> _playNextSong() async {
-  print('🎯 _playNextSong called - Queue size: ${_queue.length} | Current Album: $_currentAlbum');
+  print('🎯 _playNextSong called | Queue: ${_queue.length} | Index: $_currentSongIndex');
 
-  // 1. Queue has songs → play next from queue
   if (_queue.isNotEmpty) {
-    final nextSong = _queue.removeAt(0);
-    final albumName = nextSong['albumName'] as String? ?? "";
-    final directUrl = nextSong['url'] as String? ?? "";
-    final title = nextSong['title'] as String? ?? "Unknown Song";
-    final artUrl = nextSong['artUrl'] as String? ?? "";
-
-    print('→ Playing from queue: $title');
-
-    setState(() {
-      _currentSongTitle = title;
-      _currentSongArtUrl = artUrl;
-      _currentAlbum = albumName;
-    });
-
-    await _playSong(albumName, 0, directUrl: directUrl, titleToPlay: title, artUrl: artUrl);
-    setState(() {}); // refresh queue UI
-    return;
-  }
-
-  // 2. No queue → normal album navigation with free-song skipping
-  if (_currentAlbum == null || _currentSongIndex == -1) {
-    if (_selectedAlbum != null) _currentAlbum = _selectedAlbum;
-    else return;
-  }
-
-  final songs = _albums[_currentAlbum]?['songs'] as List<dynamic>? ?? [];
-  if (songs.isEmpty) return;
-
-  int nextIndex = _currentSongIndex + 1;
-  if (nextIndex >= songs.length) {
-    nextIndex = 0; // loop back to start (or stop if you prefer)
-  }
-
-  // Find next free song (or any song if unlocked)
-  while (nextIndex != _currentSongIndex) {
-    final song = songs[nextIndex] as Map<String, dynamic>;
-    final isFree = song['isFree'] as bool? ?? false;
-
-    if (isFree || _hasOpenAccess) {
-      print('→ Playing next album song: ${song['Title']} (index $nextIndex)');
-      await _playSong(_currentAlbum!, nextIndex);
-      return;
+    // === QUEUE MODE ===
+    if (_currentSongIndex < 0 || _currentSongIndex >= _queue.length) {
+      _currentSongIndex = 0;
     }
 
-    nextIndex = (nextIndex + 1) % songs.length;
-    if (nextIndex == _currentSongIndex) break; // full loop, no free songs
-  }
+    int nextIndex = _currentSongIndex + 1;
 
-  // If we get here, no playable songs left
-  print('→ No more free songs in album');
-  await _globalPlayer.pause();
-  setState(() {
-    _currentSongTitle = "End of free songs on this album";
-  });
+    if (nextIndex >= _queue.length) {
+      if (_globalPlayer.loopMode == LoopMode.all) {
+        nextIndex = 0;
+        print('→ Queue looping back to 0');
+      } else {
+        await _globalPlayer.stop();
+        print('→ End of queue');
+        return;
+      }
+    }
+
+    final nextSong = _queue[nextIndex] as Map<String, dynamic>;
+    print('→ Playing next from queue: ${nextSong['title']} (index $nextIndex)');
+
+    await _playSong(
+      nextSong['albumName'] as String? ?? _currentAlbum ?? "Unknown",
+      nextIndex,
+      directUrl: nextSong['url'] as String?,
+      titleToPlay: nextSong['title'] as String?,
+      artUrl: nextSong['artUrl'] as String? ?? nextSong['songArtUrl'] as String?,
+      fromQueue: true,
+    );
+  } 
+else {
+  // === ALBUM FALLBACK ===
+  print('→ No queue → using album fallback');
+
+  if (_currentAlbumSongs != null && _currentAlbumSongs!.isNotEmpty) {
+    int nextIndex = _currentSongIndex + 1;
+    if (nextIndex >= _currentAlbumSongs!.length) {
+      if (_globalPlayer.loopMode == LoopMode.all) {
+        nextIndex = 0;
+        print('→ Album looping back to 0');
+      } else {
+        await _globalPlayer.stop();
+        print('→ End of album');
+        return;
+      }
+    }
+
+    final nextSong = _currentAlbumSongs![nextIndex];
+    print('→ Playing next from album → ${nextSong['title'] ?? "No Title"} (index $nextIndex) | Total songs: ${_currentAlbumSongs!.length}');
+
+    await _playSong(
+      _currentAlbum ?? "Unknown Album",
+      nextIndex,
+      directUrl: nextSong['url'] as String?,
+      titleToPlay: nextSong['title'] as String?,
+      artUrl: nextSong['artUrl'] as String? ?? nextSong['songArtUrl'] as String?,
+      fromQueue: false,
+    );
+  } else {
+    print('⚠️ No album songs available for fallback');
+  }
+}
 }
 
 Future<void> _playPreviousSong() async {
-  print('🎯 _playPreviousSong called - Queue size: ${_queue.length}');
+  print('🎯 _playPreviousSong called | Queue size: ${_queue.length} | Current Index: $_currentSongIndex');
 
-  // For previous, we usually don't consume from queue (common UX)
-  // So we always do album previous with free-song skipping
-  if (_currentAlbum == null || _currentSongIndex == -1) {
-    if (_selectedAlbum != null) _currentAlbum = _selectedAlbum;
-    else return;
-  }
-
-  final songs = _albums[_currentAlbum]?['songs'] as List<dynamic>? ?? [];
-  if (songs.isEmpty) return;
+  if (_queue.isEmpty) return;
 
   int prevIndex = _currentSongIndex - 1;
-  if (prevIndex < 0) prevIndex = songs.length - 1;
 
-  // Find previous free song (or any if unlocked)
-  while (prevIndex != _currentSongIndex) {
-    final song = songs[prevIndex] as Map<String, dynamic>;
-    final isFree = song['isFree'] as bool? ?? false;
-
-    if (isFree || _hasOpenAccess) {
-      print('→ Playing previous album song: ${song['Title']} (index $prevIndex)');
-      await _playSong(_currentAlbum!, prevIndex);
+  if (prevIndex < 0) {
+    if (_globalPlayer.loopMode == LoopMode.all) {
+      prevIndex = _queue.length - 1;
+    } else {
+      // Optional: seek to beginning of current song instead
+      await _globalPlayer.seek(Duration.zero);
       return;
     }
-
-    prevIndex = (prevIndex - 1 + songs.length) % songs.length;
-    if (prevIndex == _currentSongIndex) break;
   }
 
-  print('→ No previous free song found');
+  final prevSong = _queue[prevIndex] as Map<String, dynamic>;
+
+  print('→ Playing previous from queue: ${prevSong['title']} (index $prevIndex)');
+
+  await _playSong(
+    prevSong['albumName'] as String? ?? _currentAlbum ?? "Unknown",
+    prevIndex,
+    directUrl: prevSong['url'] as String?,
+    titleToPlay: prevSong['title'] as String?,
+    artUrl: prevSong['artUrl'] as String? ?? prevSong['songArtUrl'] as String?,
+    fromQueue: true,
+  );
 }
 
   void _toggleLoop() {
@@ -2112,67 +2128,81 @@ Widget _buildPlaylistsPage() {
           ),
         ),
 
-     // Queue List
-Expanded(
-  child: _queue.isEmpty
-      ? const Center(
-          child: Text(
-            "Queue is empty\nLong-press a song from an album → 'Play song next'",
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white54),
-          ),
-        )
-      : ListView.builder(
-          padding: const EdgeInsets.all(12),
-          itemCount: _queue.length,
-          itemBuilder: (context, index) {
-            final song = _queue[index] as Map<String, dynamic>;
-            
-            final title = song['title'] as String? ?? "Unknown Song";
-            final album = song['albumName'] as String? ?? "";
-            final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-
-            return ListTile(
-              leading: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: CachedNetworkImage(
-                  imageUrl: artUrl,
-                  width: 52,
-                  height: 52,
-                  fit: BoxFit.cover,
-                  errorWidget: (context, url, error) => const Icon(
-                    Icons.music_note,
-                    size: 52,
-                    color: Colors.white38,
+      // Queue List
+      Expanded(
+        child: Column(
+          children: [
+            // Clear Queue Button
+            if (_queue.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    icon: const Icon(Icons.playlist_remove, color: Colors.redAccent),
+                    label: const Text("Clear Queue", style: TextStyle(color: Colors.redAccent)),
+                    onPressed: _clearQueue,
                   ),
                 ),
               ),
-              title: Text(title),
-              subtitle: Text(
-                album.isNotEmpty ? album : "Unknown Album",
-                style: const TextStyle(color: Colors.white54),
-              ),
-              trailing: IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => setState(() => _queue.removeAt(index)),
-              ),
-                onTap: () async {
-                  print("🎯 Queue Tap → Title: '${song['title']}' | Index: $index");
 
-                  await _playSong(
-                    song['albumName'] as String? ?? _currentAlbum ?? "Unknown",
-                    index,
-                    directUrl: song['url'] as String?,
-                    titleToPlay: song['title'] as String?,
-                    artUrl: song['artUrl'] as String? ?? song['songArtUrl'] as String?,
-                    fromQueue: true,           // ← Important
-                  );
-                },
-              onLongPress: () => _showQueueSongOptions(song, index),
-            );
-          },
+            Expanded(
+              child: _queue.isEmpty
+                  ? const Center(
+                      child: Text(
+                        "Queue is empty\nLong-press a song from an album → 'Add to Queue'",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white54),
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _queue.length,
+                      itemBuilder: (context, index) {
+                        final song = _queue[index] as Map<String, dynamic>;
+                        final title = song['title'] as String? ?? "Unknown Song";
+                        final album = song['albumName'] as String? ?? "";
+                        final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+
+                        return ListTile(
+                          leading: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: CachedNetworkImage(
+                              imageUrl: artUrl,
+                              width: 52,
+                              height: 52,
+                              fit: BoxFit.cover,
+                              errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 52, color: Colors.white38),
+                            ),
+                          ),
+                          title: Text(title),
+                          subtitle: Text(
+                            album.isNotEmpty ? album : "Unknown Album",
+                            style: const TextStyle(color: Colors.white54),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => setState(() => _queue.removeAt(index)),
+                          ),
+                          onTap: () async {
+                            print("🎯 Queue Tap → Title: '$title' | Index: $index");
+                            await _playSong(
+                              song['albumName'] as String? ?? _currentAlbum ?? "Unknown",
+                              index,
+                              directUrl: song['url'] as String?,
+                              titleToPlay: title,
+                              artUrl: artUrl,
+                              fromQueue: true,
+                            );
+                          },
+                          onLongPress: () => _showQueueSongOptions(song, index),
+                        );
+                      },
+                    ),
+            ),
+          ],
         ),
-),
+      ),
 
       // === SAVED PLAYLISTS SECTION ===
       Container(
@@ -2187,60 +2217,48 @@ Expanded(
             const Text("Saved Playlists", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
 
-            // === FREE SONGS PLAYLIST (Auto) ===
+            // Free Songs Playlist
             _buildFreeSongsPlaylistTile(),
-
             const SizedBox(height: 12),
 
+            // New Playlist Button
             ElevatedButton.icon(
               icon: const Icon(Icons.add),
               label: const Text("New Playlist"),
               onPressed: _showCreatePlaylistDialog,
             ),
-
-            const SizedBox(height: 8),
-
-            // Debug button (you can remove this later)
-            ElevatedButton(
-              onPressed: () async {
-                await _createFreeSongsPlaylist();
-                if (mounted) setState(() {});
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Free Songs playlist forced")),
-                );
-              },
-              child: const Text("DEBUG: Create Free Playlist"),
-            ),
-
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
 
             if (_playlists.isNotEmpty)
               SizedBox(
-                height: 140,
+                height: 160,
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
                   itemCount: _playlists.length,
                   itemBuilder: (context, i) {
                     final pl = _playlists[i];
+                    final name = pl["name"] as String? ?? "Playlist";
+                    final songs = pl["songs"] as List<dynamic>? ?? [];
+
                     return Padding(
                       padding: const EdgeInsets.only(right: 12),
                       child: GestureDetector(
                         onTap: () {
-                          final playlistSongs = pl["songs"] as List<dynamic>? ?? [];
-                          if (playlistSongs.isNotEmpty) {
+                          if (songs.isNotEmpty) {
                             setState(() {
-                              _queue.addAll(playlistSongs.map((s) => {
-                                'title': s['Title'] ?? 'Unknown Song',
-                                'albumName': pl["name"] ?? "",
-                                'artUrl': s['artUrl'] ?? s['songArtUrl'] ?? "",
-                                'url': s['url'] ?? "",
-                              }).toList());
+                              _queue.addAll(songs.map((s) => {
+                                    'title': s['Title'] ?? 'Unknown Song',
+                                    'albumName': name,
+                                    'artUrl': s['artUrl'] ?? s['songArtUrl'] ?? "",
+                                    'url': s['url'] ?? "",
+                                  }).toList());
                             });
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text("Added ${playlistSongs.length} songs to queue")),
+                              SnackBar(content: Text("Added ${songs.length} songs to queue")),
                             );
                           }
                         },
+                        onLongPress: () => _showPlaylistOptions(pl, i),
                         child: Container(
                           width: 140,
                           padding: const EdgeInsets.all(12),
@@ -2251,8 +2269,10 @@ Expanded(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Text(pl["name"], style: const TextStyle(fontWeight: FontWeight.bold)),
-                              Text("${pl["songs"].length} songs", style: const TextStyle(fontSize: 13, color: Colors.white54)),
+                              const Icon(Icons.playlist_play, size: 48, color: Colors.white70),
+                              const SizedBox(height: 8),
+                              Text(name, style: const TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                              Text("${songs.length} songs", style: const TextStyle(fontSize: 13, color: Colors.white54)),
                             ],
                           ),
                         ),
@@ -2265,6 +2285,77 @@ Expanded(
         ),
       ),
     ],
+  );
+}
+void _clearQueue() {
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text("Clear Queue?"),
+      content: const Text("This will remove all songs from the current queue."),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+        TextButton(
+          onPressed: () {
+            setState(() {
+              _queue.clear();
+              _currentSongIndex = 0;   // ← Important reset
+            });
+            Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Queue cleared")),
+            );
+          },
+          child: const Text("Clear", style: TextStyle(color: Colors.red)),
+        ),
+      ],
+    ),
+  );
+}
+
+void _showPlaylistOptions(Map<String, dynamic> playlist, int index) {
+  showModalBottomSheet(
+    context: context,
+    builder: (context) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.delete, color: Colors.red),
+            title: const Text("Delete Playlist", style: TextStyle(color: Colors.red)),
+            onTap: () {
+              Navigator.pop(context);
+              _deletePlaylist(index);
+            },
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+void _deletePlaylist(int index) {
+  final playlistName = _playlists[index]["name"];
+
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text("Delete Playlist?"),
+      content: Text("Are you sure you want to delete '$playlistName'?"),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+        TextButton(
+          onPressed: () {
+            setState(() => _playlists.removeAt(index));
+            Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text("Deleted '$playlistName'")),
+            );
+          },
+          child: const Text("Delete", style: TextStyle(color: Colors.red)),
+        ),
+      ],
+    ),
   );
 }
 Widget _buildFreeSongsPlaylistTile() {
