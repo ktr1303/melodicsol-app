@@ -164,7 +164,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _combineModes = false;
   String? _currentViewedAlbum;   // ← Add this  
   bool _isQueueTutorialShowing = false;
-  List<Map<String, dynamic>>? _currentAlbumSongs;   // Add this if missing  
+  List<Map<String, dynamic>>? _currentAlbumSongs;   // Add this if missing
+  bool _isPlayingNewSong = false;  
 
   Future<bool> hasEntitlement(String entitlementId) async {
   try {
@@ -307,20 +308,20 @@ final Map<String, double> _albumHorizontalOffset = {
 void initState() {
   super.initState();
 
-  
+
+  _setupProcessingListener;
   _pageController = PageController(initialPage: 1);
   _boneStaggerController = AnimationController(
       duration: const Duration(milliseconds: 1800), vsync: this)
     ..forward();
   // Sync background notification controls with your app logic
-_globalPlayer.playbackEventStream.listen((event) {
-_fetchAlbums().then((_) {
+    _fetchAlbums().then((_) {
     _createFreeSongsPlaylist();     // ← This will now read isFree correctly
     _showMainAlbumTutorial();
-  });
+  }
   
   // This helps just_audio_background know the current state
-});
+);
 
 
 
@@ -533,83 +534,74 @@ Future<void> _playSong(String albumName, int songIndex, {
   String? directUrl,
   String? titleToPlay,
   String? artUrl,
-  bool fromQueue = false,   // ← New parameter
+  bool fromQueue = false,
 }) async {
   print("🎵 _playSong CALLED → Album: $albumName | Index: $songIndex | DirectURL: ${directUrl != null} | FromQueue: $fromQueue");
 
-  String urlToPlay = (directUrl ?? '').trim();
-  String finalTitle = titleToPlay ?? "Unknown Song";
-  String finalArtUrl = artUrl ?? "";
-
-  final List<dynamic> albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
-  final List<dynamic> safeQueue = _queue ?? [];
-
-  // Get song data
-  if (urlToPlay.isEmpty) {
-    if (songIndex >= 0 && songIndex < albumSongs.length) {
-      final song = albumSongs[songIndex] as Map<String, dynamic>;
-      urlToPlay = (song['url'] as String?)?.trim() ?? '';
-      finalTitle = (song['Title'] as String?) ?? finalTitle;
-      finalArtUrl = (song['artUrl'] as String?) ?? (song['songArtUrl'] as String?) ?? finalArtUrl;
-    }
-  }
-
-  if (urlToPlay.isEmpty || !urlToPlay.startsWith('http')) {
-    print("❌ No valid URL found");
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Invalid audio URL")));
+  if (_isPlayingNewSong) {
+    print('⏳ Already starting a song - ignoring duplicate call');
     return;
   }
-
-  // Unlock check (keep your existing code)
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.reload();
-  final bool hasLifetimeLocal = prefs.getBool('hasLifetimeAccess') ?? false;
-  final hasLifetimeRevenueCat = await hasEntitlement('lifetime_access');
-  final hasCatalog = await hasEntitlement('catalog_access');
-  final bool hasFullAccess = hasLifetimeLocal || hasLifetimeRevenueCat || hasCatalog;
-
-  if (!hasFullAccess) {
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("This song requires purchase or Lifetime Access")),
-    );
-    return;
-  }
-
-  print("✅ ACCESS GRANTED → Playing: $finalTitle");
+  _isPlayingNewSong = true;
 
   try {
-    // === UPDATE UI STATE FIRST ===
+    if (_globalPlayer.processingState == ProcessingState.loading) {
+      print('⏳ Player is still loading - stopping current');
+      await _globalPlayer.stop();
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+
+    String urlToPlay = (directUrl ?? '').trim();
+    String finalTitle = titleToPlay ?? "Unknown Song";
+    String finalArtUrl = artUrl ?? "";
+
+    final List<dynamic> albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
+
+    if (urlToPlay.isEmpty) {
+      if (songIndex >= 0 && songIndex < albumSongs.length) {
+        final song = albumSongs[songIndex] as Map<String, dynamic>;
+        urlToPlay = (song['url'] as String?)?.trim() ?? '';
+        finalTitle = (song['title'] as String?) ?? (song['Title'] as String?) ?? finalTitle;
+        finalArtUrl = (song['artUrl'] as String?) ?? (song['songArtUrl'] as String?) ?? finalArtUrl;
+      }
+    }
+
+    if (urlToPlay.isEmpty || !urlToPlay.startsWith('http')) {
+      print("❌ No valid URL found");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Invalid audio URL")));
+      }
+      return;
+    }
+
+    print("✅ ACCESS GRANTED → Playing: $finalTitle");
+
+    final List<Map<String, dynamic>> copiedAlbumSongs = albumSongs
+        .map((s) => Map<String, dynamic>.from(s as Map))
+        .toList();
+
     setState(() {
       _currentAlbum = albumName;
-      _currentSongIndex = songIndex;           // Critical
+      _currentSongIndex = songIndex;
       _currentSongTitle = finalTitle;
       _currentSongArtUrl = finalArtUrl;
       _hasPlaybackError = false;
-
-      // Robust sync for album fallback
-      if (albumSongs is List) {
-        _currentAlbumSongs = albumSongs.cast<Map<String, dynamic>>();
-        print('📋 Synced _currentAlbumSongs: ${_currentAlbumSongs!.length} songs for album "$albumName"');
-      } else {
-        _currentAlbumSongs = null;
-        print('⚠️ albumSongs was not a List');
-      }
+      _currentAlbumSongs = copiedAlbumSongs;
+      print('📋 Deep-copied _currentAlbumSongs: ${_currentAlbumSongs!.length} songs');
     });
 
     await _globalPlayer.stop();
-    await Future.delayed(const Duration(milliseconds: 150));
+    await Future.delayed(const Duration(milliseconds: 300));
 
     List<AudioSource> queueSources = [];
 
-    if (fromQueue && safeQueue.isNotEmpty) {
-      // === QUEUE MODE ===
-      for (var item in safeQueue) {
+    if (fromQueue && _queue.isNotEmpty) {
+      for (var item in _queue) {
         queueSources.add(_createHlsSource(item, albumName));
       }
       print('✅ QUEUE MODE: ${queueSources.length} songs | Starting at index $songIndex');
     } else {
-      // === ALBUM MODE ===
-      for (var song in albumSongs) {
+      for (var song in copiedAlbumSongs) {
         queueSources.add(_createHlsSource(song, albumName));
       }
       print('✅ ALBUM MODE: ${queueSources.length} songs | Starting at index $songIndex');
@@ -619,67 +611,76 @@ Future<void> _playSong(String albumName, int songIndex, {
 
     await _globalPlayer.setAudioSource(
       queueSource,
-      initialIndex: songIndex,
+      initialIndex: songIndex.clamp(0, queueSources.length - 1),
       initialPosition: Duration.zero,
     );
 
-    await Future.delayed(const Duration(milliseconds: 250));
+    // Force correct song
+    await Future.delayed(const Duration(milliseconds: 500));
+    await _globalPlayer.seek(
+      Duration.zero,
+      index: songIndex.clamp(0, queueSources.length - 1),
+    );
+
+    await Future.delayed(const Duration(milliseconds: 200));
     await _globalPlayer.play();
 
     _setupProcessingListener();
     if (!_vinylController.isAnimating) _vinylController.repeat();
 
     print('▶️ Playback started successfully at index $songIndex');
-  } catch (e) {
+  } catch (e, stack) {
     print("❌ Playback Error: $e");
+    print(stack);
     if (retryCount < 2) {
-      await Future.delayed(const Duration(seconds: 2));
-      return _playSong(
-        albumName,
-        songIndex,
-        retryCount: retryCount + 1,
-        directUrl: directUrl,
-        titleToPlay: titleToPlay,
-        artUrl: artUrl,
-        fromQueue: fromQueue,
-      );
+      await Future.delayed(const Duration(seconds: 1));
+      return _playSong(albumName, songIndex,
+          retryCount: retryCount + 1,
+          directUrl: directUrl,
+          titleToPlay: titleToPlay,
+          artUrl: artUrl,
+          fromQueue: fromQueue);
     }
+  } finally {
+    _isPlayingNewSong = false;
   }
 }
 
-// Helper method (add this somewhere in your class)
-HlsAudioSource _createHlsSource(dynamic songData, String fallbackAlbum) {
-  final String url = (songData['url'] as String?) ?? '';
+AudioSource _createHlsSource(dynamic song, String albumName) {
+  final url = (song['url'] as String?)?.trim() ?? '';
+
+  if (url.isEmpty) {
+    print("⚠️ Empty URL in _createHlsSource for album: $albumName");
+    // Fallback to prevent crash
+    return HlsAudioSource(
+      Uri.parse("https://example.com/empty.mp3"),
+      tag: const MediaItem(id: 'empty', title: 'Empty Track'),
+    );
+  }
+
+  final title = (song['title'] as String?) ??
+               (song['Title'] as String?) ??
+               "Unknown Track";
+
+  final artist = (song['artist'] as String?) ??
+                 (song['Artist'] as String?) ??
+                 "Melodicsol";
+
+  final artUrl = (song['artUrl'] as String?) ??
+                 (song['songArtUrl'] as String?) ??
+                 (song['albumArt'] as String?) ??
+                 "";
+
   return HlsAudioSource(
     Uri.parse(url),
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36',
-      'Accept': '*/*',
-    },
     tag: MediaItem(
       id: url,
-      title: (songData['title'] as String?) ?? (songData['Title'] as String?) ?? "Unknown",
-      album: (songData['albumName'] as String?) ?? fallbackAlbum,
-      artist: "Melodic Sol",
-      artUri: (songData['artUrl'] as String?)?.isNotEmpty == true 
-          ? Uri.tryParse(songData['artUrl'] as String) 
-          : null,
+      title: title,
+      artist: artist,
+      artUri: artUrl.isNotEmpty ? Uri.tryParse(artUrl) : null,
+      album: albumName,
     ),
   );
-}
-Widget _buildSongTrailingIcon({
-  required bool isUnlocked,
-  required bool emailUnlock,
-}) {
-  if (isUnlocked) {
-    return const Icon(Icons.play_circle, color: Colors.greenAccent, size: 26);
-  }
-
-  if (emailUnlock) {
-    return const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22);
-  }
-
-  return const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20);
 }
     // NEW: Queue song to play immediately after current one
   // Improved Queue Song Next
@@ -716,70 +717,41 @@ void _queueSongNext(Map<String, dynamic> song, String albumName, int songIndex) 
     SnackBar(content: Text("Added to queue: ${song['Title'] ?? 'Unknown Song'}")),
   );
 }
-  
 
-
-
-  // Improved Song Completion Handler
-void _handleSongCompletion() {
-  print('🎯 _handleSongCompletion called - Queue size: ${_queue.length} | Current Album: $_currentAlbum | Index: $_currentSongIndex');
-
-  if (_queue.isNotEmpty) {
-    int nextIndex = 0;
-
-    // Random selection when shuffle is enabled
-    if (_globalPlayer.shuffleModeEnabled && _queue.length > 1) {
-      nextIndex = Random().nextInt(_queue.length);
-      print("🔀 Shuffle active - randomly selected index $nextIndex from queue");
-    }
-
-    final nextSong = _queue.removeAt(nextIndex);
-
-    final albumName = nextSong['albumName'] as String? ?? "";
-    final directUrl = nextSong['url'] as String? ?? "";
-    final title = nextSong['title'] as String? ?? "Unknown Song";
-    final artUrl = nextSong['artUrl'] as String? ?? "";
-
-    // Add lock check before playing
-    final songList = _albums[albumName]?['songs'] as List? ?? [];
-    final originalSong = songList.firstWhere(
-      (s) => (s['Title'] as String?) == title,
-      orElse: () => {},
-    );
-
-    final isFree = originalSong['isFree'] as bool? ?? false;
-    final emailUnlock = originalSong['emailUnlock'] as bool? ?? false;
-    final isLocked = !isFree && !_hasOpenAccess && !(_hasConfirmedEmail && emailUnlock);
-
-    if (isLocked) {
-      print("⛔ Skipping locked song in queue: $title");
-      // Recurse to next item (will pick randomly again if shuffle is on)
-      _handleSongCompletion();
-      return;
-    }
-
-    setState(() {
-      _currentSongTitle = title;
-      _currentSongArtUrl = artUrl;
-      _currentAlbum = albumName;
-    });
-
-    print("🎵 Playing next from queue: $title (Album: $albumName)");
-
-    if (directUrl.isNotEmpty && directUrl.startsWith('http')) {
-      _playSong(albumName, 0, directUrl: directUrl, titleToPlay: title, artUrl: artUrl);
-    } else {
-      _playSong(albumName, 0);
-    }
+Future<void> _syncCurrentIndexToAlbum() async {
+  if (_currentAlbum == null || _currentAlbumSongs == null || _currentAlbumSongs!.isEmpty) {
+    setState(() => _currentSongIndex = 0);
+    print('⚠️ _syncCurrentIndexToAlbum: No album or songs → reset to 0');
     return;
   }
 
-  print('→ No queue - calling _playNextSong()');
-  _playNextSong();
+  // We don't have _currentSong map, so use title
+  final currentTitle = _currentSongTitle.trim().toLowerCase();
+
+  if (currentTitle.isEmpty) {
+    setState(() => _currentSongIndex = 0);
+    return;
+  }
+
+  for (int i = 0; i < _currentAlbumSongs!.length; i++) {
+    final song = _currentAlbumSongs![i] as Map<String, dynamic>;
+    final songTitle = ((song['title'] as String?) ?? (song['Title'] as String?) ?? "")
+        .trim()
+        .toLowerCase();
+
+    if (songTitle == currentTitle) {
+      setState(() => _currentSongIndex = i);
+      print('🔄 Synced to album index: $i → ${song['Title'] ?? song['title']}');
+      return;
+    }
+  }
+
+  // Fallback
+  setState(() => _currentSongIndex = 0);
+  print('⚠️ Current song title not found in album → reset to index 0');
 }
 
 // ==================== CLEAN TUTORIALS (3 only) ====================
-
 bool _isTutorialShowing = false;
 
 // 1. Main Albums Page Tutorial
@@ -1046,61 +1018,62 @@ void _showSongOptions(Map<String, dynamic> song, String albumName, int index) {
     ),
   );
 }
+
 void _addToQueue(Map<String, dynamic> song, String albumName) {
   setState(() {
-    final songWithAlbum = {...song, 'albumName': albumName};
+    // Deep copy to avoid reference issues
+    final songWithAlbum = Map<String, dynamic>.from(song)
+      ..['albumName'] = albumName;
     _queue.add(songWithAlbum);
   });
-  
-  print('✅ Added to queue: ${song['title']} | Total songs: ${_queue.length}');
 
-  // Optional: Auto-play the first added song if nothing is currently playing
+  final title = (song['title'] as String?) ?? (song['Title'] as String?) ?? "Unknown Song";
+  print('✅ Added to queue: $title | Total songs: ${_queue.length}');
+
+  // Auto-play first song if nothing is playing
   if (!_globalPlayer.playing && _queue.length == 1) {
     final firstSong = _queue[0];
     _playSong(
       albumName,
       0,
       directUrl: firstSong['url'] as String?,
-      titleToPlay: firstSong['title'] as String?,
+      titleToPlay: (firstSong['title'] as String?) ?? (firstSong['Title'] as String?),
       artUrl: firstSong['artUrl'] as String? ?? firstSong['songArtUrl'] as String?,
       fromQueue: true,
     );
   }
 }
 
+
+StreamSubscription? _positionSubscription;
+StreamSubscription? _playbackEventSubscription;
+
 void _setupProcessingListener() {
-  _processingSubscription?.cancel();
+  _positionSubscription?.cancel();
+  _playbackEventSubscription?.cancel();
 
-  // Visual progress bar update
-  _processingSubscription = _globalPlayer.positionStream.listen((position) {
-    if (mounted) {
-      setState(() => _position = position);
-    }
+  _positionSubscription = _globalPlayer.positionStream.listen((pos) {
+    if (mounted) setState(() => _position = pos);
   });
 
-  // Duration
-  _globalPlayer.durationStream.listen((duration) {
-    if (mounted && duration != null) {
-      setState(() => _duration = duration);
-    }
-  });
+  _playbackEventSubscription = _globalPlayer.playbackEventStream.listen((event) {
+    final idx = event.currentIndex;
+    if (idx == null) return;
 
-  // Song completion / title updates
-  _globalPlayer.processingStateStream.listen((state) {
-    if (_pendingSongTitle != null && (state == ProcessingState.ready || state == ProcessingState.buffering)) {
-      setState(() {
-        _currentSongTitle = _pendingSongTitle!;
-        _pendingSongTitle = null;
-      });
-    }
-    if (state == ProcessingState.completed) {
-      _handleSongCompletion();
+    print('🎥 Event → ${event.processingState} | Index: $idx | Current: $_currentSongIndex');
+
+    if (event.processingState == ProcessingState.ready) {
+      if (idx != _currentSongIndex) {
+        setState(() => _currentSongIndex = idx);
+      }
     }
   });
 }
   @override
   void dispose() {
     _processingSubscription?.cancel();
+    _playbackEventSubscription?.cancel();
+    _globalPlayer.dispose();
     _boneStaggerController.dispose();
     _pageController.dispose();
     _videoController.dispose();
@@ -1116,72 +1089,64 @@ void _setupProcessingListener() {
     super.dispose();
   }
 
-Future<void> _playNextSong() async {
-  print('🎯 _playNextSong called | Queue: ${_queue.length} | Index: $_currentSongIndex');
+Future<void> _advanceToNext({bool isManualSkip = false}) async {
+  print('🎯 _advanceToNext called | Queue: ${_queue.length} | CurrentIndex: $_currentSongIndex | Manual: $isManualSkip');
 
   if (_queue.isNotEmpty) {
-    // === QUEUE MODE ===
-    if (_currentSongIndex < 0 || _currentSongIndex >= _queue.length) {
-      _currentSongIndex = 0;
-    }
-
-    int nextIndex = _currentSongIndex + 1;
-
-    if (nextIndex >= _queue.length) {
-      if (_globalPlayer.loopMode == LoopMode.all) {
-        nextIndex = 0;
-        print('→ Queue looping back to 0');
+    // Queue mode (consume)
+    final completedIndex = _currentSongIndex + 1;
+    setState(() {
+      if (completedIndex <= _queue.length) {
+        _queue.removeRange(0, completedIndex);
       } else {
-        await _globalPlayer.stop();
-        print('→ End of queue');
-        return;
+        _queue.clear();
       }
+      _currentSongIndex = 0;
+    });
+
+    if (_queue.isNotEmpty) {
+      final nextSong = _queue[0] as Map<String, dynamic>;
+      await _playSong(
+        nextSong['albumName'] as String? ?? _currentAlbum ?? "",
+        0,
+        directUrl: nextSong['url'] as String?,
+        titleToPlay: nextSong['title'] as String?,
+        artUrl: nextSong['artUrl'] as String?,
+        fromQueue: true,
+      );
+    } else {
+      await _globalPlayer.stop();
     }
+  } else {
+    // Pure Album mode
+    if (_currentAlbumSongs == null || _currentAlbumSongs!.isEmpty) return;
 
-    final nextSong = _queue[nextIndex] as Map<String, dynamic>;
-    print('→ Playing next from queue: ${nextSong['title']} (index $nextIndex)');
-
-    await _playSong(
-      nextSong['albumName'] as String? ?? _currentAlbum ?? "Unknown",
-      nextIndex,
-      directUrl: nextSong['url'] as String?,
-      titleToPlay: nextSong['title'] as String?,
-      artUrl: nextSong['artUrl'] as String? ?? nextSong['songArtUrl'] as String?,
-      fromQueue: true,
-    );
-  } 
-else {
-  // === ALBUM FALLBACK ===
-  print('→ No queue → using album fallback');
-
-  if (_currentAlbumSongs != null && _currentAlbumSongs!.isNotEmpty) {
     int nextIndex = _currentSongIndex + 1;
     if (nextIndex >= _currentAlbumSongs!.length) {
       if (_globalPlayer.loopMode == LoopMode.all) {
         nextIndex = 0;
-        print('→ Album looping back to 0');
       } else {
         await _globalPlayer.stop();
-        print('→ End of album');
         return;
       }
     }
 
     final nextSong = _currentAlbumSongs![nextIndex];
-    print('→ Playing next from album → ${nextSong['title'] ?? "No Title"} (index $nextIndex) | Total songs: ${_currentAlbumSongs!.length}');
+    final title = (nextSong['title'] as String?) ?? (nextSong['Title'] as String?) ?? "Unknown";
+
+    print('→ Album next: $title (index $nextIndex)');
 
     await _playSong(
       _currentAlbum ?? "Unknown Album",
       nextIndex,
       directUrl: nextSong['url'] as String?,
-      titleToPlay: nextSong['title'] as String?,
+      titleToPlay: title,
       artUrl: nextSong['artUrl'] as String? ?? nextSong['songArtUrl'] as String?,
       fromQueue: false,
     );
-  } else {
-    print('⚠️ No album songs available for fallback');
+
+    setState(() => _currentSongIndex = nextIndex);
   }
-}
 }
 
 Future<void> _playPreviousSong() async {
@@ -2062,7 +2027,11 @@ return Column(
                     else _globalPlayer.setLoopMode(LoopMode.off);
                   },
                 ),
-                IconButton(icon: const Icon(Icons.skip_next, size: 32), color: albumTheme, onPressed: _playNextSong),
+                IconButton(
+                  icon: const Icon(Icons.skip_next, size: 32),
+                  color: albumTheme,
+                  onPressed: () => _advanceToNext(isManualSkip: true),
+                ),
               ],
             ),
           ],
@@ -2128,81 +2097,93 @@ Widget _buildPlaylistsPage() {
           ),
         ),
 
-      // Queue List
-      Expanded(
-        child: Column(
-          children: [
-            // Clear Queue Button
-            if (_queue.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    icon: const Icon(Icons.playlist_remove, color: Colors.redAccent),
-                    label: const Text("Clear Queue", style: TextStyle(color: Colors.redAccent)),
-                    onPressed: _clearQueue,
-                  ),
-                ),
-              ),
-
-            Expanded(
-              child: _queue.isEmpty
-                  ? const Center(
-                      child: Text(
-                        "Queue is empty\nLong-press a song from an album → 'Add to Queue'",
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.white54),
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: _queue.length,
-                      itemBuilder: (context, index) {
-                        final song = _queue[index] as Map<String, dynamic>;
-                        final title = song['title'] as String? ?? "Unknown Song";
-                        final album = song['albumName'] as String? ?? "";
-                        final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-
-                        return ListTile(
-                          leading: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: CachedNetworkImage(
-                              imageUrl: artUrl,
-                              width: 52,
-                              height: 52,
-                              fit: BoxFit.cover,
-                              errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 52, color: Colors.white38),
-                            ),
-                          ),
-                          title: Text(title),
-                          subtitle: Text(
-                            album.isNotEmpty ? album : "Unknown Album",
-                            style: const TextStyle(color: Colors.white54),
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.close),
-                            onPressed: () => setState(() => _queue.removeAt(index)),
-                          ),
-                          onTap: () async {
-                            print("🎯 Queue Tap → Title: '$title' | Index: $index");
-                            await _playSong(
-                              song['albumName'] as String? ?? _currentAlbum ?? "Unknown",
-                              index,
-                              directUrl: song['url'] as String?,
-                              titleToPlay: title,
-                              artUrl: artUrl,
-                              fromQueue: true,
-                            );
-                          },
-                          onLongPress: () => _showQueueSongOptions(song, index),
-                        );
-                      },
-                    ),
+// Queue List
+Expanded(
+  child: Column(
+    children: [
+      // Clear Queue Button
+      if (_queue.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              icon: const Icon(Icons.playlist_remove, color: Colors.redAccent),
+              label: const Text("Clear Queue", style: TextStyle(color: Colors.redAccent)),
+              onPressed: _clearQueue,
             ),
-          ],
+          ),
         ),
+      Expanded(
+        child: _queue.isEmpty
+            ? const Center(
+                child: Text(
+                  "Queue is empty\nLong-press a song from an album → 'Add to Queue'",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white54),
+                ),
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: _queue.length,
+                itemBuilder: (context, index) {
+                  final song = _queue[index] as Map<String, dynamic>;
+                  final title = (song['title'] as String?) ??
+                               (song['Title'] as String?) ??
+                               "Unknown Song";
+                  final album = song['albumName'] as String? ?? "";
+                  final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+
+                  return ListTile(
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: CachedNetworkImage(
+                        imageUrl: artUrl,
+                        width: 52,
+                        height: 52,
+                        fit: BoxFit.cover,
+                        errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 52, color: Colors.white38),
+                      ),
+                    ),
+                    title: Text(title),
+                    subtitle: Text(
+                      album.isNotEmpty ? album : "Unknown Album",
+                      style: const TextStyle(color: Colors.white54),
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => setState(() => _queue.removeAt(index)),
+                    ),
+                    onTap: () async {
+                      print("🎯 Queue Tap → Title: '$title' | Index: $index");
+
+                      // Copy song before we remove it
+                      final tappedSong = Map<String, dynamic>.from(song);
+
+                      // Consume the tapped song + everything before it
+                      setState(() {
+                        _queue.removeRange(0, index + 1);
+                      });
+                      print('🗑️ Consumed tapped song → New queue size: ${_queue.length}');
+
+                      // Play the song we just removed
+                      await _playSong(
+                        tappedSong['albumName'] as String? ?? _currentAlbum ?? "Unknown",
+                        0,
+                        directUrl: tappedSong['url'] as String?,
+                        titleToPlay: title,
+                        artUrl: artUrl,
+                        fromQueue: true,
+                      );
+                    },
+                    onLongPress: () => _showQueueSongOptions(song, index),
+                  );
+                },
+              ),
       ),
+    ],
+  ),
+),
 
       // === SAVED PLAYLISTS SECTION ===
       Container(
@@ -2247,7 +2228,7 @@ Widget _buildPlaylistsPage() {
                           if (songs.isNotEmpty) {
                             setState(() {
                               _queue.addAll(songs.map((s) => {
-                                    'title': s['Title'] ?? 'Unknown Song',
+                                    'title': (s['Title'] as String?) ?? (s['title'] as String?) ?? 'Unknown Song', // improved
                                     'albumName': name,
                                     'artUrl': s['artUrl'] ?? s['songArtUrl'] ?? "",
                                     'url': s['url'] ?? "",
@@ -2287,6 +2268,7 @@ Widget _buildPlaylistsPage() {
     ],
   );
 }
+
 void _clearQueue() {
   showDialog(
     context: context,
@@ -2299,8 +2281,10 @@ void _clearQueue() {
           onPressed: () {
             setState(() {
               _queue.clear();
-              _currentSongIndex = 0;   // ← Important reset
             });
+
+            _syncCurrentIndexToAlbum();   // Keep this from earlier fix
+
             Navigator.pop(context);
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text("Queue cleared")),
