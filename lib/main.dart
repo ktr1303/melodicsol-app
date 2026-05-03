@@ -125,7 +125,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   bool _ignoreProcessingListener = false;
   bool _ignorePendingTitle = false;
-  StreamSubscription? _processingSubscription;   // ← Add this line
+  StreamSubscription? _processingSubscription;
+  StreamSubscription? _playbackEventSubscription;  // optional     // ← Add this line
   String _currentSongTitle = "Play song or swipe left for queue";
   String? _currentSongArtUrl;
   String? _selectedAlbum;
@@ -531,7 +532,9 @@ Future<void> _loadConfirmedStatus() async {
     }
   }
 
-Future<void> _playSong(String albumName, int songIndex, {
+Future<void> _playSong(
+  String albumName,
+  int songIndex, {
   bool fromQueue = false,
   String? directUrl,
   String? titleToPlay,
@@ -540,17 +543,26 @@ Future<void> _playSong(String albumName, int songIndex, {
   print("🎵 _playSong CALLED → Album: $albumName | Index: $songIndex | FromQueue: $fromQueue");
 
   final now = DateTime.now().millisecondsSinceEpoch;
-  if (_isPlayingNewSong || (now - (_lastPlayCallTime ?? 0) < 600)) {
-    print('⏳ Ignoring duplicate/rapid call');
+
+  // Relaxed guard for queue taps (allow faster switching in queue)
+  if (_isPlayingNewSong && !fromQueue) {
+    print('⏳ Ignoring duplicate/rapid non-queue call');
     return;
   }
+  if (now - (_lastPlayCallTime ?? 0) < 350) {  // Reduced from 600ms
+    if (!fromQueue) {
+      print('⏳ Ignoring rapid call');
+      return;
+    }
+  }
+
   _lastPlayCallTime = now;
   _isPlayingNewSong = true;
 
   try {
     // Stop current playback cleanly
     await _globalPlayer.stop();
-    await Future.delayed(const Duration(milliseconds: 200));
+    await Future.delayed(const Duration(milliseconds: 150));
 
     final List<dynamic> albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
 
@@ -558,7 +570,7 @@ Future<void> _playSong(String albumName, int songIndex, {
     _isQueueMode = fromQueue && _queue.isNotEmpty;
 
     List<AudioSource> sources = [];
-    int targetIndex = songIndex.clamp(0, albumSongs.length - 1);
+    int targetIndex = songIndex.clamp(0, _isQueueMode ? _queue.length - 1 : albumSongs.length - 1);
 
     if (_isQueueMode) {
       for (var item in _queue) {
@@ -574,7 +586,7 @@ Future<void> _playSong(String albumName, int songIndex, {
 
     final queueSource = ConcatenatingAudioSource(children: sources);
 
-        if (_isQueueMode && _queue.isEmpty) {
+    if (_isQueueMode && _queue.isEmpty) {
       print('⚠️ Queue empty, falling back to album');
       _isQueueMode = false;
     }
@@ -587,20 +599,26 @@ Future<void> _playSong(String albumName, int songIndex, {
 
     await _globalPlayer.play();
 
-    // Update UI state
+    // === UI Updates ===
+    if (fromQueue) {
+      // Immediate rebuild + small delay for stability
+      _forceQueueRebuild();
+      Future.delayed(const Duration(milliseconds: 120), _forceQueueRebuild);
+    }
+
     setState(() {
       _currentAlbum = albumName;
       _currentSongIndex = targetIndex;
       _currentSongTitle = titleToPlay ?? "Unknown Song";
       _currentSongArtUrl = artUrl;
       _hasPlaybackError = false;
-    if (_isQueueMode) {
+
+      if (_isQueueMode) {
         _currentAlbumSongs = _queue.map((s) => Map<String, dynamic>.from(s as Map)).toList();
       } else {
         _currentAlbumSongs = albumSongs.map((s) => Map<String, dynamic>.from(s as Map)).toList();
       }
     });
-    
 
     _setupProcessingListener();
     if (!_vinylController.isAnimating) _vinylController.repeat();
@@ -677,15 +695,18 @@ void _queueSongNext(Map<String, dynamic> song, String albumName, int songIndex) 
 }
 
 Future<void> _syncCurrentIndexToAlbum() async {
+  if (_isQueueMode) {
+    print('🔄 _syncCurrentIndexToAlbum: In queue mode → skipping album sync');
+    return;
+  }
+
   if (_currentAlbum == null || _currentAlbumSongs == null || _currentAlbumSongs!.isEmpty) {
     setState(() => _currentSongIndex = 0);
     print('⚠️ _syncCurrentIndexToAlbum: No album or songs → reset to 0');
     return;
   }
 
-  // We don't have _currentSong map, so use title
   final currentTitle = _currentSongTitle.trim().toLowerCase();
-
   if (currentTitle.isEmpty) {
     setState(() => _currentSongIndex = 0);
     return;
@@ -704,9 +725,13 @@ Future<void> _syncCurrentIndexToAlbum() async {
     }
   }
 
-  // Fallback
-  setState(() => _currentSongIndex = 0);
-  print('⚠️ Current song title not found in album → reset to index 0');
+  // Only reset if we're really in album mode and title is missing
+  if (!_isQueueMode) {
+    setState(() => _currentSongIndex = 0);
+    print('⚠️ Current song title not found in album → reset to index 0');
+  } else {
+    print('⚠️ Current song title not found — but in queue mode, ignoring reset');
+  }
 }
 
 // ==================== CLEAN TUTORIALS (3 only) ====================
@@ -1003,63 +1028,108 @@ void _addToQueue(Map<String, dynamic> song, String albumName) {
 }
 
 
-StreamSubscription? _positionSubscription;
-StreamSubscription? _playbackEventSubscription;
+StreamSubscription? _playerStateSubscription;
+StreamSubscription? _sequenceSubscription;
 
 void _setupProcessingListener() {
-  _globalPlayer.playerStateStream.listen((state) {
+  _playerStateSubscription?.cancel();
+  _sequenceSubscription?.cancel();
+
+  _playerStateSubscription = _globalPlayer.playerStateStream.listen((state) {
     final currentIndex = _globalPlayer.currentIndex ?? 0;
     final sequenceState = _globalPlayer.sequenceState;
 
-    print('🎥 Event → ${state.processingState} | Index: $currentIndex | Current: ${_currentSongIndex}');
+    print('🎥 Event → ${state.processingState} | Index: $currentIndex | Current UI: $_currentSongIndex');
 
-    if (sequenceState != null && currentIndex != _currentSongIndex) {
-      final currentSource = sequenceState.effectiveSequence?[currentIndex];
-      final uri = currentSource?.tag?.extras?['url'] as String? ?? '';
+    // ── EARLY EXIT PROTECTION ──
+    if (sequenceState == null) return;
 
-      // Find song metadata
-      final songList = _isQueueMode ? _queue : _currentAlbumSongs ?? [];
-      final matchingSong = songList.firstWhere(
-        (s) => (s['url'] == uri || s['URL'] == uri),
-        orElse: () => <String, dynamic>{},
-      );
+    final effectiveSequence = sequenceState.effectiveSequence;
+    if (effectiveSequence == null || effectiveSequence.isEmpty) {
+      print('⚠️ Sequence is empty — skipping');
+      return;
+    }
 
-      setState(() {
-        _currentSongIndex = currentIndex;
-        _currentSongTitle = matchingSong['Title'] ?? matchingSong['title'] ?? "Unknown";
-        _currentSongArtUrl = matchingSong['artUrl'] ?? matchingSong['ArtUrl'];
-      });
+    // Prevent crash when lists are not loaded yet
+    final songList = _isQueueMode ? _queue : (_currentAlbumSongs ?? []);
+    if (songList.isEmpty) {
+      print('⚠️ Song list is empty (queue or album) — skipping update');
+      return;
+    }
 
-      print('✅ UI Updated → Title: $_currentSongTitle | Index: $currentIndex');
+    if (currentIndex != _currentSongIndex) {
+      final currentSource = effectiveSequence[currentIndex]; // Safe now
+      final mediaItem = currentSource.tag as MediaItem?;
+
+      final uri = (mediaItem?.extras?['url'] as String?)?.trim() ??
+                 mediaItem?.id?.trim() ?? '';
+
+      print('🔍 Looking for URI: "$uri" in ${songList.length} songs');
+
+      if (uri.isNotEmpty) {
+        try {
+          final matchingSong = songList.firstWhere(
+            (s) {
+              final songUrl = (s['url'] as String?)?.trim() ??
+                             (s['URL'] as String?)?.trim() ?? '';
+              return songUrl.isNotEmpty && songUrl == uri;
+            },
+            orElse: () => <String, dynamic>{},
+          );
+
+          setState(() {
+            _currentSongIndex = currentIndex;
+            _currentSongTitle = matchingSong['Title'] ??
+                               matchingSong['title'] ??
+                               mediaItem?.title ??
+                               "Unknown";
+            _currentSongArtUrl = matchingSong['artUrl'] ??
+                                matchingSong['ArtUrl'] ??
+                                matchingSong['songArtUrl'] ??
+                                mediaItem?.artUri?.toString();
+          });
+
+          print('✅ UI Updated → Title: "$_currentSongTitle" | Index: $currentIndex | QueueMode: $_isQueueMode');
+        } catch (e) {
+          print('❌ Error finding matching song: $e');
+        }
+      } else {
+        print('⚠️ No URI found | MediaItem Title: ${mediaItem?.title}');
+      }
     }
   });
 
-  // Also listen for completion to handle auto-advance cleanly
-  _globalPlayer.processingStateStream.listen((processingState) {
-    if (processingState == ProcessingState.completed) {
-      // Optional: handle end of queue/album
+  _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((sequenceState) {
+    if (sequenceState != null) {
+      final currentIndex = _globalPlayer.currentIndex ?? 0;
+      final total = sequenceState.effectiveSequence?.length ?? 0;
+      print('🔄 Sequence changed → Current index: $currentIndex | Total: $total');
     }
   });
 }
-  @override
-  void dispose() {
-    _processingSubscription?.cancel();
-    _playbackEventSubscription?.cancel();
-    _globalPlayer.dispose();
-    _boneStaggerController.dispose();
-    _pageController.dispose();
-    _videoController.dispose();
-    _vinylController.dispose();
-    _logoGlowController.dispose();
-    _visualizerController.dispose();
-    _livePulseController.dispose();
-    _deepLinkSubscription?.cancel();
-    super.dispose();
-    for (var controller in _albumGlowControllers.values) {
-      controller.dispose();
-    }
-    super.dispose();
+@override
+void dispose() {
+  _playerStateSubscription?.cancel();
+  _sequenceSubscription?.cancel();
+  _processingSubscription?.cancel();        // keep if you still declare it
+  _playbackEventSubscription?.cancel();     // safe to keep even if unused
+
+  _globalPlayer.dispose();
+  _boneStaggerController.dispose();
+  _pageController.dispose();
+  _videoController.dispose();
+  _vinylController.dispose();
+  _logoGlowController.dispose();
+  _visualizerController.dispose();
+  _livePulseController.dispose();
+  _deepLinkSubscription?.cancel();
+
+  for (var controller in _albumGlowControllers.values) {
+    controller.dispose();
   }
+
+  super.dispose();   // Only call this once at the end
+}
 
 Future<void> _handleSongCompletion() async {
   if (_isQueueMode && _queue.isNotEmpty) {
@@ -1094,6 +1164,21 @@ Future<void> skipPrevious() async {
     await _globalPlayer.seek(Duration.zero, index: prevIndex);
   } else {
     await _globalPlayer.seek(Duration.zero); // Restart current
+  }
+}
+
+void _refreshQueueUI() {
+  if (mounted) {
+    setState(() {});
+  }
+}
+
+void _forceQueueRebuild() {
+  if (!mounted) return;
+  
+  // Only rebuild if we're in queue mode
+  if (_isQueueMode) {
+    setState(() {});
   }
 }
 
@@ -2042,6 +2127,7 @@ Expanded(
               )
             : ListView.builder(
                 padding: const EdgeInsets.all(12),
+                key: ValueKey('queue_${_queue.length}_${_isQueueMode ? "q" : "a"}'),
                 itemCount: _queue.length,
                 itemBuilder: (context, index) {
                   final song = _queue[index] as Map<String, dynamic>;
@@ -2050,7 +2136,6 @@ Expanded(
                                "Unknown Song";
                   final album = song['albumName'] as String? ?? "";
                   final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-
                   return ListTile(
                     leading: ClipRRect(
                       borderRadius: BorderRadius.circular(8),
@@ -2074,27 +2159,45 @@ Expanded(
                     onTap: () async {
                       print("🎯 Queue Tap → Title: '$title' | Index: $index");
 
-                      final tappedSong = Map<String, dynamic>.from(song);
+                      if (index < 0 || index >= _queue.length) return;
 
-                      // Remove songs before and including the tapped one
+                      // Allow queue taps even if a song is loading (but still prevent spam)
+                      if (_isPlayingNewSong && !_isQueueMode) {
+                        print('⏳ Ignoring rapid non-queue tap');
+                        return;
+                      }
+
+                      final tappedSong = Map<String, dynamic>.from(_queue[index]);
+
+                      // Remove songs before tapped one
                       setState(() {
-                        if (index + 1 <= _queue.length) {
-                          _queue.removeRange(0, index + 1);
-                        } else {
-                          _queue.clear();
+                        if (index > 0) {
+                          _queue.removeRange(0, index);
                         }
                       });
 
-                      print('🗑️ Consumed up to tapped song → New queue size: ${_queue.length}');
+                      print('🗑️ Removed first $index songs → New queue size: ${_queue.length}');
 
                       await _playSong(
-                        tappedSong['albumName'] as String? ?? _currentAlbum ?? "Unknown",
-                        0,  // Always start at 0 in the remaining queue
+                        tappedSong['albumName'] as String? ?? "Central",
+                        0,
                         directUrl: tappedSong['url'] as String?,
-                        titleToPlay: title,
-                        artUrl: artUrl,
+                        titleToPlay: tappedSong['title'] as String? ?? tappedSong['Title'] as String?,
+                        artUrl: tappedSong['artUrl'] as String? ?? tappedSong['songArtUrl'] as String?,
                         fromQueue: true,
                       );
+
+                      // Remove the played song
+                      setState(() {
+                        if (_queue.isNotEmpty) {
+                          _queue.removeAt(0);
+                        }
+                      });
+
+                      print('🗑️ Removed played song → Final queue size: ${_queue.length}');
+
+                      // Force rebuild
+                      Future.delayed(const Duration(milliseconds: 100), _forceQueueRebuild);
                     },
                     onLongPress: () => _showQueueSongOptions(song, index),
                   );
