@@ -131,14 +131,27 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late PageController _pageController;
   late AnimationController _boneStaggerController;
 
-  bool _ignoreProcessingListener = false;
-  bool _ignorePendingTitle = false;
-  StreamSubscription? _processingSubscription;
-  StreamSubscription? _playbackEventSubscription;
-  int _lastProcessedQueueIndex = 0;
-  int _previousIndex = 0;  // optional     // ← Add this line
+  
+  List<Map<String, dynamic>> _queue = [];           // Single source of truth
+  int _currentSongIndex = 0;
   String _currentSongTitle = "Play song or swipe left for queue";
   String? _currentSongArtUrl;
+  String? _currentAlbum;
+  List<Map<String, dynamic>>? _currentAlbumSongs;
+  bool _isPlayingNewSong = false;
+  int? _lastPlayCallTime;
+  bool _hasPlaybackError = false;
+
+  // Listeners
+  StreamSubscription? _processingSubscription;
+  StreamSubscription? _sequenceSubscription;
+
+
+  bool _ignoreProcessingListener = false;
+  bool _ignorePendingTitle = false;
+  StreamSubscription? _playbackEventSubscription;
+  int _lastProcessedQueueIndex = 0;
+  int _previousIndex = 0;  // optional     // ← Add this linel;
   String? _selectedAlbum;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -147,8 +160,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _isLivestreamActive = false;
   String _livestreamUrl = "https://www.youtube.com/@melodicsol/live";
   String? _errorMessage;
-  String? _currentAlbum;
-  int _currentSongIndex = -1;
   LoopMode _loopMode = LoopMode.off;
   bool _isShuffled = false;
   String? _pendingSongTitle;
@@ -156,17 +167,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   int? _pendingSongIndex;
   bool _videoInitialized = false;
   String? _videoError;
-  bool _hasPlaybackError = false;
   int _currentPlayId = 0;
   DateTime? _lastPlayCall;
   bool _isQueueMode = false;
-  int? _lastPlayCallTime;
-  bool _isPlayingNewSong = false;
   String _lastForcedTitle = '';
   // NEW: Support for "Play song next" + Full Queue
   String? _nextUpAlbum;
-  int? _nextUpIndex;
-  List<Map<String, dynamic>> _queue = [];        // ← Add this line
+  int? _nextUpIndex;        // ← Add this line
   // ====================== PLAYLISTS ======================
   List<Map<String, dynamic>> _playlists = [];
   String? _currentPlaylistId;
@@ -178,7 +185,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _combineModes = false;
   String? _currentViewedAlbum;   // ← Add this  
   bool _isQueueTutorialShowing = false;
-  List<Map<String, dynamic>>? _currentAlbumSongs;
    // Add this if missing
 
   Future<bool> hasEntitlement(String entitlementId) async {
@@ -552,15 +558,14 @@ Future<void> _playSong(
   String albumName,
   int songIndex, {
   bool fromQueue = false,
-  String? directUrl,
+  String? directUrl,        // Keep for compatibility with existing calls
   String? titleToPlay,
   String? artUrl,
 }) async {
-  print("🎵 _playSong CALLED → Album: $albumName | Index: $songIndex | FromQueue: $fromQueue");
+  print("🎵 _playSong (QUEUE ONLY) → Album: $albumName | Index: $songIndex");
 
   final now = DateTime.now().millisecondsSinceEpoch;
-  if (_isPlayingNewSong) return;
-  if (now - (_lastPlayCallTime ?? 0) < 300) return;
+  if (_isPlayingNewSong || (now - (_lastPlayCallTime ?? 0) < 300)) return;
 
   _lastPlayCallTime = now;
   _isPlayingNewSong = true;
@@ -569,77 +574,59 @@ Future<void> _playSong(
     await _globalPlayer.stop();
     await Future.delayed(const Duration(milliseconds: 120));
 
-    List<AudioSource> sources = [];
-    int targetIndex = 0;
+    final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
+    if (albumSongs.isEmpty) return;
+
+    // === QUEUE-ONLY LOGIC ===
+    List<Map<String, dynamic>> newQueue = albumSongs.map((s) => Map<String, dynamic>.from(s)).toList();
 
     if (fromQueue && _queue.isNotEmpty) {
-      // === CLEAN REBUILD: tapped song becomes the new first song ===
-      final startIdx = songIndex.clamp(0, _queue.length - 1);
-      _queue = _queue.sublist(startIdx);
-      _isQueueMode = true;
-      targetIndex = 0;
-
-      _previousIndex = 0;
-
-      for (var item in _queue) {
-        sources.add(_createHlsSource(item, albumName));
-      }
-
-      print('✅ QUEUE REBUILT: ${_queue.length} songs | Starting at index 0 (was originally $songIndex)');
-      print('🎵 First 3 titles: ${_queue.take(3).map((s) => s['title'] ?? s['Title'] ?? "???").toList()}');
+      // Preserve existing queue when tapping from queue view
+      _queue = newQueue;
     } else {
-      // Album mode
-      _isQueueMode = false;
-      final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
-      for (var song in albumSongs) {
-        sources.add(_createHlsSource(song, albumName));
-      }
-      targetIndex = songIndex.clamp(0, sources.length - 1);
-      print('✅ ALBUM MODE: ${sources.length} songs | Starting at $targetIndex');
+      _queue = newQueue;
     }
 
-    final queueSource = ConcatenatingAudioSource(children: sources);
+    // Slice so tapped song becomes index 0
+    final startIdx = songIndex.clamp(0, _queue.length - 1);
+    _queue = _queue.sublist(startIdx);
 
-    print('🎯 Setting audio source | initialIndex: $targetIndex | total tracks: ${sources.length}');
+    // Build sources
+    final sources = _queue.map((item) => _createHlsSource(item, albumName)).toList();
+    final queueSource = ConcatenatingAudioSource(children: sources);
 
     await _globalPlayer.setAudioSource(
       queueSource,
-      initialIndex: targetIndex,
+      initialIndex: 0,
       initialPosition: Duration.zero,
     );
 
     await _globalPlayer.play();
 
     final displayTitle = titleToPlay ?? 
-        (_queue.isNotEmpty 
-            ? (_queue.first['title'] ?? _queue.first['Title'] ?? "Unknown") 
-            : "Unknown Song");
+        (_queue.isNotEmpty ? (_queue.first['title'] ?? _queue.first['Title'] ?? "Unknown") : "Unknown Song");
 
     _nowPlayingNotifier.value = NowPlayingInfo(
       title: displayTitle,
       artUrl: artUrl,
-      index: targetIndex,
+      index: 0,
     );
 
     setState(() {
       _currentAlbum = albumName;
-      _currentSongIndex = targetIndex;
+      _currentSongIndex = 0;
       _currentSongTitle = displayTitle;
       _currentSongArtUrl = artUrl;
       _hasPlaybackError = false;
-
-      if (_isQueueMode) {
-        _currentAlbumSongs = List<Map<String, dynamic>>.from(_queue);
-      } else {
-        final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
-        _currentAlbumSongs = albumSongs.map((s) => Map<String, dynamic>.from(s)).toList();
-      }
+      _currentAlbumSongs = List<Map<String, dynamic>>.from(_queue);
     });
 
     _setupProcessingListener();
+    _setupSmartQueueAutoRemove();
+
     if (!_vinylController.isAnimating) _vinylController.repeat();
 
-    print('▶️ Playback started | Title: $displayTitle | Queue size: ${_queue.length} | Index: $targetIndex');
+    print('▶️ Queue playback started | Title: $displayTitle | Queue size: ${_queue.length}');
   } catch (e) {
     print("❌ Playback Error: $e");
   } finally {
@@ -1044,7 +1031,6 @@ void _addToQueue(Map<String, dynamic> song, String albumName) {
 
 
 StreamSubscription? _playerStateSubscription;
-StreamSubscription? _sequenceSubscription;
 
 void _setupProcessingListener() {
   _processingSubscription?.cancel();
@@ -1119,32 +1105,17 @@ Future<void> _handleSongCompletion() async {
 void _setupSmartQueueAutoRemove() {
   _sequenceSubscription?.cancel();
 
-  int _previousIndex = 0;
-
   _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((SequenceState? state) {
-    if (state == null || !_isQueueMode || _queue.length <= 1) return;
+    if (state == null || _queue.length <= 1) return;
 
     final currentIndex = state.currentIndex ?? 0;
-
-    print('📊 SequenceState → currentIndex: $currentIndex | prev: $_previousIndex | queue: ${_queue.length}');
-
-    // Only remove when we have genuinely advanced (skip the initial and repeated events)
-    if (currentIndex > _previousIndex && currentIndex > 0) {
-      final songsToRemove = currentIndex - _previousIndex;
-
-      if (songsToRemove > 0 && songsToRemove <= _queue.length) {
-        setState(() {
-          _queue.removeRange(0, songsToRemove);
-          _currentSongIndex = 0;
-        });
-
-        _previousIndex = 0; // Reset relative to the new shortened queue
-
-        print('🗑️ Naturally removed $songsToRemove finished songs | Remaining: ${_queue.length}');
-        _forceQueueRebuild();
-      }
-    } else if (currentIndex == 0) {
-      _previousIndex = 0; // Reset when back at start
+    if (currentIndex > 0) {
+      setState(() {
+        _queue.removeRange(0, currentIndex);
+        _currentSongIndex = 0;
+      });
+      print('🗑️ Removed $currentIndex finished songs | Remaining: ${_queue.length}');
+      _forceQueueRebuild();
     }
   });
 }
