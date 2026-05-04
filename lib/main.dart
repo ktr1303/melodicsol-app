@@ -135,7 +135,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _ignorePendingTitle = false;
   StreamSubscription? _processingSubscription;
   StreamSubscription? _playbackEventSubscription;
-  int _lastProcessedQueueIndex = 0;  // optional     // ← Add this line
+  int _lastProcessedQueueIndex = 0;
+  int _previousIndex = 0;  // optional     // ← Add this line
   String _currentSongTitle = "Play song or swipe left for queue";
   String? _currentSongArtUrl;
   String? _selectedAlbum;
@@ -555,41 +556,37 @@ Future<void> _playSong(
   String? titleToPlay,
   String? artUrl,
 }) async {
-  print("🎵 _playSong CALLED → Album: $albumName | Index: $songIndex | FromQueue: $fromQueue | Queue size before: ${_queue.length}");
+  print("🎵 _playSong CALLED → Album: $albumName | Index: $songIndex | FromQueue: $fromQueue");
 
   final now = DateTime.now().millisecondsSinceEpoch;
-  if (_isPlayingNewSong) {
-    print('⏭️ Ignoring call - already playing new song');
-    return;
-  }
-  if (now - (_lastPlayCallTime ?? 0) < 300) {
-    print('⏭️ Ignoring rapid call');
-    return;
-  }
+  if (_isPlayingNewSong) return;
+  if (now - (_lastPlayCallTime ?? 0) < 300) return;
 
   _lastPlayCallTime = now;
   _isPlayingNewSong = true;
 
   try {
     await _globalPlayer.stop();
-    await Future.delayed(const Duration(milliseconds: 150));
+    await Future.delayed(const Duration(milliseconds: 120));
 
     List<AudioSource> sources = [];
     int targetIndex = 0;
 
     if (fromQueue && _queue.isNotEmpty) {
-      // === CLEAN REBUILD APPROACH ===
+      // === CLEAN REBUILD: tapped song becomes the new first song ===
       final startIdx = songIndex.clamp(0, _queue.length - 1);
-      _queue = _queue.sublist(startIdx);   // This is the key line
+      _queue = _queue.sublist(startIdx);
       _isQueueMode = true;
       targetIndex = 0;
+
+      _previousIndex = 0;
 
       for (var item in _queue) {
         sources.add(_createHlsSource(item, albumName));
       }
 
-      print('✅ QUEUE REBUILT: Started at original index $startIdx → Now ${_queue.length} songs | targetIndex = 0');
-      print('🎵 First 3 titles now: ${_queue.take(3).map((s) => s['title'] ?? s['Title'] ?? "???").toList()}');
+      print('✅ QUEUE REBUILT: ${_queue.length} songs | Starting at index 0 (was originally $songIndex)');
+      print('🎵 First 3 titles: ${_queue.take(3).map((s) => s['title'] ?? s['Title'] ?? "???").toList()}');
     } else {
       // Album mode
       _isQueueMode = false;
@@ -643,12 +640,13 @@ Future<void> _playSong(
     if (!_vinylController.isAnimating) _vinylController.repeat();
 
     print('▶️ Playback started | Title: $displayTitle | Queue size: ${_queue.length} | Index: $targetIndex');
-  } catch (e, stack) {
-    print("❌ Playback Error: $e\n$stack");
+  } catch (e) {
+    print("❌ Playback Error: $e");
   } finally {
     _isPlayingNewSong = false;
   }
 }
+
 AudioSource _createHlsSource(dynamic song, String albumName) {
   final url = (song['url'] as String?)?.trim() ?? '';
 
@@ -676,6 +674,7 @@ AudioSource _createHlsSource(dynamic song, String albumName) {
     ),
   );
 }
+
     // NEW: Queue song to play immediately after current one
   // Improved Queue Song Next
 void _queueSongNext(Map<String, dynamic> song, String albumName, int songIndex) {
@@ -856,8 +855,6 @@ Future<void> _showQueueTutorial() async {
     ),
   );
 }
-
-
 
 // Check livestream status from S3 JSON file
 Future<void> _checkLivestreamStatus() async {
@@ -1122,19 +1119,32 @@ Future<void> _handleSongCompletion() async {
 void _setupSmartQueueAutoRemove() {
   _sequenceSubscription?.cancel();
 
+  int _previousIndex = 0;
+
   _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((SequenceState? state) {
     if (state == null || !_isQueueMode || _queue.length <= 1) return;
 
     final currentIndex = state.currentIndex ?? 0;
-    if (currentIndex <= 0) return;
 
-    if (currentIndex < _queue.length) {
-      setState(() {
-        _queue.removeRange(0, currentIndex);
-        _currentSongIndex = 0;
-      });
-      print('🗑️ Naturally removed $currentIndex songs | Remaining: ${_queue.length}');
-      _forceQueueRebuild();
+    print('📊 SequenceState → currentIndex: $currentIndex | prev: $_previousIndex | queue: ${_queue.length}');
+
+    // Only remove when we have genuinely advanced (skip the initial and repeated events)
+    if (currentIndex > _previousIndex && currentIndex > 0) {
+      final songsToRemove = currentIndex - _previousIndex;
+
+      if (songsToRemove > 0 && songsToRemove <= _queue.length) {
+        setState(() {
+          _queue.removeRange(0, songsToRemove);
+          _currentSongIndex = 0;
+        });
+
+        _previousIndex = 0; // Reset relative to the new shortened queue
+
+        print('🗑️ Naturally removed $songsToRemove finished songs | Remaining: ${_queue.length}');
+        _forceQueueRebuild();
+      }
+    } else if (currentIndex == 0) {
+      _previousIndex = 0; // Reset when back at start
     }
   });
 }
