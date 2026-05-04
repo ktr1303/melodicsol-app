@@ -100,6 +100,14 @@ class MelodicSolApp extends StatelessWidget {
     );
   }
 }
+  class NowPlayingInfo {
+  final String title;
+  final String? artUrl;
+  final int index;
+  NowPlayingInfo({required this.title, this.artUrl, this.index = 0});
+}
+
+late final ValueNotifier<NowPlayingInfo> _nowPlayingNotifier;
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
   static Function(String albumName, int index)? playSongStatic;
@@ -168,7 +176,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _combineModes = false;
   String? _currentViewedAlbum;   // ← Add this  
   bool _isQueueTutorialShowing = false;
-  List<Map<String, dynamic>>? _currentAlbumSongs;   // Add this if missing
+  List<Map<String, dynamic>>? _currentAlbumSongs;
+   // Add this if missing
 
   Future<bool> hasEntitlement(String entitlementId) async {
   try {
@@ -311,8 +320,13 @@ final Map<String, double> _albumHorizontalOffset = {
 void initState() {
   super.initState();
 
-
+  _nowPlayingNotifier = ValueNotifier(NowPlayingInfo(title: "Play song or swipe left for queue"));
+  _nowPlayingNotifier.addListener(() {
+    if (mounted) setState(() {});   // forces full rebuild when title changes
+  });
+  /*_setupQueueAutoRemoveListener();*/
   _setupProcessingListener;
+  /*_setupQueueAutoRemoveListener();*/
   _pageController = PageController(initialPage: 1);
   _boneStaggerController = AnimationController(
       duration: const Duration(milliseconds: 1800), vsync: this)
@@ -543,53 +557,47 @@ Future<void> _playSong(
   print("🎵 _playSong CALLED → Album: $albumName | Index: $songIndex | FromQueue: $fromQueue");
 
   final now = DateTime.now().millisecondsSinceEpoch;
-
-  // Relaxed guard for queue taps (allow faster switching in queue)
   if (_isPlayingNewSong && !fromQueue) {
-    print('⏳ Ignoring duplicate/rapid non-queue call');
+    print('⏳ Ignoring non-queue call while busy');
     return;
   }
-  if (now - (_lastPlayCallTime ?? 0) < 350) {  // Reduced from 600ms
-    if (!fromQueue) {
-      print('⏳ Ignoring rapid call');
-      return;
-    }
+  if (now - (_lastPlayCallTime ?? 0) < 300) {
+    print('⏳ Ignoring rapid call');
+    return;
   }
 
   _lastPlayCallTime = now;
   _isPlayingNewSong = true;
 
   try {
-    // Stop current playback cleanly
     await _globalPlayer.stop();
-    await Future.delayed(const Duration(milliseconds: 150));
+    await Future.delayed(const Duration(milliseconds: 120));
 
-    final List<dynamic> albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
-
-    // Decide mode
     _isQueueMode = fromQueue && _queue.isNotEmpty;
 
     List<AudioSource> sources = [];
-    int targetIndex = songIndex.clamp(0, _isQueueMode ? _queue.length - 1 : albumSongs.length - 1);
+    int targetIndex = 0;
 
     if (_isQueueMode) {
       for (var item in _queue) {
         sources.add(_createHlsSource(item, albumName));
       }
-      print('✅ QUEUE MODE: ${sources.length} songs | Starting at $targetIndex');
+      targetIndex = songIndex.clamp(0, sources.length - 1);
+      print('✅ QUEUE MODE: ${sources.length} songs | Starting at index $targetIndex');
+      print('🎵 First 3 titles in _queue: ${_queue.take(3).map((s) => s['title'] ?? s['Title'] ?? "???").toList()}');
     } else {
+      // album mode...
+      final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
       for (var song in albumSongs) {
         sources.add(_createHlsSource(song, albumName));
       }
+      targetIndex = songIndex.clamp(0, sources.length - 1);
       print('✅ ALBUM MODE: ${sources.length} songs | Starting at $targetIndex');
     }
 
     final queueSource = ConcatenatingAudioSource(children: sources);
 
-    if (_isQueueMode && _queue.isEmpty) {
-      print('⚠️ Queue empty, falling back to album');
-      _isQueueMode = false;
-    }
+    print('🎯 Setting audio source | initialIndex: $targetIndex | total tracks: ${sources.length}');
 
     await _globalPlayer.setAudioSource(
       queueSource,
@@ -599,33 +607,35 @@ Future<void> _playSong(
 
     await _globalPlayer.play();
 
-    // === UI Updates ===
-    if (fromQueue) {
-      // Immediate rebuild + small delay for stability
-      _forceQueueRebuild();
-      Future.delayed(const Duration(milliseconds: 120), _forceQueueRebuild);
-    }
+    // === RELIABLE UI UPDATE ===
+    final displayTitle = titleToPlay ?? "Unknown Song";
+    _nowPlayingNotifier.value = NowPlayingInfo(
+      title: displayTitle,
+      artUrl: artUrl,
+      index: targetIndex,
+    );
 
     setState(() {
       _currentAlbum = albumName;
       _currentSongIndex = targetIndex;
-      _currentSongTitle = titleToPlay ?? "Unknown Song";
+      _currentSongTitle = displayTitle;
       _currentSongArtUrl = artUrl;
       _hasPlaybackError = false;
 
       if (_isQueueMode) {
-        _currentAlbumSongs = _queue.map((s) => Map<String, dynamic>.from(s as Map)).toList();
+        _currentAlbumSongs = List<Map<String, dynamic>>.from(_queue);
       } else {
-        _currentAlbumSongs = albumSongs.map((s) => Map<String, dynamic>.from(s as Map)).toList();
+        final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
+        _currentAlbumSongs = albumSongs.map((s) => Map<String, dynamic>.from(s)).toList();
       }
     });
 
     _setupProcessingListener();
     if (!_vinylController.isAnimating) _vinylController.repeat();
 
-    print('▶️ Playback started successfully at index $targetIndex');
-  } catch (e, stack) {
-    print("❌ Playback Error: $e\n$stack");
+    print('▶️ Playback started successfully | Title: $displayTitle | Queue size: ${_queue.length} | Index: $targetIndex');
+  } catch (e) {
+    print("❌ Playback Error: $e");
   } finally {
     _isPlayingNewSong = false;
   }
@@ -1032,78 +1042,33 @@ StreamSubscription? _playerStateSubscription;
 StreamSubscription? _sequenceSubscription;
 
 void _setupProcessingListener() {
-  _playerStateSubscription?.cancel();
-  _sequenceSubscription?.cancel();
+  _processingSubscription?.cancel();
 
-  _playerStateSubscription = _globalPlayer.playerStateStream.listen((state) {
-    final currentIndex = _globalPlayer.currentIndex ?? 0;
-    final sequenceState = _globalPlayer.sequenceState;
+  _processingSubscription = _globalPlayer.processingStateStream.listen((ProcessingState state) {
+    print("🎥 Event → $state | PlayerIndex: ${_globalPlayer.currentIndex} | UI Index: $_currentSongIndex | Title: $_currentSongTitle");
 
-    print('🎥 Event → ${state.processingState} | Index: $currentIndex | Current UI: $_currentSongIndex');
-
-    // ── EARLY EXIT PROTECTION ──
-    if (sequenceState == null) return;
-
-    final effectiveSequence = sequenceState.effectiveSequence;
-    if (effectiveSequence == null || effectiveSequence.isEmpty) {
-      print('⚠️ Sequence is empty — skipping');
-      return;
-    }
-
-    // Prevent crash when lists are not loaded yet
-    final songList = _isQueueMode ? _queue : (_currentAlbumSongs ?? []);
-    if (songList.isEmpty) {
-      print('⚠️ Song list is empty (queue or album) — skipping update');
-      return;
-    }
-
-    if (currentIndex != _currentSongIndex) {
-      final currentSource = effectiveSequence[currentIndex]; // Safe now
-      final mediaItem = currentSource.tag as MediaItem?;
-
-      final uri = (mediaItem?.extras?['url'] as String?)?.trim() ??
-                 mediaItem?.id?.trim() ?? '';
-
-      print('🔍 Looking for URI: "$uri" in ${songList.length} songs');
-
-      if (uri.isNotEmpty) {
-        try {
-          final matchingSong = songList.firstWhere(
-            (s) {
-              final songUrl = (s['url'] as String?)?.trim() ??
-                             (s['URL'] as String?)?.trim() ?? '';
-              return songUrl.isNotEmpty && songUrl == uri;
-            },
-            orElse: () => <String, dynamic>{},
-          );
-
-          setState(() {
-            _currentSongIndex = currentIndex;
-            _currentSongTitle = matchingSong['Title'] ??
-                               matchingSong['title'] ??
-                               mediaItem?.title ??
-                               "Unknown";
-            _currentSongArtUrl = matchingSong['artUrl'] ??
-                                matchingSong['ArtUrl'] ??
-                                matchingSong['songArtUrl'] ??
-                                mediaItem?.artUri?.toString();
-          });
-
-          print('✅ UI Updated → Title: "$_currentSongTitle" | Index: $currentIndex | QueueMode: $_isQueueMode');
-        } catch (e) {
-          print('❌ Error finding matching song: $e');
-        }
-      } else {
-        print('⚠️ No URI found | MediaItem Title: ${mediaItem?.title}');
+    // Auto-remove (safer)
+    if (_isQueueMode && _globalPlayer.sequenceState != null) {
+      final currentIndex = _globalPlayer.currentIndex ?? 0;
+      if (currentIndex > 0 && currentIndex <= _queue.length) {
+        setState(() {
+          _queue.removeRange(0, currentIndex);
+        });
+        print('🗑️ Auto-removed $currentIndex songs | New size: ${_queue.length}');
+        _forceQueueRebuild();
       }
     }
-  });
 
-  _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((sequenceState) {
-    if (sequenceState != null) {
-      final currentIndex = _globalPlayer.currentIndex ?? 0;
-      final total = sequenceState.effectiveSequence?.length ?? 0;
-      print('🔄 Sequence changed → Current index: $currentIndex | Total: $total');
+    // Force UI sync on every ready/buffering/completed
+    if (state == ProcessingState.ready || state == ProcessingState.buffering) {
+      final playerIndex = _globalPlayer.currentIndex;
+      if (playerIndex != null) {
+        setState(() {
+          _currentSongIndex = playerIndex;
+          // You can pull real title from metadata here later
+        });
+      }
+      _forceQueueRebuild();
     }
   });
 }
@@ -1146,6 +1111,34 @@ Future<void> _handleSongCompletion() async {
     await _globalPlayer.stop();
   }
 }
+/*
+void _setupQueueAutoRemoveListener() {
+  DateTime? lastRemovalTime;
+
+  _globalPlayer.sequenceStateStream.listen((SequenceState? state) {
+    if (state == null || !_isQueueMode || _queue.isEmpty) return;
+
+    final currentIndex = state.currentIndex ?? 0;
+    final now = DateTime.now();
+
+    // Stronger guards to prevent rapid-fire removals
+    if (currentIndex > _currentSongIndex && 
+        currentIndex <= _queue.length &&
+        _globalPlayer.processingState == ProcessingState.ready &&
+        (lastRemovalTime == null || now.difference(lastRemovalTime!) > const Duration(milliseconds: 800))) {
+
+      setState(() {
+        _queue.removeAt(0);
+      });
+
+      lastRemovalTime = now;
+      print('🗑️ Auto-removed 1 finished song | New size: ${_queue.length}');
+      _forceQueueRebuild();
+
+      _currentSongIndex = currentIndex - 1;
+    }
+  });
+}*/
 
 Future<void> skipNext() async {
   if (_isQueueMode && _queue.isNotEmpty) {
@@ -1175,11 +1168,8 @@ void _refreshQueueUI() {
 
 void _forceQueueRebuild() {
   if (!mounted) return;
-  
-  // Only rebuild if we're in queue mode
-  if (_isQueueMode) {
-    setState(() {});
-  }
+  setState(() {}); // Force full rebuild
+  print('🔄 Forced rebuild | Queue: ${_queue.length} | Mode: $_isQueueMode | Title: $_currentSongTitle');
 }
 
   void _toggleLoop() {
@@ -2074,14 +2064,17 @@ Widget _buildPlaylistsPage() {
   return Column(
     children: [
       // Now Playing Header
-      if (_currentSongTitle.isNotEmpty)
-        Padding(
+// Now Playing Header
+    ValueListenableBuilder<NowPlayingInfo>(
+      valueListenable: _nowPlayingNotifier,
+      builder: (context, info, child) {
+        return Padding(
           padding: const EdgeInsets.only(top: 40),
           child: ListTile(
             leading: ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: CachedNetworkImage(
-                imageUrl: _currentSongArtUrl ?? "",
+                imageUrl: info.artUrl ?? "",
                 width: 52,
                 height: 52,
                 fit: BoxFit.cover,
@@ -2089,7 +2082,7 @@ Widget _buildPlaylistsPage() {
               ),
             ),
             title: const Text("Now Playing", style: TextStyle(fontSize: 14, color: Colors.greenAccent)),
-            subtitle: Text(_currentSongTitle, style: const TextStyle(fontSize: 16)),
+            subtitle: Text(info.title, style: const TextStyle(fontSize: 16)),
             onTap: () {
               if (_currentAlbum != null) {
                 setState(() => _selectedAlbum = _currentAlbum);
@@ -2097,7 +2090,9 @@ Widget _buildPlaylistsPage() {
               }
             },
           ),
-        ),
+        );
+      },
+    ),
 
 // Queue List
 Expanded(
@@ -2158,55 +2153,33 @@ Expanded(
                     ),
                     onTap: () async {
                       print("🎯 Queue Tap → Title: '$title' | Index: $index");
-
                       if (index < 0 || index >= _queue.length) return;
-
-                      // Allow queue taps even if a song is loading (but still prevent spam)
-                      if (_isPlayingNewSong && !_isQueueMode) {
-                        print('⏳ Ignoring rapid non-queue tap');
-                        return;
-                      }
 
                       final tappedSong = Map<String, dynamic>.from(_queue[index]);
 
-                      // Remove songs before tapped one
-                      setState(() {
-                        if (index > 0) {
-                          _queue.removeRange(0, index);
-                        }
-                      });
-
-                      print('🗑️ Removed first $index songs → New queue size: ${_queue.length}');
+                      // === NO MORE REMOVING PREVIOUS SONGS ===
+                      // We keep the entire queue intact and just jump to the tapped song
+                      print('▶️ Jumping to queue index $index (queue size remains ${_queue.length})');
 
                       await _playSong(
                         tappedSong['albumName'] as String? ?? "Central",
-                        0,
+                        index,                    // ← Use original index (not 0)
+                        fromQueue: true,
                         directUrl: tappedSong['url'] as String?,
                         titleToPlay: tappedSong['title'] as String? ?? tappedSong['Title'] as String?,
                         artUrl: tappedSong['artUrl'] as String? ?? tappedSong['songArtUrl'] as String?,
-                        fromQueue: true,
                       );
 
-                      // Remove the played song
-                      setState(() {
-                        if (_queue.isNotEmpty) {
-                          _queue.removeAt(0);
-                        }
-                      });
-
-                      print('🗑️ Removed played song → Final queue size: ${_queue.length}');
-
-                      // Force rebuild
-                      Future.delayed(const Duration(milliseconds: 100), _forceQueueRebuild);
+                      _forceQueueRebuild();
                     },
                     onLongPress: () => _showQueueSongOptions(song, index),
                   );
-                },
-              ),
+          },
+       ),
       ),
-    ],
+     ],
+   ),
   ),
-),
 
       // === SAVED PLAYLISTS SECTION ===
       Container(
