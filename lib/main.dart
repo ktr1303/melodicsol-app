@@ -134,7 +134,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _ignoreProcessingListener = false;
   bool _ignorePendingTitle = false;
   StreamSubscription? _processingSubscription;
-  StreamSubscription? _playbackEventSubscription;  // optional     // ← Add this line
+  StreamSubscription? _playbackEventSubscription;
+  int _lastProcessedQueueIndex = 0;  // optional     // ← Add this line
   String _currentSongTitle = "Play song or swipe left for queue";
   String? _currentSongArtUrl;
   String? _selectedAlbum;
@@ -324,9 +325,9 @@ void initState() {
   _nowPlayingNotifier.addListener(() {
     if (mounted) setState(() {});   // forces full rebuild when title changes
   });
-  /*_setupQueueAutoRemoveListener();*/
   _setupProcessingListener;
-  /*_setupQueueAutoRemoveListener();*/
+  _setupSmartQueueAutoRemove();
+  _setupCompletedListener();
   _pageController = PageController(initialPage: 1);
   _boneStaggerController = AnimationController(
       duration: const Duration(milliseconds: 1800), vsync: this)
@@ -577,6 +578,10 @@ Future<void> _playSong(
 
     List<AudioSource> sources = [];
     int targetIndex = 0;
+    if (_isQueueMode) {
+    _lastProcessedQueueIndex = targetIndex;
+    print('🔄 Queue mode started at index $targetIndex → lastProcessed = $targetIndex');
+    }
 
     if (_isQueueMode) {
       for (var item in _queue) {
@@ -594,6 +599,11 @@ Future<void> _playSong(
       targetIndex = songIndex.clamp(0, sources.length - 1);
       print('✅ ALBUM MODE: ${sources.length} songs | Starting at $targetIndex');
     }
+    // Inside the setState block, after setting _isQueueMode and _currentSongIndex
+      if (_isQueueMode) {
+        _lastProcessedQueueIndex = targetIndex;   // This is key
+        print('🔄 Queue mode started at index $targetIndex → lastProcessed = $targetIndex');
+      }
 
     final queueSource = ConcatenatingAudioSource(children: sources);
 
@@ -1047,7 +1057,7 @@ void _setupProcessingListener() {
   _processingSubscription = _globalPlayer.processingStateStream.listen((ProcessingState state) {
     print("🎥 Event → $state | PlayerIndex: ${_globalPlayer.currentIndex} | UI Index: $_currentSongIndex | Title: $_currentSongTitle");
 
-    // Auto-remove (safer)
+   /* // Auto-remove (safer)
     if (_isQueueMode && _globalPlayer.sequenceState != null) {
       final currentIndex = _globalPlayer.currentIndex ?? 0;
       if (currentIndex > 0 && currentIndex <= _queue.length) {
@@ -1057,15 +1067,14 @@ void _setupProcessingListener() {
         print('🗑️ Auto-removed $currentIndex songs | New size: ${_queue.length}');
         _forceQueueRebuild();
       }
-    }
+    }*/
 
     // Force UI sync on every ready/buffering/completed
-    if (state == ProcessingState.ready || state == ProcessingState.buffering) {
+    if (state == ProcessingState.ready || state == ProcessingState.buffering || state == ProcessingState.completed) {
       final playerIndex = _globalPlayer.currentIndex;
-      if (playerIndex != null) {
+      if (playerIndex != null && mounted) {
         setState(() {
           _currentSongIndex = playerIndex;
-          // You can pull real title from metadata here later
         });
       }
       _forceQueueRebuild();
@@ -1111,34 +1120,51 @@ Future<void> _handleSongCompletion() async {
     await _globalPlayer.stop();
   }
 }
-/*
-void _setupQueueAutoRemoveListener() {
-  DateTime? lastRemovalTime;
 
-  _globalPlayer.sequenceStateStream.listen((SequenceState? state) {
+void _setupSmartQueueAutoRemove() {
+  _sequenceSubscription?.cancel();
+
+  _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((SequenceState? state) {
     if (state == null || !_isQueueMode || _queue.isEmpty) return;
 
     final currentIndex = state.currentIndex ?? 0;
-    final now = DateTime.now();
 
-    // Stronger guards to prevent rapid-fire removals
-    if (currentIndex > _currentSongIndex && 
-        currentIndex <= _queue.length &&
-        _globalPlayer.processingState == ProcessingState.ready &&
-        (lastRemovalTime == null || now.difference(lastRemovalTime!) > const Duration(milliseconds: 800))) {
+    print('📊 SequenceState → currentIndex: $currentIndex | lastProcessed: $_lastProcessedQueueIndex | queueSize: ${_queue.length}');
 
-      setState(() {
-        _queue.removeAt(0);
-      });
+    // Only act when player has genuinely moved forward
+    if (currentIndex > _lastProcessedQueueIndex && currentIndex > 0) {
+      final songsToRemove = currentIndex - _lastProcessedQueueIndex;
 
-      lastRemovalTime = now;
-      print('🗑️ Auto-removed 1 finished song | New size: ${_queue.length}');
-      _forceQueueRebuild();
+      if (songsToRemove > 0 && songsToRemove <= _queue.length) {
+        setState(() {
+          _queue.removeRange(0, songsToRemove);
+          _currentSongIndex = 0;
+        });
 
-      _currentSongIndex = currentIndex - 1;
+        _lastProcessedQueueIndex = 0;   // Now safe because we reset relative index
+
+        print('🗑️ Smart-removed $songsToRemove songs | New size: ${_queue.length}');
+        _forceQueueRebuild();
+      }
     }
   });
-}*/
+}
+
+void _setupCompletedListener() {
+  // Optional extra safety net
+  _globalPlayer.processingStateStream.listen((ProcessingState state) {
+    if (state == ProcessingState.completed && _isQueueMode && _queue.isNotEmpty) {
+      setState(() {
+        if (_queue.isNotEmpty) {
+          _queue.removeAt(0);
+          _currentSongIndex = 0;
+        }
+      });
+      print('✅ Completed → removed 1 song from front');
+      _forceQueueRebuild();
+    }
+  });
+}
 
 Future<void> skipNext() async {
   if (_isQueueMode && _queue.isNotEmpty) {
