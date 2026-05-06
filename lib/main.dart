@@ -134,7 +134,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late AnimationController _boneStaggerController;
 
   
-  List<Map<String, dynamic>> _queue = [];           // Single source of truth
+  List<Map<String, dynamic>> _queue = [];
+  int _selectedIndex = 0;           // Single source of truth
   int _currentSongIndex = 0;
   String _currentSongTitle = "Play song or swipe left for queue";
   String? _currentSongArtUrl;
@@ -1367,30 +1368,56 @@ void _refreshQueueUI() {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final screenHeight = MediaQuery.of(context).size.height;
-    if (_isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator(color: Colors.greenAccent)));
-    if (_errorMessage != null) {
-      return Scaffold(body: Center(child: Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent))));
-    }
+@override
+Widget build(BuildContext context) {
+  final screenHeight = MediaQuery.of(context).size.height;
 
-    return Scaffold(
-      body: Stack(
-        children: [
-          PageView(
-            controller: _pageController,
-            children: [
-              _buildSocialPage(),
-              _buildMainAlbumPage(screenHeight),
-              _buildPlaylistsPage(),
-            ],
-          ),
-          if (_showVisualizer) _buildFullScreenVisualizer(),
-        ],
-      ),
+  if (_isLoading) {
+    return const Scaffold(
+      body: Center(child: CircularProgressIndicator(color: Colors.greenAccent)),
     );
   }
+
+  if (_errorMessage != null) {
+    return Scaffold(
+      body: Center(child: Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent))),
+    );
+  }
+
+  return Scaffold(
+    body: Stack(
+      children: [
+        // Main Page Navigation
+        PageView(
+          controller: _pageController,
+          onPageChanged: (index) {
+            setState(() {
+              _selectedIndex = index;
+            });
+          },
+          children: [
+            _buildSocialPage(),
+            _buildMainAlbumPage(screenHeight),
+            _buildPlaylistsPage(),
+          ],
+        ),
+
+        // Persistent Player ONLY on:
+        //   - Actual Album Detail (song list) → when _currentAlbum != null
+        //   - Queue page
+        if ((_selectedIndex == 1 && _currentAlbum != null) || _selectedIndex == 2)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _buildFullPlayer(),
+          ),
+
+        if (_showVisualizer) _buildFullScreenVisualizer(),
+      ],
+    ),
+  );
+}
 
 
   // ====================== FULL SCREEN VISUALIZER ======================
@@ -1939,131 +1966,6 @@ return Column(
         },
       ),
     ),
-
-    // === CUSTOM PROGRESS BAR & CONTROLS (unchanged) ===
-    Container(
-      decoration: BoxDecoration(
-        color: albumTheme.withOpacity(0.18),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 22),
-      child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _currentSongTitle.isEmpty ? "Nothing playing" : _currentSongTitle,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-
-            // Custom Progress Bar
-            StreamBuilder<Duration>(
-              stream: _globalPlayer.positionStream,
-              builder: (context, snapshot) {
-                final position = snapshot.data ?? _position;
-                final progress = _duration.inMilliseconds > 0
-                    ? (position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0)
-                    : 0.0;
-                return GestureDetector(
-                  onTapDown: (details) {
-                    if (_duration.inMilliseconds > 0) {
-                      final RenderBox box = context.findRenderObject() as RenderBox;
-                      final localX = details.localPosition.dx;
-                      final width = box.size.width;
-                      final newProgress = (localX / width).clamp(0.0, 1.0);
-                      _globalPlayer.seek(Duration(
-                        milliseconds: (newProgress * _duration.inMilliseconds).toInt(),
-                      ));
-                    }
-                  },
-                  onHorizontalDragUpdate: (details) {
-                    if (_duration.inMilliseconds > 0) {
-                      final RenderBox box = context.findRenderObject() as RenderBox;
-                      final localX = details.localPosition.dx;
-                      final width = box.size.width;
-                      final newProgress = (localX / width).clamp(0.0, 1.0);
-                      _globalPlayer.seek(Duration(
-                        milliseconds: (newProgress * _duration.inMilliseconds).toInt(),
-                      ));
-                    }
-                  },
-                  child: Column(
-                    children: [
-                      Container(
-                        height: 6,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: Colors.white24,
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: FractionallySizedBox(
-                          alignment: Alignment.centerLeft,
-                          widthFactor: progress,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: albumTheme,
-                              borderRadius: BorderRadius.circular(3),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(_formatDuration(position), style: const TextStyle(fontSize: 12, color: Colors.white54)),
-                          Text(_formatDuration(_duration), style: const TextStyle(fontSize: 12, color: Colors.white54)),
-                        ],
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 12),
-
-            // Controls
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                IconButton(icon: const Icon(Icons.skip_previous, size: 32), color: albumTheme, onPressed: _skipPrevious),
-                IconButton(
-                  icon: Icon(Icons.shuffle, size: 28, color: _globalPlayer.shuffleModeEnabled ? albumTheme : Colors.white54),
-                  onPressed: () async {
-                    await _globalPlayer.setShuffleModeEnabled(!_globalPlayer.shuffleModeEnabled);
-                    setState(() {});
-                  },
-                ),
-                IconButton(
-                  icon: Icon(_globalPlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 48, color: albumTheme),
-                  onPressed: () async {
-                    if (_globalPlayer.playing) await _globalPlayer.pause();
-                    else await _globalPlayer.play();
-                  },
-                ),
-                IconButton(
-                  icon: Icon(_globalPlayer.loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat, size: 28, color: _globalPlayer.loopMode != LoopMode.off ? albumTheme : Colors.white54),
-                  onPressed: () {
-                    if (_globalPlayer.loopMode == LoopMode.off) _globalPlayer.setLoopMode(LoopMode.all);
-                    else if (_globalPlayer.loopMode == LoopMode.all) _globalPlayer.setLoopMode(LoopMode.one);
-                    else _globalPlayer.setLoopMode(LoopMode.off);
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.skip_next, size: 32),
-                  color: albumTheme,
-                  onPressed: _skipNext,   // ← Use the new method
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    ),
   ],
 );
   }
@@ -2105,12 +2007,13 @@ Widget _buildPlaylistsPage() {
           IconButton(
             icon: const Icon(Icons.playlist_remove, color: Colors.redAccent),
             onPressed: _clearQueue,
+            tooltip: "Clear Queue",
           ),
       ],
     ),
     body: Column(
       children: [
-        // Live Queue Content
+        // === QUEUE LIST ===
         Expanded(
           child: _queue.isEmpty
               ? const Center(
@@ -2119,26 +2022,32 @@ Widget _buildPlaylistsPage() {
                     children: [
                       Icon(Icons.queue_music, size: 90, color: Colors.white38),
                       SizedBox(height: 20),
-                      Text("Queue is empty", style: TextStyle(fontSize: 22, color: Colors.white70)),
-                      SizedBox(height: 12),
                       Text(
-                        "Long-press any song → Add to Queue",
-                        style: TextStyle(color: Colors.white54),
+                        "Queue is empty",
+                        style: TextStyle(fontSize: 22, color: Colors.white70),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        "Long-press a song from an album → 'Add to Queue'",
                         textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white54),
                       ),
                     ],
                   ),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 180), // Space for player
+                  padding: const EdgeInsets.only(bottom: 20),
+                  key: ValueKey('queue_${_queue.length}_${_isQueueMode ? "q" : "a"}'),
                   itemCount: _queue.length,
                   itemBuilder: (context, index) {
                     final song = _queue[index] as Map<String, dynamic>;
-                    final title = (song['title'] as String?) ?? (song['Title'] as String?) ?? "Unknown Song";
+                    final title = (song['title'] as String?) ??
+                        (song['Title'] as String?) ??
+                        "Unknown Song";
                     final album = song['albumName'] as String? ?? "";
                     final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
 
-                    final isPlayingThis = _isQueueMode && index == _currentSongIndex;
+                    final isCurrentlyPlaying = _isQueueMode && index == _currentSongIndex;
 
                     return ListTile(
                       leading: ClipRRect(
@@ -2151,30 +2060,222 @@ Widget _buildPlaylistsPage() {
                           errorWidget: (_, __, ___) => const Icon(Icons.music_note, size: 52, color: Colors.white38),
                         ),
                       ),
-                      title: Text(title, style: TextStyle(fontWeight: isPlayingThis ? FontWeight.bold : null)),
-                      subtitle: Text(album.isNotEmpty ? album : "Unknown Album"),
+                      title: Text(
+                        title,
+                        style: TextStyle(
+                          fontWeight: isCurrentlyPlaying ? FontWeight.bold : FontWeight.normal,
+                          color: isCurrentlyPlaying ? Colors.deepPurpleAccent : Colors.white,
+                        ),
+                      ),
+                      subtitle: Text(
+                        album.isNotEmpty ? album : "Unknown Album",
+                        style: const TextStyle(color: Colors.white54),
+                      ),
                       trailing: IconButton(
                         icon: const Icon(Icons.close),
                         onPressed: () => setState(() => _queue.removeAt(index)),
                       ),
-                      onTap: () => _playSong(
-                        album,
-                        index,
-                        fromQueue: true,
-                        directUrl: song['url'] as String?,
-                        titleToPlay: title,
-                        artUrl: artUrl,
-                      ),
+                      onTap: () async {
+                        print("🔥 QUEUE TAP FIRED → Title: '$title' | Index: $index");
+                        final tappedSong = Map<String, dynamic>.from(_queue[index]);
+                        await _playSong(
+                          tappedSong['albumName'] as String? ?? "Central",
+                          index,
+                          fromQueue: true,
+                          directUrl: tappedSong['url'] as String?,
+                          titleToPlay: title,
+                          artUrl: artUrl,
+                        );
+                        _forceQueueRebuild();
+                      },
                       onLongPress: () => _showQueueSongOptions(song, index),
                     );
                   },
                 ),
         ),
+
+        // === SAVED PLAYLISTS SECTION (Simplified) ===
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: const BoxDecoration(
+            color: Colors.black87,
+            border: Border(top: BorderSide(color: Colors.white24)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text("Saved Playlists", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+
+              // Free Songs Playlist
+              _buildFreeSongsPlaylistTile(),
+
+              const SizedBox(height: 16),
+
+              // New Playlist Button
+              ElevatedButton.icon(
+                icon: const Icon(Icons.add),
+                label: const Text("New Playlist"),
+                onPressed: _showCreatePlaylistDialog,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.deepPurpleAccent,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 50),
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
     ),
+  );
+}
 
-    // FIXED BOTTOM PLAYER — EXACT SAME AS ALBUM DETAIL
-    bottomSheet: _buildFullPlayer(),
+/// Persistent Full Player - Used on BOTH Album Detail and Queue pages
+Widget _buildFullPlayer() {
+  final albumTheme = _getAlbumThemeColor(_currentAlbum ?? "Central");
+
+  return Container(
+    decoration: BoxDecoration(
+      color: albumTheme.withOpacity(0.18),
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    padding: const EdgeInsets.fromLTRB(16, 14, 16, 22),
+    child: SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            _currentSongTitle.isEmpty ? "Nothing playing" : _currentSongTitle,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+
+          // Custom Progress Bar
+          StreamBuilder<Duration>(
+            stream: _globalPlayer.positionStream,
+            builder: (context, snapshot) {
+              final position = snapshot.data ?? _position;
+              final progress = _duration.inMilliseconds > 0
+                  ? (position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0)
+                  : 0.0;
+              return GestureDetector(
+                onTapDown: (details) {
+                  if (_duration.inMilliseconds > 0) {
+                    final RenderBox box = context.findRenderObject() as RenderBox;
+                    final localX = details.localPosition.dx;
+                    final width = box.size.width;
+                    final newProgress = (localX / width).clamp(0.0, 1.0);
+                    _globalPlayer.seek(Duration(
+                      milliseconds: (newProgress * _duration.inMilliseconds).toInt(),
+                    ));
+                  }
+                },
+                onHorizontalDragUpdate: (details) {
+                  if (_duration.inMilliseconds > 0) {
+                    final RenderBox box = context.findRenderObject() as RenderBox;
+                    final localX = details.localPosition.dx;
+                    final width = box.size.width;
+                    final newProgress = (localX / width).clamp(0.0, 1.0);
+                    _globalPlayer.seek(Duration(
+                      milliseconds: (newProgress * _duration.inMilliseconds).toInt(),
+                    ));
+                  }
+                },
+                child: Column(
+                  children: [
+                    Container(
+                      height: 6,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: FractionallySizedBox(
+                        alignment: Alignment.centerLeft,
+                        widthFactor: progress,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: albumTheme,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(_formatDuration(position), style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                        Text(_formatDuration(_duration), style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+
+          // Controls
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.skip_previous, size: 32),
+                color: albumTheme,
+                onPressed: _skipPrevious,
+              ),
+              IconButton(
+                icon: Icon(Icons.shuffle, size: 28, color: _globalPlayer.shuffleModeEnabled ? albumTheme : Colors.white54),
+                onPressed: () async {
+                  await _globalPlayer.setShuffleModeEnabled(!_globalPlayer.shuffleModeEnabled);
+                  setState(() {});
+                },
+              ),
+              IconButton(
+                icon: Icon(
+                  _globalPlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                  size: 48,
+                  color: albumTheme,
+                ),
+                onPressed: () async {
+                  if (_globalPlayer.playing) {
+                    await _globalPlayer.pause();
+                  } else {
+                    await _globalPlayer.play();
+                  }
+                },
+              ),
+              IconButton(
+                icon: Icon(
+                  _globalPlayer.loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat,
+                  size: 28,
+                  color: _globalPlayer.loopMode != LoopMode.off ? albumTheme : Colors.white54,
+                ),
+                onPressed: () {
+                  if (_globalPlayer.loopMode == LoopMode.off) {
+                    _globalPlayer.setLoopMode(LoopMode.all);
+                  } else if (_globalPlayer.loopMode == LoopMode.all) {
+                    _globalPlayer.setLoopMode(LoopMode.one);
+                  } else {
+                    _globalPlayer.setLoopMode(LoopMode.off);
+                  }
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.skip_next, size: 32),
+                color: albumTheme,
+                onPressed: _skipNext,
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
   );
 }
 
@@ -4052,7 +4153,6 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
       ),
     );
   }
-  
   // NEW: Check if a song should be unlocked based on email verification
   // RELIABLE email unlock check (ignores flaky Firebase session)
   Future<bool> _isSongUnlocked(bool emailUnlock, bool isFree) async {
@@ -4064,5 +4164,5 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
     
     print("🔓 Email unlock check → Confirmed in prefs: $isConfirmed");
     return isConfirmed;
-  }  
+  }
 }
