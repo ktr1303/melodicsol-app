@@ -331,7 +331,6 @@ final Map<String, double> _albumHorizontalOffset = {
 @override
 void initState() {
   super.initState();
-
   _nowPlayingNotifier = ValueNotifier(NowPlayingInfo(title: "Play song or swipe left for queue"));
   _nowPlayingNotifier.addListener(() {
     if (mounted) setState(() {});   // forces full rebuild when title changes
@@ -347,6 +346,7 @@ void initState() {
     _fetchAlbums().then((_) {
     _createFreeSongsPlaylist();     // ← This will now read isFree correctly
     _showMainAlbumTutorial();
+    _loadPlaylists();
   }
   
   // This helps just_audio_background know the current state
@@ -498,15 +498,17 @@ Future<void> _handleDeepLink(Uri? uri) async {
 Map<String, bool> _albumPurchaseConfig = {};
 
 
-  Future<void> _loadPlaylists() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonString = prefs.getString('playlists');
-    if (jsonString != null) {
-      setState(() {
-        _playlists = List<Map<String, dynamic>>.from(jsonDecode(jsonString));
-      });
-    }
-  }
+Future<void> _loadPlaylists() async {
+  final prefs = await SharedPreferences.getInstance();
+  final List<String> names = prefs.getStringList('playlist_names') ?? [];
+  
+  setState(() {
+    _playlists = names.map((name) => {
+      'name': name,
+      'songs': jsonDecode(prefs.getString('playlist_$name') ?? '[]'),
+    }).toList();
+  });
+}
 
   Future<void> _savePlaylists() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1047,6 +1049,15 @@ void _showQueueSongOptions(Map<String, dynamic> queueItem, int queueIndex) {
             );
           },
         ),
+        // Add to Playlist
+        ListTile(
+          leading: const Icon(Icons.playlist_add, color: Colors.blueAccent),
+          title: const Text("Add to Playlist"),
+          onTap: () async {
+            Navigator.pop(context);
+            _showAddToPlaylistDialog(queueItem);
+          },
+        ),
 
         ListTile(
           leading: const Icon(Icons.close),
@@ -1098,7 +1109,7 @@ void _showSongOptions(Map<String, dynamic> song, String albumName, int index) {
             title: const Text("Add to Playlist"),
             onTap: () {
               Navigator.pop(context);
-              _showAddToPlaylistDialog(song, albumName);
+              _showAddToPlaylistDialog(song);
             },
           ),
           ListTile(
@@ -1139,12 +1150,69 @@ Future<void> _playNext(Map<String, dynamic> song, String albumName) async {
   print("⏭️ Play Next: ${song['title']} inserted at position $insertPosition");
 }
 
-void _showAddToPlaylistDialog(Map<String, dynamic> song, String albumName) {
-  // TODO: Show your saved playlists and let user pick one
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(content: Text("Add to Playlist feature coming soon...")),
+void _showAddToPlaylistDialog(Map<String, dynamic> song) {
+  showDialog(
+    context: context,
+    builder: (context) {
+      return FutureBuilder<SharedPreferences>(
+        future: SharedPreferences.getInstance(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final prefs = snapshot.data!;
+          final List<String> allPlaylists = prefs.getStringList('playlist_names') ?? [];
+
+          return AlertDialog(
+            backgroundColor: Colors.grey[900],
+            title: const Text("Add to Playlist", style: TextStyle(color: Colors.white)),
+            content: allPlaylists.isEmpty
+                ? const Text(
+                    "No playlists yet.\nCreate one using the 'New Playlist' button.",
+                    style: TextStyle(color: Colors.white70),
+                  )
+                : SizedBox(
+                    width: double.maxFinite,
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: allPlaylists.length,
+                      itemBuilder: (context, index) {
+                        final playlistName = allPlaylists[index];
+                        return ListTile(
+                          title: Text(playlistName, style: const TextStyle(color: Colors.white)),
+                          onTap: () async {
+                            Navigator.pop(context);
+
+                            final String currentJson = prefs.getString('playlist_$playlistName') ?? '[]';
+                            List<dynamic> currentSongs = jsonDecode(currentJson);
+
+                            currentSongs.add(song);
+
+                            await prefs.setString('playlist_$playlistName', jsonEncode(currentSongs));
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text("Added to '$playlistName'"),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel", style: TextStyle(color: Colors.white70)),
+              ),
+            ],
+          );
+        },
+      );
+    },
   );
-  // You can expand this later with your _playlists list
 }
 
 void _addToQueue(Map<String, dynamic> song, String albumName) {
@@ -1243,6 +1311,93 @@ Future<void> _handleSongCompletion() async {
     // End of album
     await _globalPlayer.stop();
   }
+}
+
+void _showLoadPlaylistDialog() {
+  showDialog(
+    context: context,
+    builder: (context) {
+      return FutureBuilder<SharedPreferences>(
+        future: SharedPreferences.getInstance(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final prefs = snapshot.data!;
+          final List<String> playlistNames = prefs.getStringList('playlist_names') ?? [];
+
+          return AlertDialog(
+            backgroundColor: Colors.grey[900],
+            title: const Text("Your Playlists", style: TextStyle(color: Colors.white)),
+            content: playlistNames.isEmpty
+                ? const Text("No saved playlists yet.", style: TextStyle(color: Colors.white70))
+                : SizedBox(
+                    width: double.maxFinite,
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: playlistNames.length,
+                      itemBuilder: (context, index) {
+                        final name = playlistNames[index];
+                        return ListTile(
+                          title: Text(name, style: const TextStyle(color: Colors.white)),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.redAccent),
+                            onPressed: () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (c) => AlertDialog(
+                                  backgroundColor: Colors.grey[900],
+                                  title: Text("Delete '$name'?"),
+                                  actions: [
+                                    TextButton(onPressed: () => Navigator.pop(c, false), child: const Text("Cancel")),
+                                    TextButton(onPressed: () => Navigator.pop(c, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
+                                  ],
+                                ),
+                              );
+
+                              if (confirm == true) {
+                                final updated = List<String>.from(playlistNames);
+                                updated.remove(name);
+                                await prefs.setStringList('playlist_names', updated);
+                                await prefs.remove('playlist_$name');
+                                Navigator.pop(context);
+                                _showLoadPlaylistDialog(); // refresh
+                              }
+                            },
+                          ),
+                          onTap: () async {
+                            Navigator.pop(context);
+                            final String json = prefs.getString('playlist_$name') ?? '[]';
+                            final List<dynamic> songs = jsonDecode(json);
+
+                            if (songs.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Playlist is empty")));
+                              return;
+                            }
+
+                            setState(() {
+                              _queue.addAll(songs.map((s) => Map<String, dynamic>.from(s as Map)).toList());
+                            });
+
+                            _forceQueueRebuild();
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text("Loaded '$name'"), backgroundColor: Colors.green),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text("Close")),
+            ],
+          );
+        },
+      );
+    },
+  );
 }
 
 void _setupQueueAndTrackListener() {
@@ -2091,6 +2246,69 @@ return Column(
   }
 }
 
+void _saveQueueAsPlaylist() {
+  if (_queue.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Queue is empty")),
+    );
+    return;
+  }
+
+  final TextEditingController controller = TextEditingController();
+
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: Colors.grey[900],
+      title: const Text("Save Queue as Playlist", style: TextStyle(color: Colors.white)),
+      content: TextField(
+        controller: controller,
+        style: const TextStyle(color: Colors.white),
+        decoration: const InputDecoration(
+          hintText: "Playlist name",
+          hintStyle: TextStyle(color: Colors.white54),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text("Cancel"),
+        ),
+        ElevatedButton(
+          onPressed: () async {
+            final name = controller.text.trim();
+            if (name.isEmpty) return;
+
+            final prefs = await SharedPreferences.getInstance();
+            List<String> names = prefs.getStringList('playlist_names') ?? [];
+
+            if (names.contains(name)) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Playlist name already exists")),
+              );
+              return;
+            }
+
+            names.add(name);
+            await prefs.setStringList('playlist_names', names);
+            await prefs.setString('playlist_$name', jsonEncode(_queue));
+
+            Navigator.pop(context);
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text("Queue saved as '$name'"),
+                backgroundColor: Colors.green,
+              ),
+            );
+          },
+          child: const Text("Save"),
+        ),
+      ],
+    ),
+  );
+}
+
   void _showAddToPlaylistMenu(Map<String, dynamic> song, String albumName) {
     showModalBottomSheet(
       context: context,
@@ -2125,13 +2343,11 @@ Widget _buildPlaylistsPage() {
       elevation: 0,
       actions: [
         if (_queue.isNotEmpty) ...[
-          // Clear Queue
           IconButton(
             icon: const Icon(Icons.playlist_remove, color: Colors.redAccent),
             onPressed: _clearQueue,
             tooltip: "Clear Queue",
           ),
-          // Reorder Toggle
           IconButton(
             icon: Icon(
               _reorderEnabled ? Icons.check_circle : Icons.drag_handle,
@@ -2147,7 +2363,7 @@ Widget _buildPlaylistsPage() {
     ),
     body: Column(
       children: [
-        // Queue List Area
+        // ==================== QUEUE LIST ====================
         Expanded(
           child: _queue.isEmpty
               ? const Center(
@@ -2169,7 +2385,7 @@ Widget _buildPlaylistsPage() {
               : _reorderEnabled
                   ? ReorderableListView.builder(
                       buildDefaultDragHandles: false,
-                      padding: const EdgeInsets.only(bottom: 420),
+                      padding: const EdgeInsets.only(bottom: 160),
                       key: ValueKey('queue_list_${_queue.length}'),
                       itemCount: _queue.length,
                       onReorder: (int oldIndex, int newIndex) async {
@@ -2180,9 +2396,8 @@ Widget _buildPlaylistsPage() {
 
                         try {
                           await _globalPlayer.moveAudioSource(oldIndex, newIndex);
-                          print("✅ Player queue reordered successfully");
                         } catch (e) {
-                          print("⚠️ moveAudioSource failed, rebuilding: $e");
+                          print("⚠️ Rebuild fallback: $e");
                           final audioSources = _queue.map((song) {
                             return AudioSource.uri(
                               Uri.parse((song['url'] as String?) ?? ''),
@@ -2251,9 +2466,7 @@ Widget _buildPlaylistsPage() {
                                   onPressed: () async {
                                     final bool isRemovingCurrent = (index == _currentSongIndex);
 
-                                    setState(() {
-                                      _queue.removeAt(index);
-                                    });
+                                    setState(() => _queue.removeAt(index));
 
                                     if (_queue.isEmpty) {
                                       await _globalPlayer.stop();
@@ -2268,39 +2481,16 @@ Widget _buildPlaylistsPage() {
                                       if (isRemovingCurrent) {
                                         final nextIndex = index.clamp(0, _queue.length - 1);
                                         await _globalPlayer.seek(Duration.zero, index: nextIndex);
-
-                                        setState(() {
-                                          _currentSongIndex = nextIndex;
-                                        });
-
-                                        if (!_globalPlayer.playing) {
-                                          await _globalPlayer.play();
-                                        }
+                                        setState(() => _currentSongIndex = nextIndex);
+                                        if (!_globalPlayer.playing) await _globalPlayer.play();
                                       } else {
                                         if (_globalPlayer.sequenceState != null) {
                                           await _globalPlayer.seek(Duration.zero, index: _currentSongIndex);
                                         }
                                       }
                                     } catch (e) {
-                                      print("❌ Error removing song: $e");
-                                      // Safe fallback rebuild
-                                      final audioSources = _queue.map((song) {
-                                        return AudioSource.uri(
-                                          Uri.parse((song['url'] as String?) ?? ''),
-                                          tag: MediaItem(
-                                            id: song['url'] ?? 'unknown',
-                                            title: (song['title'] ?? song['Title'] ?? 'Unknown') as String,
-                                            artUri: Uri.tryParse((song['artUrl'] ?? song['songArtUrl'] ?? '') as String),
-                                          ),
-                                        );
-                                      }).toList();
-
-                                      await _globalPlayer.setAudioSource(
-                                        ConcatenatingAudioSource(children: audioSources),
-                                        initialIndex: _currentSongIndex.clamp(0, _queue.length - 1),
-                                      );
+                                      print("Remove error: $e");
                                     }
-
                                     setState(() {});
                                   },
                                 ),
@@ -2308,12 +2498,11 @@ Widget _buildPlaylistsPage() {
                             ),
                             onTap: () async {
                               if (_queue.isEmpty || index < 0 || index >= _queue.length) return;
+
                               final tappedSong = _queue[index] as Map<String, dynamic>;
                               final songUrl = (tappedSong['url'] as String?)?.isNotEmpty == true
                                   ? tappedSong['url'] as String
                                   : null;
-
-                              print("🔥 Queue tap → index $index | Current player index: ${_globalPlayer.currentIndex}");
 
                               try {
                                 if (_globalPlayer.sequenceState == null || _globalPlayer.currentIndex == null) {
@@ -2345,28 +2534,15 @@ Widget _buildPlaylistsPage() {
                                   _currentAlbum = tappedSong['albumName'] as String? ?? "Queue";
                                 });
 
-                                final title = _currentSongTitle;
-                                final artUrl = _currentSongArtUrl;
                                 _nowPlayingNotifier.value = NowPlayingInfo(
-                                  title: title,
-                                  artUrl: artUrl,
+                                  title: _currentSongTitle,
+                                  artUrl: _currentSongArtUrl,
                                   index: index,
                                 );
 
-                                if (!_globalPlayer.playing) {
-                                  await _globalPlayer.play();
-                                }
-                                print("✅ Queue jump successful to index $index");
-                              } catch (e, stack) {
-                                print("❌ Queue seek failed: $e\n$stack");
-                                await _playSong(
-                                  tappedSong['albumName'] as String? ?? "Central",
-                                  index,
-                                  fromQueue: true,
-                                  directUrl: songUrl,
-                                  titleToPlay: tappedSong['title'] as String? ?? tappedSong['Title'] as String?,
-                                  artUrl: tappedSong['artUrl'] as String? ?? tappedSong['songArtUrl'] as String?,
-                                );
+                                if (!_globalPlayer.playing) await _globalPlayer.play();
+                              } catch (e) {
+                                print("Queue tap error: $e");
                               }
                             },
                             onLongPress: () => _showQueueSongOptions(song, index),
@@ -2375,7 +2551,7 @@ Widget _buildPlaylistsPage() {
                       },
                     )
                   : ListView.builder(
-                      padding: const EdgeInsets.only(bottom: 420),
+                      padding: const EdgeInsets.only(bottom: 160),
                       key: ValueKey('queue_list_${_queue.length}'),
                       itemCount: _queue.length,
                       itemBuilder: (context, index) {
@@ -2423,10 +2599,7 @@ Widget _buildPlaylistsPage() {
                                 icon: const Icon(Icons.close),
                                 onPressed: () async {
                                   final bool isRemovingCurrent = (index == _currentSongIndex);
-
-                                  setState(() {
-                                    _queue.removeAt(index);
-                                  });
+                                  setState(() => _queue.removeAt(index));
 
                                   if (_queue.isEmpty) {
                                     await _globalPlayer.stop();
@@ -2441,51 +2614,65 @@ Widget _buildPlaylistsPage() {
                                     if (isRemovingCurrent) {
                                       final nextIndex = index.clamp(0, _queue.length - 1);
                                       await _globalPlayer.seek(Duration.zero, index: nextIndex);
-
-                                      setState(() {
-                                        _currentSongIndex = nextIndex;
-                                      });
-
-                                      if (!_globalPlayer.playing) {
-                                        await _globalPlayer.play();
-                                      }
-                                    } else {
-                                      if (_globalPlayer.sequenceState != null) {
-                                        await _globalPlayer.seek(Duration.zero, index: _currentSongIndex);
-                                      }
+                                      setState(() => _currentSongIndex = nextIndex);
+                                      if (!_globalPlayer.playing) await _globalPlayer.play();
                                     }
                                   } catch (e) {
-                                    print("❌ Error removing song: $e");
-                                    final audioSources = _queue.map((song) {
-                                      return AudioSource.uri(
-                                        Uri.parse((song['url'] as String?) ?? ''),
-                                        tag: MediaItem(
-                                          id: song['url'] ?? 'unknown',
-                                          title: (song['title'] ?? song['Title'] ?? 'Unknown') as String,
-                                          artUri: Uri.tryParse((song['artUrl'] ?? song['songArtUrl'] ?? '') as String),
-                                        ),
-                                      );
-                                    }).toList();
-
-                                    await _globalPlayer.setAudioSource(
-                                      ConcatenatingAudioSource(children: audioSources),
-                                      initialIndex: _currentSongIndex.clamp(0, _queue.length - 1),
-                                    );
+                                    print("Remove error: $e");
                                   }
-
                                   setState(() {});
                                 },
                               ),
                             ],
                           ),
-                          onTap: () async { /* Same full onTap as above */ 
-                            // (Copy the full onTap from the Reorderable version above)
+                          onTap: () async {
                             if (_queue.isEmpty || index < 0 || index >= _queue.length) return;
+
                             final tappedSong = _queue[index] as Map<String, dynamic>;
                             final songUrl = (tappedSong['url'] as String?)?.isNotEmpty == true
                                 ? tappedSong['url'] as String
                                 : null;
-                            // ... paste the full try/catch onTap logic from the Reorderable section
+
+                            try {
+                              if (_globalPlayer.sequenceState == null || _globalPlayer.currentIndex == null) {
+                                final audioSources = _queue.map((song) {
+                                  return AudioSource.uri(
+                                    Uri.parse((song['url'] as String?) ?? ''),
+                                    tag: MediaItem(
+                                      id: song['url'] ?? 'unknown',
+                                      title: (song['title'] ?? song['Title'] ?? 'Unknown') as String,
+                                      artUri: Uri.tryParse((song['artUrl'] ?? song['songArtUrl'] ?? '') as String),
+                                    ),
+                                  );
+                                }).toList();
+
+                                await _globalPlayer.setAudioSource(
+                                  ConcatenatingAudioSource(children: audioSources),
+                                  initialIndex: index,
+                                  initialPosition: Duration.zero,
+                                );
+                              } else {
+                                await _globalPlayer.seek(Duration.zero, index: index);
+                              }
+
+                              setState(() {
+                                _currentSongIndex = index;
+                                _isQueueMode = true;
+                                _currentSongTitle = (tappedSong['title'] ?? tappedSong['Title'] ?? "Unknown") as String;
+                                _currentSongArtUrl = (tappedSong['artUrl'] ?? tappedSong['songArtUrl']) as String?;
+                                _currentAlbum = tappedSong['albumName'] as String? ?? "Queue";
+                              });
+
+                              _nowPlayingNotifier.value = NowPlayingInfo(
+                                title: _currentSongTitle,
+                                artUrl: _currentSongArtUrl,
+                                index: index,
+                              );
+
+                              if (!_globalPlayer.playing) await _globalPlayer.play();
+                            } catch (e) {
+                              print("Queue tap error: $e");
+                            }
                           },
                           onLongPress: () => _showQueueSongOptions(song, index),
                         );
@@ -2495,7 +2682,7 @@ Widget _buildPlaylistsPage() {
 
         // Saved Playlists Section
         Container(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 250),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 229), // Increased to stay above mini-player
           decoration: const BoxDecoration(
             color: Colors.black87,
             border: Border(top: BorderSide(color: Colors.white24)),
@@ -2503,21 +2690,45 @@ Widget _buildPlaylistsPage() {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text("Saved Playlists", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text("Saved Playlists", 
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 12),
               _buildFreeSongsPlaylistTile(),
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.add, size: 20),
-                label: const Text("New Playlist", style: TextStyle(fontSize: 15)),
-                onPressed: _showCreatePlaylistDialog,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white.withOpacity(0.12),
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  minimumSize: const Size(double.infinity, 48),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
+              const SizedBox(height: 24),
+
+              // New + Load buttons
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.add, size: 20),
+                      label: const Text("New Playlist"),
+                      onPressed: _showCreatePlaylistDialog,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white.withOpacity(0.12),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        minimumSize: const Size(double.infinity, 52),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.playlist_play, size: 20),
+                      label: const Text("Load Playlist"),
+                      onPressed: _showLoadPlaylistDialog,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blueAccent.withOpacity(0.25),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        minimumSize: const Size(double.infinity, 52),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -2872,68 +3083,141 @@ Future<void> _createFreeSongsPlaylist() async {
   print("✅ Free Songs Playlist created successfully (${freeSongs.length} songs from DynamoDB)");
 }
 
-  void _showCreatePlaylistDialog() {
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("New Playlist"),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(hintText: "Playlist name"),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("Cancel"),
+void _showCreatePlaylistDialog() {
+  final TextEditingController controller = TextEditingController();
+
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: Colors.grey[900],
+      title: const Text("Create New Playlist", style: TextStyle(color: Colors.white)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: controller,
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              hintText: "Playlist name",
+              hintStyle: TextStyle(color: Colors.white54),
+            ),
           ),
-          TextButton(
-            onPressed: () {
-              if (controller.text.trim().isNotEmpty) {
-                _createNewPlaylist(controller.text.trim());
-                Navigator.pop(ctx);
-              }
-            },
-            child: const Text("Create"),
-          ),
+          const SizedBox(height: 20),
+
+          // Option to save current queue
+          if (_queue.isNotEmpty)
+            ListTile(
+              leading: const Icon(Icons.queue_music, color: Colors.orangeAccent),
+              title: const Text("Save Queue", 
+                style: TextStyle(color: Colors.white)),
+              subtitle: Text("${_queue.length} songs", style: const TextStyle(color: Colors.white70)),
+              onTap: () async {
+                final name = controller.text.trim();
+                if (name.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Please enter a playlist name")),
+                  );
+                  return;
+                }
+
+                final prefs = await SharedPreferences.getInstance();
+                List<String> names = prefs.getStringList('playlist_names') ?? [];
+
+                if (names.contains(name)) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Name already exists")),
+                  );
+                  return;
+                }
+
+                names.add(name);
+                await prefs.setStringList('playlist_names', names);
+                await prefs.setString('playlist_$name', jsonEncode(_queue));
+
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("Queue saved as '$name'"), backgroundColor: Colors.green),
+                );
+              },
+            ),
         ],
       ),
-    );
-  }
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text("Cancel", style: TextStyle(color: Colors.white70)),
+        ),
+        ElevatedButton(
+          onPressed: () async {
+            final name = controller.text.trim();
+            if (name.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Please enter a name")),
+              );
+              return;
+            }
+
+            final prefs = await SharedPreferences.getInstance();
+            List<String> names = prefs.getStringList('playlist_names') ?? [];
+
+            if (names.contains(name)) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Name already exists")),
+              );
+              return;
+            }
+
+            names.add(name);
+            await prefs.setStringList('playlist_names', names);
+            await prefs.setString('playlist_$name', jsonEncode([])); // empty playlist
+
+            Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text("Playlist '$name' created"), backgroundColor: Colors.green),
+            );
+          },
+          child: const Text("Create Empty"),
+        ),
+      ],
+    ),
+  );
+}
 
 Widget _buildSocialPage() {
   final screenHeight = MediaQuery.of(context).size.height;
 
   return Stack(
     children: [
-      // Background Video
-      if (_videoInitialized && _videoController.value.isInitialized)
-        SizedBox(
-          width: double.infinity,
-          height: screenHeight,
-          child: FittedBox(
-            fit: BoxFit.cover,
-            child: SizedBox(
-              width: _videoController.value.size.width,
-              height: _videoController.value.size.height,
-              child: VideoPlayer(_videoController),
-            ),
+      // Background Video - Same controller & video as Welcome Screen
+      SizedBox(
+        width: double.infinity,
+        height: screenHeight,
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: _videoController.value.size.width > 0 
+                ? _videoController.value.size.width 
+                : 1920,
+            height: _videoController.value.size.height > 0 
+                ? _videoController.value.size.height 
+                : 1080,
+            child: _videoController.value.isInitialized
+                ? VideoPlayer(_videoController)
+                : Image.asset('assets/spine.png', fit: BoxFit.cover),
           ),
-        )
-      else
-        Image.asset('assets/spine.png', fit: BoxFit.cover, width: double.infinity, height: screenHeight),
+        ),
+      ),
 
-      // Dark overlay
+      // Dark overlay for text readability
       Container(color: Colors.black.withOpacity(0.65)),
 
-      // Main Content
+      // Main Content (everything else exactly the same as before)
       SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 60),
-
             // Logo
             Center(
               child: GestureDetector(
@@ -2942,7 +3226,6 @@ Widget _buildSocialPage() {
                 child: Image.asset('assets/logo.png', height: 120),
               ),
             ),
-
             const SizedBox(height: 40),
 
             // Social Media Links
@@ -3025,7 +3308,7 @@ Widget _buildSocialPage() {
             const Divider(color: Colors.white24),
             const SizedBox(height: 30),
 
-            // === Promo Code Section ===
+            // Promo Code Section
             const Text(
               "Promo Code",
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
@@ -3036,7 +3319,6 @@ Widget _buildSocialPage() {
               style: TextStyle(fontSize: 15, color: Colors.white70),
             ),
             const SizedBox(height: 16),
-
             TextField(
               controller: _promoCodeController,
               textCapitalization: TextCapitalization.characters,
@@ -3050,7 +3332,6 @@ Widget _buildSocialPage() {
               style: const TextStyle(color: Colors.white),
             ),
             const SizedBox(height: 16),
-
             ElevatedButton(
               onPressed: () async {
                 final code = _promoCodeController.text.trim();
@@ -3073,8 +3354,6 @@ Widget _buildSocialPage() {
             ),
 
             const SizedBox(height: 20),
-
-            // Quick test buttons
             Row(
               children: [
                 Expanded(
@@ -3094,7 +3373,7 @@ Widget _buildSocialPage() {
 
             const SizedBox(height: 60),
 
-            // Logout Button at the bottom
+            // Logout Button
             Center(
               child: ElevatedButton.icon(
                 onPressed: _logout,
@@ -3106,7 +3385,6 @@ Widget _buildSocialPage() {
                 ),
               ),
             ),
-
             const SizedBox(height: 40),
           ],
         ),
@@ -3872,7 +4150,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 
   void _initializeVideo() {
     _welcomeVideoController = VideoPlayerController.networkUrl(
-      Uri.parse("https://dhufx08tsdp2a.cloudfront.net/Website+vid.mp4"),
+      Uri.parse("https://dhufx08tsdp2a.cloudfront.net/intro.mp4"),
     )..initialize().then((_) {
         if (mounted) {
           setState(() {});
@@ -4003,7 +4281,7 @@ Future<void> _checkAutoLogin() async {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       const SizedBox(height: 60),
-                      Image.asset('assets/logo.png', height: 120, fit: BoxFit.contain),
+                      Image.asset('assets/logo.png', height: 140, fit: BoxFit.contain),
                       const SizedBox(height: 80),
 
                       ElevatedButton(
