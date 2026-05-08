@@ -569,9 +569,9 @@ Future<void> _playSong(
   print("🔥 _playSong → Album: '$albumName' | OriginalIndex: $originalSongIndex | fromQueue: $fromQueue | respectUnlocks: $respectUnlocks");
 
   _isPlayingNewSong = false;
-
   final now = DateTime.now().millisecondsSinceEpoch;
   if (now - (_lastPlayCallTime ?? 0) < 150) return;
+
   _lastPlayCallTime = now;
   _isPlayingNewSong = true;
 
@@ -579,14 +579,22 @@ Future<void> _playSong(
     await _globalPlayer.stop();
     await Future.delayed(const Duration(milliseconds: 80));
 
-    List<Map<String, dynamic>> workingQueue = [];
-
     if (fromQueue && _queue.isNotEmpty) {
+      // === NEW BEHAVIOR: Jump to song WITHOUT removing previous songs ===
       final startIdx = originalSongIndex.clamp(0, _queue.length - 1);
-      workingQueue = _queue.sublist(startIdx);
-      print('✅ Queue Jump → sliced from $startIdx | Size: ${workingQueue.length}');
+
+      final sources = _queue.map((item) => _createHlsSource(item, albumName)).toList();
+      final queueSource = ConcatenatingAudioSource(children: sources);
+
+      await _globalPlayer.setAudioSource(
+        queueSource,
+        initialIndex: startIdx,           // Jump directly to tapped song
+        initialPosition: Duration.zero,
+      );
+
+      print('✅ Queue Jump → Playing index $startIdx (full queue preserved, size: ${_queue.length})');
     } else {
-      // Album tap
+      // === Album tap (unchanged) ===
       final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
       if (albumSongs.isEmpty) return;
 
@@ -602,40 +610,41 @@ Future<void> _playSong(
           return isFree || isUnlockedByEmail || (_hasOpenAccess ?? false);
         }).toList();
 
-        // Find the tapped song in the filtered free list (critical fix)
         effectiveStartIndex = songsToQueue.indexWhere((song) {
           final songTitle = (song['title'] ?? song['Title']) as String?;
           final tappedTitle = titleToPlay;
           return songTitle != null && tappedTitle != null && songTitle == tappedTitle;
         });
 
-        if (effectiveStartIndex == -1) {
-          effectiveStartIndex = 0; // fallback
-        }
+        if (effectiveStartIndex == -1) effectiveStartIndex = 0;
 
         print('🔒 Free-only mode → Filtered to ${songsToQueue.length} songs | Effective start: $effectiveStartIndex');
       }
 
       final startIdx = effectiveStartIndex.clamp(0, songsToQueue.length - 1);
-      workingQueue = songsToQueue.sublist(startIdx);
-      print('✅ Album Tap → ${respectUnlocks ? "FREE ONLY" : "FULL"} queue | Start: $startIdx | Size: ${workingQueue.length}');
+      _queue = songsToQueue.sublist(startIdx);
+
+      final sources = _queue.map((item) => _createHlsSource(item, albumName)).toList();
+      final queueSource = ConcatenatingAudioSource(children: sources);
+
+      await _globalPlayer.setAudioSource(queueSource, initialIndex: 0);
+      print('✅ Album Tap → ${respectUnlocks ? "FREE ONLY" : "FULL"} queue | Start: $startIdx | Size: ${_queue.length}');
     }
 
-    _queue = List.from(workingQueue);
-
-    final sources = _queue.map((item) => _createHlsSource(item, albumName)).toList();
-    final queueSource = ConcatenatingAudioSource(children: sources);
-
-    await _globalPlayer.setAudioSource(queueSource, initialIndex: 0, initialPosition: Duration.zero);
     await _globalPlayer.play();
 
-    final displayTitle = titleToPlay ?? (_queue.isNotEmpty ? (_queue.first['title'] ?? _queue.first['Title'] ?? "Unknown") : "Unknown");
+    final displayTitle = titleToPlay ?? 
+        (_queue.isNotEmpty ? (_queue.first['title'] ?? _queue.first['Title'] ?? "Unknown") : "Unknown");
 
-    _nowPlayingNotifier.value = NowPlayingInfo(title: displayTitle, artUrl: artUrl, index: 0);
+    _nowPlayingNotifier.value = NowPlayingInfo(
+      title: displayTitle,
+      artUrl: artUrl,
+      index: fromQueue ? originalSongIndex : 0,
+    );
 
     setState(() {
       _currentAlbum = albumName;
-      _currentSongIndex = 0;
+      _currentSongIndex = fromQueue ? originalSongIndex : 0;
       _currentSongTitle = displayTitle;
       _currentSongArtUrl = artUrl;
       _hasPlaybackError = false;
@@ -1011,23 +1020,90 @@ void handleDeepLink(Uri uri) {
 void _showSongOptions(Map<String, dynamic> song, String albumName, int index) {
   showModalBottomSheet(
     context: context,
+    backgroundColor: Colors.grey[900],
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
     builder: (context) => SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           ListTile(
-            leading: const Icon(Icons.playlist_add),
+            leading: const Icon(Icons.auto_stories, color: Colors.amberAccent),
+            title: const Text("View Song Story"),
+            onTap: () {
+              Navigator.pop(context);
+              _navigateToSongStory(song, albumName);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.queue_play_next, color: Colors.blueAccent),
+            title: const Text("Play Next"),
+            onTap: () {
+              Navigator.pop(context);
+              _playNext(song, albumName);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.playlist_add, color: Colors.greenAccent),
             title: const Text("Add to Queue"),
             onTap: () {
               Navigator.pop(context);
-              _addToQueue(song, albumName);   // ← Must call this
+              _addToQueue(song, albumName);
             },
           ),
-          // You can keep or remove the "Play Next" option for now
+          ListTile(
+            leading: const Icon(Icons.playlist_add, color: Colors.purpleAccent),
+            title: const Text("Add to Playlist"),
+            onTap: () {
+              Navigator.pop(context);
+              _showAddToPlaylistDialog(song, albumName);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.close),
+            title: const Text("Cancel"),
+            onTap: () => Navigator.pop(context),
+          ),
         ],
       ),
     ),
   );
+}
+
+// Play Next - Insert song right after the current playing song
+Future<void> _playNext(Map<String, dynamic> song, String albumName) async {
+  final songToAdd = Map<String, dynamic>.from(song);
+  songToAdd['albumName'] = albumName;
+
+  final insertPosition = (_currentSongIndex ?? 0) + 1;
+
+  setState(() {
+    if (_queue.isEmpty) {
+      _queue.add(songToAdd);
+    } else {
+      _queue.insert(insertPosition.clamp(0, _queue.length), songToAdd);
+    }
+  });
+
+  _forceQueueRebuild();
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text("Playing next: ${song['title'] ?? song['Title'] ?? 'Song'}"),
+      backgroundColor: Colors.blueAccent,
+    ),
+  );
+
+  print("⏭️ Play Next: ${song['title']} inserted at position $insertPosition");
+}
+
+void _showAddToPlaylistDialog(Map<String, dynamic> song, String albumName) {
+  // TODO: Show your saved playlists and let user pick one
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text("Add to Playlist feature coming soon...")),
+  );
+  // You can expand this later with your _playlists list
 }
 
 void _addToQueue(Map<String, dynamic> song, String albumName) {
@@ -1130,19 +1206,20 @@ Future<void> _handleSongCompletion() async {
 
 void _setupQueueAndTrackListener() {
   _sequenceSubscription?.cancel();
+
   _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((SequenceState? state) {
     if (state == null || _queue.isEmpty) return;
 
     final currentIndex = state.currentIndex ?? 0;
-    print("📊 Track Changed → Player Index: $currentIndex | Queue size: ${_queue.length} | isQueueMode: $_isQueueMode");
+    print("📊 Track Changed → Player Index: $currentIndex | Queue size: ${_queue.length}");
 
     if (currentIndex >= _queue.length) return;
 
-    final currentSong = _queue[currentIndex];  
+    // Update display
+    final currentSong = _queue[currentIndex];
     final title = (currentSong['title'] ?? currentSong['Title'] ?? "Unknown") as String;
     final artUrl = (currentSong['artUrl'] ?? currentSong['songArtUrl']) as String?;
 
-    // Update display immediately
     _nowPlayingNotifier.value = NowPlayingInfo(title: title, artUrl: artUrl, index: currentIndex);
 
     if (mounted) {
@@ -1153,11 +1230,18 @@ void _setupQueueAndTrackListener() {
       });
     }
 
-    // Smart removal — only when in queue mode and naturally advancing
+    // === ONLY remove previous songs on NATURAL playback (not manual jumps) ===
     if (_isQueueMode && currentIndex > 0 && _queue.length > currentIndex) {
-      _queue.removeRange(0, currentIndex);
-      print("🗑️ Smart removed $currentIndex previous songs | New size: ${_queue.length}");
-      _forceQueueRebuild();
+      // Add a small delay + check if user manually jumped
+      Future.delayed(const Duration(milliseconds: 1200), () {
+        if (mounted && _globalPlayer.currentIndex == currentIndex) {
+          setState(() {
+            _queue.removeRange(0, currentIndex);
+          });
+          print("🗑️ Smart removed $currentIndex previous songs | New size: ${_queue.length}");
+          _forceQueueRebuild();
+        }
+      });
     }
   });
 }
@@ -1970,6 +2054,7 @@ return Column(
 );
   }
 }
+
   void _showAddToPlaylistMenu(Map<String, dynamic> song, String albumName) {
     showModalBottomSheet(
       context: context,
@@ -2007,13 +2092,12 @@ Widget _buildPlaylistsPage() {
           IconButton(
             icon: const Icon(Icons.playlist_remove, color: Colors.redAccent),
             onPressed: _clearQueue,
-            tooltip: "Clear Queue",
           ),
       ],
     ),
     body: Column(
       children: [
-        // === QUEUE LIST ===
+        // Queue List
         Expanded(
           child: _queue.isEmpty
               ? const Center(
@@ -2022,10 +2106,7 @@ Widget _buildPlaylistsPage() {
                     children: [
                       Icon(Icons.queue_music, size: 90, color: Colors.white38),
                       SizedBox(height: 20),
-                      Text(
-                        "Queue is empty",
-                        style: TextStyle(fontSize: 22, color: Colors.white70),
-                      ),
+                      Text("Queue is empty", style: TextStyle(fontSize: 22, color: Colors.white70)),
                       SizedBox(height: 8),
                       Text(
                         "Long-press a song from an album → 'Add to Queue'",
@@ -2036,14 +2117,12 @@ Widget _buildPlaylistsPage() {
                   ),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 20),
-                  key: ValueKey('queue_${_queue.length}_${_isQueueMode ? "q" : "a"}'),
+                  padding: const EdgeInsets.only(bottom: 420),
+                  key: ValueKey('queue_list_${_queue.length}'),   // ← Stable key
                   itemCount: _queue.length,
                   itemBuilder: (context, index) {
                     final song = _queue[index] as Map<String, dynamic>;
-                    final title = (song['title'] as String?) ??
-                        (song['Title'] as String?) ??
-                        "Unknown Song";
+                    final title = (song['title'] as String?) ?? (song['Title'] as String?) ?? "Unknown Song";
                     final album = song['albumName'] as String? ?? "";
                     final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
 
@@ -2076,7 +2155,6 @@ Widget _buildPlaylistsPage() {
                         onPressed: () => setState(() => _queue.removeAt(index)),
                       ),
                       onTap: () async {
-                        print("🔥 QUEUE TAP FIRED → Title: '$title' | Index: $index");
                         final tappedSong = Map<String, dynamic>.from(_queue[index]);
                         await _playSong(
                           tappedSong['albumName'] as String? ?? "Central",
@@ -2086,7 +2164,6 @@ Widget _buildPlaylistsPage() {
                           titleToPlay: title,
                           artUrl: artUrl,
                         );
-                        _forceQueueRebuild();
                       },
                       onLongPress: () => _showQueueSongOptions(song, index),
                     );
@@ -2094,9 +2171,9 @@ Widget _buildPlaylistsPage() {
                 ),
         ),
 
-        // === SAVED PLAYLISTS SECTION (Simplified) ===
+        // Saved Playlists Section
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 250),
           decoration: const BoxDecoration(
             color: Colors.black87,
             border: Border(top: BorderSide(color: Colors.white24)),
@@ -2106,21 +2183,18 @@ Widget _buildPlaylistsPage() {
             children: [
               const Text("Saved Playlists", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 12),
-
-              // Free Songs Playlist
               _buildFreeSongsPlaylistTile(),
-
-              const SizedBox(height: 16),
-
-              // New Playlist Button
+              const SizedBox(height: 20),
               ElevatedButton.icon(
-                icon: const Icon(Icons.add),
-                label: const Text("New Playlist"),
+                icon: const Icon(Icons.add, size: 20),
+                label: const Text("New Playlist", style: TextStyle(fontSize: 15)),
                 onPressed: _showCreatePlaylistDialog,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.deepPurpleAccent,
+                  backgroundColor: Colors.white.withOpacity(0.12),
                   foregroundColor: Colors.white,
-                  minimumSize: const Size(double.infinity, 50),
+                  elevation: 0,
+                  minimumSize: const Size(double.infinity, 48),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ],
@@ -2130,7 +2204,6 @@ Widget _buildPlaylistsPage() {
     ),
   );
 }
-
 /// Persistent Full Player - Used on BOTH Album Detail and Queue pages
 Widget _buildFullPlayer() {
   final albumTheme = _getAlbumThemeColor(_currentAlbum ?? "Central");
@@ -2352,84 +2425,91 @@ void _deletePlaylist(int index) {
     ),
   );
 }
+
 Widget _buildFreeSongsPlaylistTile() {
-  return FutureBuilder<String?>(
-    future: SharedPreferences.getInstance().then((prefs) => prefs.getString('free_songs_playlist')),
-    builder: (context, snapshot) {
-      if (!snapshot.hasData || snapshot.data == null) {
-        return const SizedBox.shrink();
+  return GestureDetector(
+    onTap: () async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final String? jsonString = prefs.getString('free_songs_playlist');
+
+        if (jsonString == null || jsonString.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("No free songs saved yet")),
+          );
+          return;
+        }
+
+        final List<dynamic> freeSongs = jsonDecode(jsonString);
+
+        if (freeSongs.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Free songs list is empty")),
+          );
+          return;
+        }
+
+        // Stronger update
+        setState(() {
+          _queue.addAll(freeSongs.map((s) {
+            final song = s as Map<String, dynamic>;
+            return {
+              'title': song['Title'] ?? song['title'] ?? 'Unknown Song',
+              'albumName': 'Free Songs',
+              'artUrl': song['artUrl'] ?? song['songArtUrl'] ?? '',
+              'url': song['url'] ?? song['URL'] ?? '',
+              'isFree': true,
+            };
+          }).toList());
+        });
+
+        // Force full rebuild
+        _forceQueueRebuild();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("✅ Added ${freeSongs.length} Free Songs to queue"),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        print("✅ Free Songs added successfully | Total queue size: ${_queue.length}");
+      } catch (e) {
+        print("❌ Error loading free songs: $e");
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to load free songs")),
+        );
       }
-
-      return GestureDetector(
-        onTap: () async {
-          final prefs = await SharedPreferences.getInstance();
-          final String? jsonString = prefs.getString('free_songs_playlist');
-          if (jsonString == null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("No free songs playlist found")),
-            );
-            return;
-          }
-
-          try {
-            final List<dynamic> freeSongs = jsonDecode(jsonString);
-            
-            setState(() {
-              _queue.addAll(freeSongs.map((s) {
-                final song = s as Map<String, dynamic>;
-                return {
-                  'title': song['Title'] ?? song['title'] ?? 'Unknown Song',
-                  'albumName': song['albumName'] ?? 'Free Songs',
-                  'artUrl': song['artUrl'] ?? song['songArtUrl'] ?? '',
-                  'url': song['url'] ?? song['URL'] ?? '',           // Support both key formats
-                  'isFree': true,
-                };
-              }).toList());
-            });
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text("✅ Added ${freeSongs.length} Free Songs to queue"),
-                backgroundColor: Colors.green,
-              ),
-            );
-          } catch (e) {
-            print("❌ Error loading free songs playlist: $e");
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Error loading free songs")),
-            );
-          }
-        },
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: Colors.greenAccent.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
-          ),
-          child: const Row(
-            children: [
-              Icon(Icons.music_note, color: Colors.greenAccent, size: 32),
-              SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text("Free Songs", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                    Text("All free tracks • Play instantly", style: TextStyle(fontSize: 13, color: Colors.white70)),
-                  ],
-                ),
-              ),
-              Icon(Icons.play_arrow, color: Colors.greenAccent),
-            ],
-          ),
-        ),
-      );
     },
+    child: Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.greenAccent.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.music_note, color: Colors.greenAccent, size: 32),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("Free Songs", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                Text("All free tracks • Play instantly", style: TextStyle(fontSize: 13, color: Colors.white70)),
+              ],
+            ),
+          ),
+          Icon(Icons.play_arrow, color: Colors.greenAccent),
+        ],
+      ),
+    ),
   );
 }
+
 Future<void> _createFreeSongsPlaylist() async {
   final prefs = await SharedPreferences.getInstance();
   
