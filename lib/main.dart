@@ -3722,178 +3722,10 @@ Future<void> _redeemPromoCode(String code) async {
 void _showPaywall() {
   Navigator.push(
     context,
-    MaterialPageRoute(
-      builder: (context) => Scaffold(
-        backgroundColor: Colors.black,
-        body: SingleChildScrollView(
-          child: Column(
-            children: [
-              // Top Bar with Back Button
-              SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: Row(
-                    children: [
-                      TextButton.icon(
-                        icon: const Icon(Icons.arrow_back, color: Colors.white),
-                        label: const Text(
-                          "Back to Music",
-                          style: TextStyle(color: Colors.white, fontSize: 16),
-                        ),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                      const Spacer(),
-                    ],
-                  ),
-                ),
-              ),
-
-              // Top Image
-              Container(
-                height: 230,
-                width: double.infinity,
-                decoration: const BoxDecoration(
-                  image: DecorationImage(
-                    image: NetworkImage("https://dhufx08tsdp2a.cloudfront.net/Melodicsol.png"),
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.transparent, Colors.black.withOpacity(0.85)],
-                    ),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // Title
-              const Text(
-                "Buy This Music",
-                style: TextStyle(
-                  fontSize: 27,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-                textAlign: TextAlign.center,
-              ),
-
-              const SizedBox(height: 8),
-
-              const Text(
-                "Show Your Support to Melodicsol",
-                style: TextStyle(fontSize: 13, color: Colors.white70),
-                textAlign: TextAlign.center,
-              ),
-
-              const SizedBox(height: 28),
-
-              // Benefits
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 32),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text("• UNLOCK ALL SONGS ALL ALBUMS FOREVER (Current + ALL Future Releases)", 
-                         style: TextStyle(fontSize: 11, color: Colors.white70, height: 1.6)),
-                    SizedBox(height: 10),
-                    Text("", 
-                         style: TextStyle(fontSize: 11, color: Colors.white70, height: 1.6)),
-                    SizedBox(height: 10),
-                    Text("• GAIN ACCESS TO BEHIND-THE-SCENES ARCHIVE", 
-                         style: TextStyle(fontSize: 11, color: Colors.white70, height: 1.6)),
-                    SizedBox(height: 10),
-                    Text("YOUR FULL SUPPORT GOES DIRECTLY TO THE ARTIST", 
-                         style: TextStyle(fontSize: 11, color: Colors.white70, height: 1.6)),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 40),
-
-              // Purchase Buttons
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Column(
-                  children: [
-                    // Lifetime $47
-                    ElevatedButton(
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        // Your existing lifetime purchase logic here
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00FF85),
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-                        minimumSize: const Size(double.infinity, 62),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      ),
-                      child: const Text(
-                        "LIFETIME ACCESS FOR \$47",
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-
-                    const SizedBox(height: 14),
-
-                    // Catalog $37
-                    ElevatedButton(
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        // Your existing catalog purchase logic here
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white24,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-                        minimumSize: const Size(double.infinity, 56),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      ),
-                      child: const Text(
-                        "Current Catalog Unlock — \$37",
-                        style: TextStyle(fontSize: 13),
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    // Individual Album (if applicable)
-                    if (_selectedAlbum != null && 
-                        _albums[_selectedAlbum!]?["canPurchaseIndividually"] == true)
-                      ElevatedButton(
-                        onPressed: () async {
-                          Navigator.pop(context);
-                          // Your existing individual album logic here
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white24,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-                          minimumSize: const Size(double.infinity, 56),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        ),
-                        child: Text(
-                          "Buy ${_selectedAlbum ?? 'This Album'} — \$17",
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 40),
-            ],
-          ),
-        ),
-      ),
-    ),
+    MaterialPageRoute(builder: (context) => const PaywallScreen()),
   );
 }
+
     Future<void> _showLocalNotification(RemoteMessage message) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'melodicsol_channel',
@@ -4844,5 +4676,140 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
     
     print("🔓 Email unlock check → Confirmed in prefs: $isConfirmed");
     return isConfirmed;
+  }
+}
+// ====================== NEW PAYWALL SCREEN ======================
+class PaywallScreen extends StatefulWidget {
+  const PaywallScreen({super.key});
+
+  @override
+  State<PaywallScreen> createState() => _PaywallScreenState();
+}
+
+class _PaywallScreenState extends State<PaywallScreen> {
+  Offerings? _offerings;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOfferings();
+  }
+
+  Future<void> _loadOfferings() async {
+    try {
+      final offerings = await Purchases.getOfferings();
+      setState(() {
+        _offerings = offerings;
+        _loading = false;
+      });
+    } catch (e) {
+      print("RevenueCat offerings error: $e");
+      setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final offering = _offerings?.getOffering("main_paywall") ?? _offerings?.current;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          : SingleChildScrollView(
+              child: Column(
+                children: [
+                  // Header image
+                  Container(
+                    height: 280,
+                    width: double.infinity,
+                    decoration: const BoxDecoration(
+                      image: DecorationImage(
+                        image: NetworkImage("https://dhufx08tsdp2a.cloudfront.net/Melodicsol.png"),
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text(
+                      "Unlock Full Access",
+                      style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+
+                  // Dynamic packages from main_paywall
+                  if (offering != null)
+                    ...offering.availablePackages.map((package) {
+                      final product = package.storeProduct;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                        child: ElevatedButton(
+                          onPressed: () async {
+                            try {
+                              await Purchases.purchasePackage(package);
+                              if (mounted) Navigator.pop(context);
+                            } catch (e) {
+                              print("Purchase error: $e");
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.all(20),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          ),
+                          child: Column(
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(product.title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                                  Text(product.priceString, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              // Bullet points specific to this package
+                              _buildBullet("Full access to all albums & future releases"),
+                              _buildBullet("Song Stories & exclusive content"),
+                              _buildBullet("Cancel anytime"),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList()
+                  else
+                    const Padding(
+                      padding: EdgeInsets.all(40),
+                      child: Text("No offerings available", style: TextStyle(color: Colors.white70)),
+                    ),
+
+                  const SizedBox(height: 40),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text("Maybe later", style: TextStyle(color: Colors.white70, fontSize: 16)),
+                  ),
+                  const SizedBox(height: 40),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _buildBullet(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.check_circle, color: Colors.greenAccent, size: 20),
+          const SizedBox(width: 12),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 16, color: Colors.white70))),
+        ],
+      ),
+    );
   }
 }
