@@ -3773,7 +3773,7 @@ void _showPaywall() {
 
               // Title
               const Text(
-                "Gain Lifetime Access",
+                "Buy This Music",
                 style: TextStyle(
                   fontSize: 27,
                   fontWeight: FontWeight.bold,
@@ -3785,7 +3785,7 @@ void _showPaywall() {
               const SizedBox(height: 8),
 
               const Text(
-                "Support Melodicsol",
+                "Show Your Support to Melodicsol",
                 style: TextStyle(fontSize: 13, color: Colors.white70),
                 textAlign: TextAlign.center,
               ),
@@ -4150,7 +4150,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 
   void _initializeVideo() {
     _welcomeVideoController = VideoPlayerController.networkUrl(
-      Uri.parse("https://dhufx08tsdp2a.cloudfront.net/intro.mp4"),
+      Uri.parse("https://dhufx08tsdp2a.cloudfront.net/Welcomescreen.mp4"),
     )..initialize().then((_) {
         if (mounted) {
           setState(() {});
@@ -4281,7 +4281,7 @@ Future<void> _checkAutoLogin() async {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       const SizedBox(height: 60),
-                      Image.asset('assets/logo.png', height: 140, fit: BoxFit.contain),
+                      Image.asset('assets/logo.png', height: 150, fit: BoxFit.contain),
                       const SizedBox(height: 80),
 
                       ElevatedButton(
