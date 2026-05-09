@@ -328,6 +328,7 @@ final Map<String, double> _albumHorizontalOffset = {
   bool _hasOpenAccess = false;           // renamed from premium to "Open"
   bool _isCheckingSubscription = true;
   String? _revenueCatError;
+
 @override
 void initState() {
   super.initState();
@@ -1571,6 +1572,24 @@ void _refreshQueueUI() {
     }
   }
 
+  Future<bool> _isContentUnlocked(String? albumName) async {
+  if (albumName == null) return false;
+
+  final prefs = await SharedPreferences.getInstance();
+
+  final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
+  final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
+  final bool hasOpenAccess = _hasOpenAccess ?? false;
+
+  if (hasLifetime || hasCatalog || hasOpenAccess) {
+    return true;
+  }
+
+  // Individual album unlock
+  final bool individuallyUnlocked = prefs.getBool('unlocked_$albumName') ?? false;
+  return individuallyUnlocked;
+}
+
     Future<void> _initializeRevenueCat() async {
     try {
       setState(() => _isCheckingSubscription = true);
@@ -1586,13 +1605,23 @@ void _refreshQueueUI() {
       print("✅ RevenueCat: Open Access = $_hasOpenAccess");
 
       // Listen for future changes
-      Purchases.addCustomerInfoUpdateListener((customerInfo) {
-        final newAccess = customerInfo.entitlements.active.containsKey("premium_access");
-        if (newAccess != _hasOpenAccess) {
-          setState(() => _hasOpenAccess = newAccess);
-          print("🔄 RevenueCat status updated: Open Access = $newAccess");
-        }
+      Purchases.addCustomerInfoUpdateListener((CustomerInfo customerInfo) async {
+        final prefs = await SharedPreferences.getInstance();
+
+        final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
+        final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
+        final bool hasPremium = customerInfo.entitlements.active.containsKey("premium_access");
+
+        await prefs.setBool('hasLifetimeAccess', hasLifetime);
+        await prefs.setBool('hasCatalogAccess', hasCatalog || hasPremium);
+
+        setState(() {
+          _hasOpenAccess = hasLifetime || hasCatalog || hasPremium;
+        });
+
+        print("✅ RevenueCat unlock updated → Lifetime: $hasLifetime | Catalog: $hasCatalog");
       });
+
     } catch (e) {
       print("❌ RevenueCat error: $e");
       setState(() {
@@ -4678,7 +4707,7 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
     return isConfirmed;
   }
 }
-// ====================== NEW PAYWALL SCREEN ======================
+// ====================== NEW DYNAMIC PAYWALL SCREEN ======================
 class PaywallScreen extends StatefulWidget {
   const PaywallScreen({super.key});
 
@@ -4720,9 +4749,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
           : SingleChildScrollView(
               child: Column(
                 children: [
-                  // Header image
+                  // Header
                   Container(
-                    height: 280,
+                    height: 240,
                     width: double.infinity,
                     decoration: const BoxDecoration(
                       image: DecorationImage(
@@ -4731,22 +4760,20 @@ class _PaywallScreenState extends State<PaywallScreen> {
                       ),
                     ),
                   ),
-
                   const Padding(
                     padding: EdgeInsets.all(24),
                     child: Text(
                       "Unlock Full Access",
-                      style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
+                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
                       textAlign: TextAlign.center,
                     ),
                   ),
 
-                  // Dynamic packages from main_paywall
                   if (offering != null)
                     ...offering.availablePackages.map((package) {
                       final product = package.storeProduct;
                       return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
                         child: ElevatedButton(
                           onPressed: () async {
                             try {
@@ -4755,27 +4782,25 @@ class _PaywallScreenState extends State<PaywallScreen> {
                             } catch (e) {
                               print("Purchase error: $e");
                             }
+                            final updatedInfo = await Purchases.getCustomerInfo(); // forces listener
                           },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white,
+                            backgroundColor: Colors.greenAccent,
                             foregroundColor: Colors.black,
-                            padding: const EdgeInsets.all(20),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                           ),
                           child: Column(
                             children: [
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Text(product.title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                                  Text(product.priceString, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                                  Text(product.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                                  Text(product.priceString, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                                 ],
                               ),
-                              const SizedBox(height: 16),
-                              // Bullet points specific to this package
+                              const SizedBox(height: 12),
                               _buildBullet("Full access to all albums & future releases"),
-                              _buildBullet("Song Stories & exclusive content"),
-                              _buildBullet("Cancel anytime"),
                             ],
                           ),
                         ),
@@ -4790,7 +4815,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   const SizedBox(height: 40),
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text("Maybe later", style: TextStyle(color: Colors.white70, fontSize: 16)),
+                    child: const Text("Maybe later", style: TextStyle(color: Colors.white70)),
                   ),
                   const SizedBox(height: 40),
                 ],
