@@ -56,11 +56,16 @@ Future<void> main() async {
   // Background message handler
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-  // RevenueCat
-  await Purchases.setLogLevel(LogLevel.debug);
-  await Purchases.configure(
-    PurchasesConfiguration("test_ZBLCyGBvSMTFCEvmTmrzCwZVBPR"),
-  );
+// ==================== REVENUECAT CONFIG ====================
+
+await Purchases.setLogLevel(LogLevel.debug);
+await Purchases.setDebugLogsEnabled(true);   // ← This forces sandbox mode on real devices
+
+await Purchases.configure(
+  PurchasesConfiguration("test_ZBLCyGBvSMTFCEvmTmrzCwZVBPR"),
+);
+
+print("✅ RevenueCat initialized in SANDBOX / TEST mode");
 
   // JustAudioBackground
 try {
@@ -221,18 +226,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   };
 
   final Map<String, dynamic> _melodicSolBio = {
-    "title": "Melodicsol",
-    "imageUrl": "assets/logo.png",        // Change to a full bio image if you prefer
-    "story": "Melodicsol emerges as a live multi-instrumental singer-songwriter powerhouse, crafting a unique blend of Psychedelic Indie Rock that empowers listeners to find their own freedom and independence. A self-taught guitar maestro, he conjures the expansive sonic tapestry of an entire live rock band, delivering a psyche rock aesthetic for the mind, body, and soul through soaring guitar/bass melodies and captivating drum set rhythms combined through ingenious looping wizardry."
-        "Blend genres, break rules, and create moments that feel alive. Every track is a piece of our journey — from the first riff to the final master. "
-        "Thank you for being part of the Sol family.",
+    "title": " ",
+    "imageUrl": "https://dhufx08tsdp2a.cloudfront.net/MelodicsolBioImage.png",        // Change to a full bio image if you prefer
+    "story": "Melodicsol is a multi-instrumental and multi-dimensional powerhouse, crafting a free spirit blend of rock, jazz, funk, pop, and psychedelia that emboldens listeners to find freedom and independence within. A self-taught guitar maestro, he conjures expansive and diverse sonic landscapes through soaring guitar/bass melodies, captivating drum set rhythms combined with life-exploring narratives, delivering a truly unique and one-of-a-kind spontaneous rock aesthetic for the mind, body, and sol.",
     "themeColor": Colors.greenAccent,     // or any color you like
   };
 
   final Map<String, TextStyle> _albumFonts = {
-    "Base": GoogleFonts.rubikBeastly(
+    "Base": GoogleFonts.playwriteArGuides(
       fontSize: 22,
-      fontWeight: FontWeight.w700,
+      fontWeight: FontWeight.w900,
       color: const Color.fromARGB(255, 5, 135, 221),
     ),
     "Track": GoogleFonts.bungeeInline(
@@ -498,7 +501,23 @@ Future<void> _handleDeepLink(Uri? uri) async {
 
 Map<String, bool> _albumPurchaseConfig = {};
 
+  // Master helper: Get clean display name for any album
+String _getAlbumDisplayName(String albumKey) {
+  if (albumKey.isEmpty) return "Unknown Album";
+  final key = albumKey.toLowerCase().trim();
+  return _albumDisplayNames[key] ?? albumKey;   // fallback to raw key
+}
 
+
+// Master helper: Get Google Font for any album
+TextStyle _getAlbumFont(String albumKey) {
+  final displayName = _getAlbumDisplayName(albumKey);
+  return _albumFonts[displayName] ?? GoogleFonts.inter(
+    fontSize: 16,
+    fontWeight: FontWeight.w600,
+    color: Colors.white,
+  );
+}
 Future<void> _loadPlaylists() async {
   final prefs = await SharedPreferences.getInstance();
   final List<String> names = prefs.getStringList('playlist_names') ?? [];
@@ -549,6 +568,21 @@ Future<void> _loadPlaylists() async {
     final firstSong = playlist["songs"][0] as Map<String, dynamic>;
     _playSong(firstSong["albumName"] as String, 0);
   }
+
+void _showUserInfoScreen({String? pendingAlbumName, int? pendingSongIndex}) {
+  print("📱 _showUserInfoScreen called → Pushing UserInfoScreen");
+
+  Navigator.push(
+    context,   // ← This works because we're inside _HomePageState
+    MaterialPageRoute(
+      builder: (context) => UserInfoScreen(
+        pendingAlbumName: pendingAlbumName,
+        pendingSongIndex: pendingSongIndex,
+      ),
+    ),
+  );
+}
+
 Future<void> _loadConfirmedStatus() async {
     final prefs = await SharedPreferences.getInstance();
     final bool confirmed = prefs.getBool('email_confirmed') ?? false;
@@ -572,10 +606,52 @@ Future<void> _playSong(
 }) async {
   print("🔥 _playSong → Album: '$albumName' | OriginalIndex: $originalSongIndex | fromQueue: $fromQueue | respectUnlocks: $respectUnlocks");
 
+  // === SPECIAL FREE SONG CHECK ===
+  bool songIsFree = false;
+
+  if (!fromQueue) {
+    final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
+    if (originalSongIndex < albumSongs.length) {
+      final songData = albumSongs[originalSongIndex] as Map<String, dynamic>;
+      songIsFree = (songData['isFree'] as bool? ?? false) ||
+                   ((songData['emailUnlock'] as bool? ?? false) && (_hasConfirmedEmail ?? false));
+    }
+  }
+
+  if (songIsFree) {
+    print("✅ Free song detected → Playing without paywall");
+  } else {
+    // === EMAIL UNLOCK CHECK ===
+    if (!fromQueue) {
+      final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
+      if (originalSongIndex < albumSongs.length) {
+        final songData = albumSongs[originalSongIndex] as Map<String, dynamic>;
+        final bool isEmailUnlockSong = songData['emailUnlock'] as bool? ?? false;
+
+        if (isEmailUnlockSong && !(_hasConfirmedEmail ?? false)) {
+          print("📧 Email unlock song tapped → Showing UserInfoScreen");
+          _showUserInfoScreen(
+            pendingAlbumName: albumName,
+            pendingSongIndex: originalSongIndex,
+          );
+          return;
+        }
+      }
+    }
+
+    // === PAID UNLOCK CHECK ===
+    final bool isPaidUnlocked = await _isContentUnlocked(albumName);
+    if (!isPaidUnlocked) {
+      print("🔒 Paid content locked → Showing Paywall");
+      _showPaywall(specificAlbum: albumName);
+      return;
+    }
+  }
+
+  // === Playback Logic (Preserve albumName) ===
   _isPlayingNewSong = false;
   final now = DateTime.now().millisecondsSinceEpoch;
   if (now - (_lastPlayCallTime ?? 0) < 150) return;
-
   _lastPlayCallTime = now;
   _isPlayingNewSong = true;
 
@@ -584,25 +660,23 @@ Future<void> _playSong(
     await Future.delayed(const Duration(milliseconds: 80));
 
     if (fromQueue && _queue.isNotEmpty) {
-      // === NEW BEHAVIOR: Jump to song WITHOUT removing previous songs ===
       final startIdx = originalSongIndex.clamp(0, _queue.length - 1);
-
       final sources = _queue.map((item) => _createHlsSource(item, albumName)).toList();
       final queueSource = ConcatenatingAudioSource(children: sources);
-
       await _globalPlayer.setAudioSource(
         queueSource,
-        initialIndex: startIdx,           // Jump directly to tapped song
+        initialIndex: startIdx,
         initialPosition: Duration.zero,
       );
-
-      print('✅ Queue Jump → Playing index $startIdx (full queue preserved, size: ${_queue.length})');
     } else {
-      // === Album tap (unchanged) ===
       final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
       if (albumSongs.isEmpty) return;
 
-      List<Map<String, dynamic>> songsToQueue = albumSongs.map((s) => Map<String, dynamic>.from(s)).toList();
+      List<Map<String, dynamic>> songsToQueue = albumSongs.map((s) {
+        final map = Map<String, dynamic>.from(s);
+        map['albumName'] = albumName;   // ← CRITICAL: Preserve album name
+        return map;
+      }).toList();
 
       int effectiveStartIndex = originalSongIndex;
 
@@ -619,25 +693,19 @@ Future<void> _playSong(
           final tappedTitle = titleToPlay;
           return songTitle != null && tappedTitle != null && songTitle == tappedTitle;
         });
-
         if (effectiveStartIndex == -1) effectiveStartIndex = 0;
-
-        print('🔒 Free-only mode → Filtered to ${songsToQueue.length} songs | Effective start: $effectiveStartIndex');
       }
 
       final startIdx = effectiveStartIndex.clamp(0, songsToQueue.length - 1);
       _queue = songsToQueue.sublist(startIdx);
-
       final sources = _queue.map((item) => _createHlsSource(item, albumName)).toList();
       final queueSource = ConcatenatingAudioSource(children: sources);
-
       await _globalPlayer.setAudioSource(queueSource, initialIndex: 0);
-      print('✅ Album Tap → ${respectUnlocks ? "FREE ONLY" : "FULL"} queue | Start: $startIdx | Size: ${_queue.length}');
     }
 
     await _globalPlayer.play();
 
-    final displayTitle = titleToPlay ?? 
+    final displayTitle = titleToPlay ??
         (_queue.isNotEmpty ? (_queue.first['title'] ?? _queue.first['Title'] ?? "Unknown") : "Unknown");
 
     _nowPlayingNotifier.value = NowPlayingInfo(
@@ -657,10 +725,8 @@ Future<void> _playSong(
     });
 
     _setupQueueAndTrackListener();
-
     if (!_vinylController.isAnimating) _vinylController.repeat();
 
-    print('▶️ PLAYBACK STARTED → $displayTitle | Queue size: ${_queue.length}');
   } catch (e) {
     print("❌ _playSong Error: $e");
   } finally {
@@ -792,11 +858,12 @@ Future<void> _showMainAlbumTutorial() async {
     barrierDismissible: false,
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text("Your Album Collection"),
+      title: const Text("Welcome Heather"),
       content: const Text(
-        "This is your music library.\n\n"
-        "• Tap any album cover to open it\n"
-        "• Long press an album for more options",
+        "This is your partner's music.\n\n"
+        "• Tap any title on spine to open an album of music\n"
+        "• Swipe left to go to queue page\n"
+        "• Long Press and nothing happens",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
       actions: [
@@ -826,11 +893,11 @@ Future<void> _showAlbumDetailTutorial() async {
     barrierDismissible: false,
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text("Inside an Album"),
+      title: const Text("Your IN"),
       content: const Text(
-        "• Tap a song to play it immediately\n"
-        "• Long press a song to add it to queue\n\n"
-        "Use the player at the bottom to control music.",
+        "• Tap a song \n"
+        "• Long press a song to add it to queue or more options\n\n"
+        "",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
       actions: [
@@ -860,11 +927,11 @@ Future<void> _showQueueTutorial() async {
     barrierDismissible: false,
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text("Your Queue"),
+      title: const Text("Queue"),
       content: const Text(
-        "This is your current playing queue.\n\n"
-        "• Tap any song to jump to it\n"
-        "• Long press to remove or reorder songs",
+        "This queue is awesome.\n\n"
+        "• Tap Free Songs to play Free Songs Playlist\n"
+        "• Long press songs for more options",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
       actions: [
@@ -1878,47 +1945,6 @@ Widget build(BuildContext context) {
     Navigator.pop(context);
   }
 
-TextStyle _getAlbumFont(String albumName) {
-  // Explicit mapping for the top 4 + others
-  final fontMapping = {
-    "melodic": "Melodic",
-    "sol": "Sol",
-    "live": "Live",
-    "central": "Central",
-    "asraya": "Asraya",
-    "gemini": "Gemini",
-    "roger": "Roger",
-    "609": "609",
-    "track": "Track",
-    "base": "Base",
-  };
-
-  String? fontKey = fontMapping[albumName];
-
-  // Fallback to exact key if it exists
-  if (fontKey == null && _albumFonts.containsKey(albumName)) {
-    fontKey = albumName;
-  }
-
-  if (fontKey != null && _albumFonts.containsKey(fontKey)) {
-    return _albumFonts[fontKey]!;
-  }
-
-  // Default fallback
-  return GoogleFonts.inter(
-    fontSize: 17.5,
-    fontWeight: FontWeight.w700,
-    color: Colors.white,
-    letterSpacing: 0.4,
-    shadows: [
-      Shadow(
-        offset: const Offset(1.5, 1.5),
-        blurRadius: 6,
-        color: Colors.black.withOpacity(0.9),
-      ),
-    ],
-  );
-}
 
 Future<void> _purchaseIndividualAlbum(String albumName) async {
   try {
@@ -2448,7 +2474,14 @@ Widget _buildPlaylistsPage() {
                       itemBuilder: (context, index) {
                         final song = _queue[index] as Map<String, dynamic>;
                         final title = (song['title'] as String?) ?? (song['Title'] as String?) ?? "Unknown Song";
-                        final album = song['albumName'] as String? ?? "";
+                        // More reliable album name extraction
+                        final album = (song['albumName'] as String?)?.isNotEmpty == true 
+                            ? song['albumName'] as String 
+                            : (song['Album'] as String?)?.isNotEmpty == true 
+                                ? song['Album'] as String 
+                                : (song['album'] as String?)?.isNotEmpty == true 
+                                    ? song['album'] as String 
+                                    : "Unknown Album";
                         final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
                         final isCurrentlyPlaying = _isQueueMode && index == _currentSongIndex;
 
@@ -2586,7 +2619,14 @@ Widget _buildPlaylistsPage() {
                       itemBuilder: (context, index) {
                         final song = _queue[index] as Map<String, dynamic>;
                         final title = (song['title'] as String?) ?? (song['Title'] as String?) ?? "Unknown Song";
-                        final album = song['albumName'] as String? ?? "";
+                        // More reliable album name extraction
+                        final album = (song['albumName'] as String?)?.isNotEmpty == true 
+                            ? song['albumName'] as String 
+                            : (song['Album'] as String?)?.isNotEmpty == true 
+                                ? song['Album'] as String 
+                                : (song['album'] as String?)?.isNotEmpty == true 
+                                    ? song['album'] as String 
+                                    : "Unknown Album";
                         final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
                         final isCurrentlyPlaying = _isQueueMode && index == _currentSongIndex;
 
@@ -3018,7 +3058,7 @@ Widget _buildFreeSongsPlaylistTile() {
             return {
               'title': song['Title'] ?? song['title'] ?? 'Unknown Song',
               // FIXED: Preserve the real album name
-              'albumName': song['albumName'] ?? 'Free Songs',
+              'albumName': song['albumName'] ?? song['Album'] ?? 'Unknown Album',
               'artUrl': song['artUrl'] ?? song['songArtUrl'] ?? '',
               'url': song['url'] ?? song['URL'] ?? '',
               'isFree': true,
@@ -3467,6 +3507,7 @@ void _showAlbumStory(String albumName) {
   final story = _albumStories[albumName] ?? "Story coming soon for $albumName...";
   final themeColor = _getAlbumThemeColor(albumName);
   final artUrl = album['artUrl'] as String? ?? '';
+  final displayName = _getAlbumDisplayName(albumName);   // ← Use helper
 
   showModalBottomSheet(
     context: context,
@@ -3494,39 +3535,45 @@ void _showAlbumStory(String albumName) {
               borderRadius: BorderRadius.circular(10),
             ),
           ),
+          const SizedBox(height: 16),
+
+          // Clickable Album Art
+          GestureDetector(
+            onTap: () {
+              if (artUrl.isNotEmpty) {
+                _showFullScreenImage(artUrl, displayName);
+              }
+            },
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: artUrl.isNotEmpty
+                  ? CachedNetworkImage(
+                      imageUrl: artUrl,
+                      width: 300,
+                      height: 300,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => Container(
+                        width: 300,
+                        height: 300,
+                        color: Colors.grey[900],
+                        child: const Center(child: CircularProgressIndicator()),
+                      ),
+                      errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 120, color: Colors.white38),
+                    )
+                  : const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
+            ),
+          ),
+
           const SizedBox(height: 20),
 
-          // Album Art
-          if (artUrl.isNotEmpty)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: CachedNetworkImage(
-                imageUrl: artUrl,
-                width: 240,
-                height: 240,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => Container(
-                  width: 240,
-                  height: 240,
-                  color: Colors.grey[900],
-                  child: const Center(child: CircularProgressIndicator()),
-                ),
-                errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 100, color: Colors.white54),
-              ),
-            )
-          else
-            const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
+          // Album Title - Using helper
+          Text(
+            displayName,
+            style: _getAlbumFont(albumName).copyWith(fontSize: 28),
+            textAlign: TextAlign.center,
+          ),
 
-          const SizedBox(height: 24),
-
-          // Album Title
-            Text(
-              _albumDisplayNames[albumName] ?? albumName,
-              style: _getAlbumFont(albumName).copyWith(fontSize: 28), // Same font, bigger size
-              textAlign: TextAlign.center,
-            ),
-
-          const SizedBox(height: 28),
+          const SizedBox(height: 20),
 
           // Story Text
           Expanded(
@@ -3540,8 +3587,8 @@ void _showAlbumStory(String albumName) {
             ),
           ),
 
-          // === INDIVIDUAL ALBUM PURCHASE BUTTON ===
-          if (_albums[albumName]?['canPurchaseIndividually'] == true)
+          // Individual Album Purchase Button
+          if (album['canPurchaseIndividually'] == true)
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
               child: ElevatedButton(
@@ -3578,98 +3625,127 @@ void _showAlbumStory(String albumName) {
   );
 }
 
-  void _showMelodicSolBio() {
-    final bio = _melodicSolBio;
-    final themeColor = bio["themeColor"] as Color? ?? Colors.greenAccent;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.88,
-        decoration: BoxDecoration(
-          color: Colors.black,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [themeColor.withOpacity(0.15), Colors.black],
+void _showFullScreenImage(String imageUrl, String albumName) {
+  showDialog(
+    context: context,
+    builder: (context) => Dialog(
+      backgroundColor: Colors.black,
+      insetPadding: EdgeInsets.zero,
+      child: Stack(
+        children: [
+          // Full screen zoomable image
+          InteractiveViewer(
+            minScale: 0.5,
+            maxScale: 4.0,
+            child: Image.network(
+              imageUrl,
+              fit: BoxFit.contain,
+              width: double.infinity,
+              height: double.infinity,
+              errorBuilder: (context, error, stackTrace) => const Center(
+                child: Icon(Icons.broken_image, size: 100, color: Colors.white38),
+              ),
+            ),
           ),
-        ),
-        child: Column(
-          children: [
-            const SizedBox(height: 12),
-            Container(
-              width: 50,
-              height: 5,
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(10),
-              ),
+
+          // Close button only
+          Positioned(
+            top: 40,
+            left: 20,
+            child: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white, size: 32),
+              onPressed: () => Navigator.pop(context),
             ),
-            const SizedBox(height: 20),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 
-            // Bio Image
-            ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: Image.asset(
-                bio["imageUrl"] as String,
-                width: 240,
-                height: 240,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => const Icon(
-                  Icons.image_not_supported,
-                  size: 140,
-                  color: Colors.white38,
-                ),
-              ),
-            ),
+void _showMelodicSolBio() {
+  final bio = _melodicSolBio;
+  final themeColor = bio["themeColor"] as Color? ?? Colors.greenAccent;
 
-            const SizedBox(height: 24),
-
-            // Title
-            Text(
-              bio["title"] as String,
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: themeColor,
-              ),
-              textAlign: TextAlign.center,
-            ),
-
-            const SizedBox(height: 28),
-
-            // Story Text
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Text(
-                  bio["story"] as String,
-                  style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ),
-
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: themeColor,
-                  minimumSize: const Size(double.infinity, 56),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                ),
-                child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
-              ),
-            ),
-          ],
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => Container(
+      height: MediaQuery.of(context).size.height * 0.88,
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [themeColor.withOpacity(0.15), Colors.black],
         ),
       ),
-    );
-  }
+      child: Column(
+        children: [
+          const SizedBox(height: 12),
+          Container(
+            width: 50,
+            height: 5,
+            decoration: BoxDecoration(
+              color: Colors.grey[600],
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Bio Image
+          ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: Image.network(
+              bio["imageUrl"] as String,
+              width: 400,
+              height: 400,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => Container(
+                width: 400,
+                height: 400,
+                color: Colors.grey[800],
+                child: const Icon(Icons.image_not_supported, size: 120, color: Colors.white38),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 20),   // Tight spacing before story
+
+          // Story Text Only
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                bio["story"] as String,
+                style: const TextStyle(fontSize: 16.5, height: 1.75, color: Colors.white70),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+
+          // Close Button
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: themeColor,
+                minimumSize: const Size(double.infinity, 56),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 Future<void> _redeemPromoCode(String code) async {
   final trimmed = code.trim().toUpperCase();
   final prefs = await SharedPreferences.getInstance();
@@ -3748,10 +3824,12 @@ Future<void> _redeemPromoCode(String code) async {
     });
   }
 
-void _showPaywall() {
+void _showPaywall({String? specificAlbum}) {
   Navigator.push(
     context,
-    MaterialPageRoute(builder: (context) => const PaywallScreen()),
+    MaterialPageRoute(
+      builder: (context) => PaywallScreen(specificAlbum: specificAlbum),
+    ),
   );
 }
 
@@ -4707,9 +4785,11 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
     return isConfirmed;
   }
 }
-// ====================== NEW DYNAMIC PAYWALL SCREEN ======================
+
 class PaywallScreen extends StatefulWidget {
-  const PaywallScreen({super.key});
+  final String? specificAlbum;
+
+  const PaywallScreen({super.key, this.specificAlbum});
 
   @override
   State<PaywallScreen> createState() => _PaywallScreenState();
@@ -4733,7 +4813,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
         _loading = false;
       });
     } catch (e) {
-      print("RevenueCat offerings error: $e");
+      print("RevenueCat error: $e");
       setState(() => _loading = false);
     }
   }
@@ -4745,17 +4825,16 @@ class _PaywallScreenState extends State<PaywallScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          ? const Center(child: CircularProgressIndicator(color: Color.fromARGB(255, 12, 215, 60)))
           : SingleChildScrollView(
               child: Column(
                 children: [
-                  // Header
                   Container(
                     height: 240,
                     width: double.infinity,
                     decoration: const BoxDecoration(
                       image: DecorationImage(
-                        image: NetworkImage("https://dhufx08tsdp2a.cloudfront.net/Melodicsol.png"),
+                        image: NetworkImage("https://dhufx08tsdp2a.cloudfront.net/MelodicsolBioImage.png"),
                         fit: BoxFit.cover,
                       ),
                     ),
@@ -4764,58 +4843,35 @@ class _PaywallScreenState extends State<PaywallScreen> {
                     padding: EdgeInsets.all(24),
                     child: Text(
                       "Unlock Full Access",
-                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
+                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color.fromARGB(255, 27, 203, 74)),
                       textAlign: TextAlign.center,
                     ),
                   ),
 
-                  if (offering != null)
-                    ...offering.availablePackages.map((package) {
-                      final product = package.storeProduct;
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                        child: ElevatedButton(
-                          onPressed: () async {
-                            try {
-                              await Purchases.purchasePackage(package);
-                              if (mounted) Navigator.pop(context);
-                            } catch (e) {
-                              print("Purchase error: $e");
-                            }
-                            final updatedInfo = await Purchases.getCustomerInfo(); // forces listener
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.greenAccent,
-                            foregroundColor: Colors.black,
-                            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                          ),
-                          child: Column(
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(product.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                                  Text(product.priceString, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              _buildBullet("Full access to all albums & future releases"),
-                            ],
-                          ),
-                        ),
-                      );
-                    }).toList()
-                  else
+                  if (offering != null) ...[
+                    // 1. Individual Album Button (if specific album was passed)
+                    if (widget.specificAlbum != null)
+                      ...offering.availablePackages
+                          .where((p) => 
+                              p.storeProduct.identifier.toLowerCase() == widget.specificAlbum!.toLowerCase() ||
+                              p.storeProduct.identifier.toLowerCase().contains("album_${widget.specificAlbum!.toLowerCase()}"))
+                          .map((package) => _buildPackageButton(package, isHighlighted: true)),
+
+                    // 2. Catalog Access & Lifetime (always shown)
+                    ...offering.availablePackages
+                        .where((p) => 
+                            !p.storeProduct.identifier.toLowerCase().contains("album"))
+                        .map((package) => _buildPackageButton(package)),
+                  ] else
                     const Padding(
                       padding: EdgeInsets.all(40),
-                      child: Text("No offerings available", style: TextStyle(color: Colors.white70)),
+                      child: Text("No offerings available", style: TextStyle(color: Color.fromARGB(179, 15, 234, 11))),
                     ),
 
                   const SizedBox(height: 40),
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text("Maybe later", style: TextStyle(color: Colors.white70)),
+                    child: const Text("Go back to Album page", style: TextStyle(color: Color.fromARGB(179, 13, 237, 13))),
                   ),
                   const SizedBox(height: 40),
                 ],
@@ -4824,15 +4880,85 @@ class _PaywallScreenState extends State<PaywallScreen> {
     );
   }
 
+  Widget _buildPackageButton(Package package, {bool isHighlighted = false}) {
+    final product = package.storeProduct;
+
+    // Clear, friendly button title
+    String buttonTitle = product.title;
+
+    if (isHighlighted && widget.specificAlbum != null) {
+      buttonTitle = "Buy ${widget.specificAlbum} Album";
+    } else if (product.identifier.toLowerCase().contains("lifetime")) {
+      buttonTitle = "Lifetime Access";
+    } else if (product.identifier.toLowerCase().contains("catalog") || product.identifier.toLowerCase().contains("full")) {
+      buttonTitle = "Full Catalog Access";
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      child: ElevatedButton(
+        onPressed: () async {
+          try {
+            await Purchases.purchasePackage(package);
+            if (mounted) Navigator.pop(context);
+          } catch (e) {
+            print("Purchase error: $e");
+          }
+        },
+        style: ElevatedButton.styleFrom(
+          backgroundColor: isHighlighted ? Colors.greenAccent : const Color.fromARGB(255, 7, 213, 18),
+          foregroundColor: isHighlighted ? Colors.black : Colors.black,
+          padding: const EdgeInsets.all(20),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(buttonTitle, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
+                Text(product.priceString, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ..._getBulletsForPackage(product.identifier, isHighlighted),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _getBulletsForPackage(String identifier, bool isSpecificAlbum) {
+    if (isSpecificAlbum) {
+      return [
+        _buildBullet("Full access to this album"),
+        _buildBullet("All songs + high quality audio"),
+        _buildBullet("Song Stories & exclusive artwork"),
+      ];
+    } else if (identifier.toLowerCase().contains("lifetime")) {
+      return [
+        _buildBullet("Lifetime access - Pay once"),
+        _buildBullet("All current and future albums"),
+        _buildBullet("No recurring charges ever"),
+      ];
+    } else {
+      return [
+        _buildBullet("Access to the entire catalog"),
+        _buildBullet("All Song Stories & bonus content"),
+        _buildBullet("Cancel or pause anytime"),
+      ];
+    }
+  }
+
   Widget _buildBullet(String text) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.check_circle, color: Colors.greenAccent, size: 20),
+          const Icon(Icons.check_circle, color: Colors.greenAccent, size: 18),
           const SizedBox(width: 12),
-          Expanded(child: Text(text, style: const TextStyle(fontSize: 16, color: Colors.white70))),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 15.5, color: Colors.white70))),
         ],
       ),
     );
