@@ -4842,7 +4842,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   const Padding(
                     padding: EdgeInsets.all(24),
                     child: Text(
-                      "Unlock Full Access",
+                      "I don't need Spotify. I need YOU",
                       style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color.fromARGB(255, 27, 203, 74)),
                       textAlign: TextAlign.center,
                     ),
@@ -4889,9 +4889,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
     if (isHighlighted && widget.specificAlbum != null) {
       buttonTitle = "Buy ${widget.specificAlbum} Album";
     } else if (product.identifier.toLowerCase().contains("lifetime")) {
-      buttonTitle = "Lifetime Access";
+      buttonTitle = "Founder's Circle";
     } else if (product.identifier.toLowerCase().contains("catalog") || product.identifier.toLowerCase().contains("full")) {
-      buttonTitle = "Full Catalog Access";
+      buttonTitle = "Full Catalog";
     }
 
     return Padding(
@@ -4932,20 +4932,14 @@ class _PaywallScreenState extends State<PaywallScreen> {
     if (isSpecificAlbum) {
       return [
         _buildBullet("Full access to this album"),
-        _buildBullet("All songs + high quality audio"),
-        _buildBullet("Song Stories & exclusive artwork"),
       ];
     } else if (identifier.toLowerCase().contains("lifetime")) {
       return [
-        _buildBullet("Lifetime access - Pay once"),
-        _buildBullet("All current and future albums"),
-        _buildBullet("No recurring charges ever"),
+        _buildBullet("Catalog + Lifetime access to every new album"),
       ];
     } else {
       return [
-        _buildBullet("Access to the entire catalog"),
-        _buildBullet("All Song Stories & bonus content"),
-        _buildBullet("Cancel or pause anytime"),
+        _buildBullet("Opens All Songs"),
       ];
     }
   }
