@@ -5037,23 +5037,23 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   ),
 
                   if (offering != null) ...[
-                    // Debug info
+                    // Debug: Show what RevenueCat is returning
                     Padding(
                       padding: const EdgeInsets.all(16),
                       child: Text(
-                        "Available: ${offering.availablePackages.map((p) => p.storeProduct.identifier).join(', ')}",
+                        "Available Packages: ${offering.availablePackages.map((p) => p.storeProduct.identifier).join(', ')}",
                         style: const TextStyle(color: Colors.white70, fontSize: 13),
                       ),
                     ),
 
-                    // Individual Album Button - Very Forgiving Matching
+                    // Individual Album Button - Very Forgiving
                     if (widget.specificAlbum != null) ...[
                       ...offering.availablePackages
                           .where((p) {
                             final id = p.storeProduct.identifier.toLowerCase();
                             final album = widget.specificAlbum!.toLowerCase();
-                            final match = id.contains(album) || id.contains("album") || id == "album_$album";
-                            print("🔍 Paywall Check: '$id' vs '$album' → match: $match");
+                            final match = id.contains(album) || id.contains("album") || id == album || id == "album_$album";
+                            print("🔍 Paywall Check: '$id' for album '$album' → match: $match");
                             return match;
                           })
                           .map((package) => _buildPackageButton(package, isHighlighted: true)),
@@ -5079,16 +5079,16 @@ class _PaywallScreenState extends State<PaywallScreen> {
             ),
     );
   }
+
+  // Keep your existing methods below unchanged
   Widget _buildPackageButton(Package package, {bool isHighlighted = false}) {
     final product = package.storeProduct;
-
     String buttonTitle = product.title;
     if (isHighlighted && widget.specificAlbum != null) {
       buttonTitle = "Buy ${widget.specificAlbum} Album";
     } else if (product.identifier.toLowerCase().contains("lifetime")) {
       buttonTitle = "Founder's Circle";
-    } else if (product.identifier.toLowerCase().contains("catalog") || 
-               product.identifier.toLowerCase().contains("full")) {
+    } else if (product.identifier.toLowerCase().contains("catalog") || product.identifier.toLowerCase().contains("full")) {
       buttonTitle = "Full Catalog";
     }
 
@@ -5097,34 +5097,24 @@ class _PaywallScreenState extends State<PaywallScreen> {
       child: ElevatedButton(
         onPressed: () async {
           try {
-            print("🛒 Purchasing package: ${product.identifier}");
-            final customerInfo = await Purchases.purchasePackage(package);
-            
-            // Force refresh
-            await Purchases.getCustomerInfo();
-            print("✅ Purchase successful → CustomerInfo refreshed");
+            print("🛒 Purchasing: ${product.identifier}");
+            await Purchases.purchasePackage(package);
+            await Purchases.getCustomerInfo(); // Force refresh
+            print("✅ Purchase successful");
 
             if (mounted) {
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("✅ Purchase successful! Unlocks updated."),
-                  backgroundColor: Colors.green,
-                ),
+                const SnackBar(content: Text("✅ Purchase successful!"), backgroundColor: Colors.green),
               );
             }
           } catch (e) {
             print("Purchase error: $e");
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text("Purchase failed: $e")),
-              );
-            }
           }
         },
         style: ElevatedButton.styleFrom(
           backgroundColor: isHighlighted ? Colors.greenAccent : const Color.fromARGB(255, 7, 213, 18),
-          foregroundColor: isHighlighted ? Colors.black : Colors.black,
+          foregroundColor: Colors.black,
           padding: const EdgeInsets.all(20),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
