@@ -1,4 +1,5 @@
 import 'package:purchases_flutter/purchases_flutter.dart';
+import 'package:flutter/foundation.dart'; // for kDebugMode
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:just_audio/just_audio.dart';
@@ -1649,7 +1650,7 @@ void _refreshQueueUI() {
 
       final prefs = await SharedPreferences.getInstance();
 
-      // Force fresh RevenueCat check
+      // === FORCE FRESH REVENUECAT CHECK ===
       try {
         final customerInfo = await Purchases.getCustomerInfo();
         final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
@@ -1657,6 +1658,8 @@ void _refreshQueueUI() {
 
         await prefs.setBool('hasLifetimeAccess', hasLifetime);
         await prefs.setBool('hasCatalogAccess', hasCatalog);
+
+        print("📡 RevenueCat refreshed → Lifetime: $hasLifetime | Catalog: $hasCatalog");
       } catch (e) {
         print("Warning: Could not refresh CustomerInfo: $e");
       }
@@ -1667,20 +1670,21 @@ void _refreshQueueUI() {
 
       final bool isLockedByLockAll = prefs.getBool('lockall_active') ?? false;
 
-      // === STRONG LOCKALL OVERRIDE ===
-      if (isLockedByLockAll) {
-        print("🔒 LOCKALL is active → Forcing locked state for $albumName (even with RevenueCat entitlement)");
-        return false;   // This forces locked state during testing
+      // Strong LOCKALL override (but allow real purchases to override it)
+      if (isLockedByLockAll && !hasLifetime && !hasCatalog) {
+        print("🔒 LOCKALL is active → Forcing locked state for $albumName");
+        return false;
       }
 
       if (hasLifetime || hasCatalog || hasOpenAccess) {
-        print("✅ Unlocked via RevenueCat for album: $albumName");
+        print("✅ UNLOCKED via RevenueCat for album: $albumName");
+        await prefs.setBool('lockall_active', false); // Auto-clear LOCKALL on real unlock
         return true;
       }
 
       final bool individuallyUnlocked = prefs.getBool('unlocked_$albumName') ?? false;
       if (individuallyUnlocked) {
-        print("✅ Unlocked via individual album purchase");
+        print("✅ Unlocked via individual purchase for $albumName");
         return true;
       }
 
@@ -3285,6 +3289,24 @@ void _showCreatePlaylistDialog() {
   );
 }
 
+// Floating Debug Button - Only visible in debug mode
+Widget _buildDebugButton() {
+  if (!kDebugMode) return const SizedBox.shrink();
+
+  return Positioned(
+    bottom: 100,           // Above the mini-player
+    right: 16,
+    child: FloatingActionButton(
+      mini: true,
+      backgroundColor: Colors.deepPurpleAccent,
+      foregroundColor: Colors.white,
+      child: const Icon(Icons.bug_report, size: 28),
+      onPressed: _showExpandedDebugPanel,
+      tooltip: "Debug Panel (Dev Only)",
+    ),
+  );
+}
+
 Widget _buildSocialPage() {
   final screenHeight = MediaQuery.of(context).size.height;
 
@@ -3328,6 +3350,9 @@ Widget _buildSocialPage() {
                 child: Image.asset('assets/logo.png', height: 120),
               ),
             ),
+
+            _buildDebugButton(),
+
             const SizedBox(height: 40),
 
             // Social Media Links
@@ -3818,33 +3843,138 @@ void _showMelodicSolBio() {
     );
   }
 
-Future<void> _fullRevenueCatReset() async {
-  final prefs = await SharedPreferences.getInstance();
+void _showExpandedDebugPanel() {
+  if (!kDebugMode) return;
 
-  // Clear all unlock flags
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.grey[900],
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (context) => DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      builder: (context, scrollController) => ListView(
+        controller: scrollController,
+        padding: const EdgeInsets.all(20),
+        children: [
+          const Text("🔧 MelodicSol Debug Panel", 
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
+          const SizedBox(height: 8),
+          const Text("Development & Troubleshooting Only", 
+              style: TextStyle(color: Colors.white54)),
+
+          const Divider(color: Colors.white24, height: 30),
+
+          Text("hasOpenAccess: ${_hasOpenAccess ?? false}", 
+              style: const TextStyle(color: Colors.white70, fontSize: 16)),
+
+          FutureBuilder<CustomerInfo>(
+            future: Purchases.getCustomerInfo(),
+            builder: (context, snapshot) {
+              if (snapshot.hasData) {
+                final active = snapshot.data!.entitlements.active.keys.toList();
+                return Text("RevenueCat Active: $active", 
+                    style: const TextStyle(color: Colors.greenAccent, fontSize: 16));
+              }
+              return const Text("Loading RevenueCat...");
+            },
+          ),
+
+          const SizedBox(height: 20),
+          const Divider(color: Colors.white24),
+
+          // Quick Actions
+          ElevatedButton.icon(
+            icon: const Icon(Icons.refresh),
+            label: const Text("FULL LOCAL RESET"),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            onPressed: () {
+              Navigator.pop(context);
+              _fullRevenueCatReset();
+            },
+          ),
+          const SizedBox(height: 12),
+
+          ElevatedButton.icon(
+            icon: const Icon(Icons.person_off),
+            label: const Text("Reset RevenueCat User (New ID)"),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+            onPressed: () {
+              Navigator.pop(context);
+              _resetRevenueCatUser();
+            },
+          ),
+          const SizedBox(height: 12),
+
+          ElevatedButton.icon(
+            icon: const Icon(Icons.lock_open),
+            label: const Text("Grant Lifetime (SOLFULL)"),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black),
+            onPressed: () {
+              Navigator.pop(context);
+              _redeemPromoCode("SOLFULL");
+            },
+          ),
+          const SizedBox(height: 12),
+
+          ElevatedButton.icon(
+            icon: const Icon(Icons.lock),
+            label: const Text("LOCKALL"),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () {
+              Navigator.pop(context);
+              _redeemPromoCode("LOCKALL");
+            },
+          ),
+        ],
+      ),
+    ),
+  );
+}
+// ====================== REVENUECAT USER RESET ======================
+Future<void> _resetRevenueCatUser() async {
+  try {
+    print("🔄 Attempting RevenueCat Reset...");
+    // For anonymous users, we just clear local data (logOut is not allowed)
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+
+    if (mounted) {
+      setState(() => _hasOpenAccess = false);
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("🧹 Local data cleared. Close & reopen app for fresh session."),
+        backgroundColor: Colors.purple,
+      ),
+    );
+    print("✅ Local reset complete. Restart app for new RevenueCat session.");
+  } catch (e) {
+    print("Reset error: $e");
+  }
+}
+
+Future<void> _fullRevenueCatReset() async {
+  if (!mounted) return;
+
+  final prefs = await SharedPreferences.getInstance();
   await prefs.setBool('lockall_active', true);
   await prefs.setBool('hasLifetimeAccess', false);
   await prefs.setBool('hasCatalogAccess', false);
-  await prefs.setBool('hasOpenAccess', false); // if you use this variable
 
-  // Clear individual album unlocks
-  await prefs.setBool('unlocked_Sol', false);
-  await prefs.setBool('unlocked_live', false);
-  await prefs.setBool('unlocked_Melodic', false);
-  await prefs.setBool('unlocked_Central', false);
-  // Add more albums as needed
-
-  setState(() {
-    _hasOpenAccess = false;
-  });
+  if (mounted) {
+    setState(() => _hasOpenAccess = false);
+  }
 
   ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(
-      content: Text("🧹 FULL RESET - All purchases & unlocks cleared for testing"),
-      backgroundColor: Colors.orange,
-    ),
+    const SnackBar(content: Text("🧹 FULL LOCAL RESET Complete"), backgroundColor: Colors.orange),
   );
-  print("🧹 FULL RevenueCat + Unlock Reset Complete");
+  print("🧹 FULL LOCAL RESET Complete");
 }
 
     Future<void> _setupNotifications() async {
@@ -4869,6 +4999,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
         _offerings = offerings;
         _loading = false;
       });
+      print("✅ Offerings loaded. Total packages: ${offerings.current?.availablePackages.length ?? 0}");
     } catch (e) {
       print("RevenueCat error: $e");
       setState(() => _loading = false);
@@ -4906,22 +5037,36 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   ),
 
                   if (offering != null) ...[
-                    // Individual Album Button (if specific album passed)
-                    if (widget.specificAlbum != null)
-                      ...offering.availablePackages
-                          .where((p) =>
-                              p.storeProduct.identifier.toLowerCase() == widget.specificAlbum!.toLowerCase() ||
-                              p.storeProduct.identifier.toLowerCase().contains("album_${widget.specificAlbum!.toLowerCase()}"))
-                          .map((package) => _buildPackageButton(package, isHighlighted: true)),
+                    // Debug info
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        "Available: ${offering.availablePackages.map((p) => p.storeProduct.identifier).join(', ')}",
+                        style: const TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                    ),
 
-                    // Catalog Access & Lifetime (always shown)
+                    // Individual Album Button - Very Forgiving Matching
+                    if (widget.specificAlbum != null) ...[
+                      ...offering.availablePackages
+                          .where((p) {
+                            final id = p.storeProduct.identifier.toLowerCase();
+                            final album = widget.specificAlbum!.toLowerCase();
+                            final match = id.contains(album) || id.contains("album") || id == "album_$album";
+                            print("🔍 Paywall Check: '$id' vs '$album' → match: $match");
+                            return match;
+                          })
+                          .map((package) => _buildPackageButton(package, isHighlighted: true)),
+                    ],
+
+                    // Catalog & Lifetime
                     ...offering.availablePackages
                         .where((p) => !p.storeProduct.identifier.toLowerCase().contains("album"))
                         .map((package) => _buildPackageButton(package)),
                   ] else
                     const Padding(
                       padding: EdgeInsets.all(40),
-                      child: Text("No offerings available", style: TextStyle(color: Color.fromARGB(179, 15, 234, 11))),
+                      child: Text("No offerings available", style: TextStyle(color: Colors.redAccent)),
                     ),
 
                   const SizedBox(height: 40),
@@ -4929,13 +5074,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
                     onPressed: () => Navigator.pop(context),
                     child: const Text("Go back to Album page", style: TextStyle(color: Color.fromARGB(179, 13, 237, 13))),
                   ),
-                  const SizedBox(height: 40),
                 ],
               ),
             ),
     );
   }
-
   Widget _buildPackageButton(Package package, {bool isHighlighted = false}) {
     final product = package.storeProduct;
 
@@ -4944,7 +5087,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
       buttonTitle = "Buy ${widget.specificAlbum} Album";
     } else if (product.identifier.toLowerCase().contains("lifetime")) {
       buttonTitle = "Founder's Circle";
-    } else if (product.identifier.toLowerCase().contains("catalog") || product.identifier.toLowerCase().contains("full")) {
+    } else if (product.identifier.toLowerCase().contains("catalog") || 
+               product.identifier.toLowerCase().contains("full")) {
       buttonTitle = "Full Catalog";
     }
 
@@ -4956,14 +5100,17 @@ class _PaywallScreenState extends State<PaywallScreen> {
             print("🛒 Purchasing package: ${product.identifier}");
             final customerInfo = await Purchases.purchasePackage(package);
             
-            // === FORCE REFRESH AFTER PURCHASE (Critical Fix) ===
-            final updatedInfo = await Purchases.getCustomerInfo();
+            // Force refresh
+            await Purchases.getCustomerInfo();
             print("✅ Purchase successful → CustomerInfo refreshed");
 
             if (mounted) {
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("✅ Purchase successful! Unlocks updated."), backgroundColor: Colors.green),
+                const SnackBar(
+                  content: Text("✅ Purchase successful! Unlocks updated."),
+                  backgroundColor: Colors.green,
+                ),
               );
             }
           } catch (e) {
