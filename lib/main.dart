@@ -643,7 +643,7 @@ Future<void> _playSong(
     final bool isPaidUnlocked = await _isContentUnlocked(albumName);
     if (!isPaidUnlocked) {
       print("🔒 Paid content locked → Showing Paywall");
-      _showPaywall(specificAlbum: albumName);   // Keep your existing call
+      _showPaywall(albumName);   // Keep your existing call
       return;
     }
   }
@@ -1645,52 +1645,42 @@ void _refreshQueueUI() {
     }
   }
 
-    Future<bool> _isContentUnlocked(String? albumName) async {
-      if (albumName == null) return false;
+Future<bool> _isContentUnlocked(String? albumName) async {
+  if (albumName == null) return false;
 
-      final prefs = await SharedPreferences.getInstance();
+  final prefs = await SharedPreferences.getInstance();
 
-      // === FORCE FRESH REVENUECAT CHECK ===
-      try {
-        final customerInfo = await Purchases.getCustomerInfo();
-        final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
-        final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
+  try {
+    // Force fresh data from RevenueCat
+    final customerInfo = await Purchases.getCustomerInfo();
+    
+    final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
+    final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
+    
+    await prefs.setBool('hasLifetimeAccess', hasLifetime);
+    await prefs.setBool('hasCatalogAccess', hasCatalog);
 
-        await prefs.setBool('hasLifetimeAccess', hasLifetime);
-        await prefs.setBool('hasCatalogAccess', hasCatalog);
+    print("📡 RevenueCat check → Lifetime: $hasLifetime | Catalog: $hasCatalog | Album: $albumName");
+  } catch (e) {
+    print("⚠️ RevenueCat check failed: $e");
+  }
 
-        print("📡 RevenueCat refreshed → Lifetime: $hasLifetime | Catalog: $hasCatalog");
-      } catch (e) {
-        print("Warning: Could not refresh CustomerInfo: $e");
-      }
+  final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
+  final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
+  final bool hasOpenAccess = _hasOpenAccess ?? false;
 
-      final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
-      final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
-      final bool hasOpenAccess = _hasOpenAccess ?? false;
+  // Individual album unlock check
+  final bool hasIndividualUnlock = prefs.getBool('unlocked_$albumName') ?? false;
 
-      final bool isLockedByLockAll = prefs.getBool('lockall_active') ?? false;
+  if (hasLifetime || hasCatalog || hasOpenAccess || hasIndividualUnlock) {
+    print("✅ UNLOCKED via RevenueCat for album: $albumName");
+    await prefs.setBool('lockall_active', false); // Clear test lock
+    return true;
+  }
 
-      // Strong LOCKALL override (but allow real purchases to override it)
-      if (isLockedByLockAll && !hasLifetime && !hasCatalog) {
-        print("🔒 LOCKALL is active → Forcing locked state for $albumName");
-        return false;
-      }
-
-      if (hasLifetime || hasCatalog || hasOpenAccess) {
-        print("✅ UNLOCKED via RevenueCat for album: $albumName");
-        await prefs.setBool('lockall_active', false); // Auto-clear LOCKALL on real unlock
-        return true;
-      }
-
-      final bool individuallyUnlocked = prefs.getBool('unlocked_$albumName') ?? false;
-      if (individuallyUnlocked) {
-        print("✅ Unlocked via individual purchase for $albumName");
-        return true;
-      }
-
-      print("🔒 Still locked for album: $albumName");
-      return false;
-    }
+  print("🔒 Still locked for album: $albumName");
+  return false;
+}
 
     Future<void> _initializeRevenueCat() async {
     try {
@@ -2311,7 +2301,7 @@ return Column(
                           ),
                         );
                       } else if (!isActuallyUnlocked) {
-                        _showPaywall();
+                        _showPaywall(albumName);
                       } else {
                         final songData = songs[index] as Map<String, dynamic>;
                         final isFreeSong = (songData['isFree'] as bool? ?? false) ||
@@ -4012,7 +4002,7 @@ Future<void> _fullRevenueCatReset() async {
     });
   }
 
-void _showPaywall({String? specificAlbum}) {
+void _showPaywall([String? specificAlbum]) {
   Navigator.push(
     context,
     MaterialPageRoute(
@@ -4995,11 +4985,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
   Future<void> _loadOfferings() async {
     try {
       final offerings = await Purchases.getOfferings();
+      print("🔍 PaywallScreen → Offerings loaded. Packages: ${offerings.current?.availablePackages.map((p) => p.storeProduct.identifier).join(', ')}");
       setState(() {
         _offerings = offerings;
         _loading = false;
       });
-      print("✅ Offerings loaded. Total packages: ${offerings.current?.availablePackages.length ?? 0}");
     } catch (e) {
       print("RevenueCat error: $e");
       setState(() => _loading = false);
@@ -5012,67 +5002,48 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
     return Scaffold(
       backgroundColor: Colors.black,
+      appBar: AppBar(title: const Text("Unlock Content"), backgroundColor: Colors.black),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: Color.fromARGB(255, 12, 215, 60)))
+          ? const Center(child: CircularProgressIndicator(color: Colors.greenAccent))
           : SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
               child: Column(
                 children: [
-                  Container(
-                    height: 240,
-                    width: double.infinity,
-                    decoration: const BoxDecoration(
-                      image: DecorationImage(
-                        image: NetworkImage("https://dhufx08tsdp2a.cloudfront.net/MelodicsolBioImage.png"),
-                        fit: BoxFit.cover,
-                      ),
-                    ),
+                  const Text(
+                    "I don't need Spotify.\nI need YOU",
+                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color.fromARGB(255, 27, 203, 74)),
+                    textAlign: TextAlign.center,
                   ),
-                  const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text(
-                      "I don't need Spotify. I need YOU",
-                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color.fromARGB(255, 27, 203, 74)),
-                      textAlign: TextAlign.center,
-                    ),
+                  const SizedBox(height: 30),
+
+                  // DEBUG INFO
+                  Text(
+                    "specificAlbum: ${widget.specificAlbum}\nAvailable: ${offering?.availablePackages.map((p) => p.storeProduct.identifier).join(', ')}",
+                    style: const TextStyle(color: Colors.yellow, fontSize: 14),
                   ),
+                  const SizedBox(height: 30),
 
                   if (offering != null) ...[
-                    // Debug: Show what RevenueCat is returning
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(
-                        "Available Packages: ${offering.availablePackages.map((p) => p.storeProduct.identifier).join(', ')}",
-                        style: const TextStyle(color: Colors.white70, fontSize: 13),
+                    // FORCE "Buy Sol Album"
+                    if (widget.specificAlbum?.toLowerCase() == "sol")
+                      _buildPackageButton(
+                        offering.availablePackages.firstWhere(
+                          (p) => p.storeProduct.identifier.contains("album_sol"),
+                          orElse: () => offering.availablePackages.first,
+                        ),
+                        isHighlighted: true,
                       ),
-                    ),
 
-                    // Individual Album Button - Very Forgiving
-                    if (widget.specificAlbum != null) ...[
-                      ...offering.availablePackages
-                          .where((p) {
-                            final id = p.storeProduct.identifier.toLowerCase();
-                            final album = widget.specificAlbum!.toLowerCase();
-                            final match = id.contains(album) || id.contains("album") || id == album || id == "album_$album";
-                            print("🔍 Paywall Check: '$id' for album '$album' → match: $match");
-                            return match;
-                          })
-                          .map((package) => _buildPackageButton(package, isHighlighted: true)),
-                    ],
-
-                    // Catalog & Lifetime
+                    // Catalog + Lifetime
                     ...offering.availablePackages
-                        .where((p) => !p.storeProduct.identifier.toLowerCase().contains("album"))
-                        .map((package) => _buildPackageButton(package)),
-                  ] else
-                    const Padding(
-                      padding: EdgeInsets.all(40),
-                      child: Text("No offerings available", style: TextStyle(color: Colors.redAccent)),
-                    ),
+                        .where((p) => !p.storeProduct.identifier.contains("album"))
+                        .map((p) => _buildPackageButton(p)),
+                  ],
 
                   const SizedBox(height: 40),
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text("Go back to Album page", style: TextStyle(color: Color.fromARGB(179, 13, 237, 13))),
+                    child: const Text("Cancel", style: TextStyle(color: Colors.white70)),
                   ),
                 ],
               ),
@@ -5080,54 +5051,64 @@ class _PaywallScreenState extends State<PaywallScreen> {
     );
   }
 
-  // Keep your existing methods below unchanged
   Widget _buildPackageButton(Package package, {bool isHighlighted = false}) {
     final product = package.storeProduct;
-    String buttonTitle = product.title;
-    if (isHighlighted && widget.specificAlbum != null) {
-      buttonTitle = "Buy ${widget.specificAlbum} Album";
-    } else if (product.identifier.toLowerCase().contains("lifetime")) {
-      buttonTitle = "Founder's Circle";
-    } else if (product.identifier.toLowerCase().contains("catalog") || product.identifier.toLowerCase().contains("full")) {
-      buttonTitle = "Full Catalog";
-    }
+    String title = isHighlighted && widget.specificAlbum != null 
+        ? "Buy ${widget.specificAlbum} Album" 
+        : product.title;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      padding: const EdgeInsets.only(bottom: 16),
       child: ElevatedButton(
         onPressed: () async {
           try {
             print("🛒 Purchasing: ${product.identifier}");
             await Purchases.purchasePackage(package);
-            await Purchases.getCustomerInfo(); // Force refresh
-            print("✅ Purchase successful");
+            
+            // Force refresh
+            final customerInfo = await Purchases.getCustomerInfo();
+            
+            // Save individual album unlock if this was a specific album purchase
+            if (widget.specificAlbum != null) {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('unlocked_${widget.specificAlbum}', true);
+            }
 
             if (mounted) {
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("✅ Purchase successful!"), backgroundColor: Colors.green),
+                const SnackBar(content: Text("✅ Album unlocked!"), backgroundColor: Colors.green),
               );
             }
           } catch (e) {
-            print("Purchase error: $e");
+            print("❌ Purchase error: $e");
           }
         },
         style: ElevatedButton.styleFrom(
-          backgroundColor: isHighlighted ? Colors.greenAccent : const Color.fromARGB(255, 7, 213, 18),
-          foregroundColor: Colors.black,
-          padding: const EdgeInsets.all(20),
+          backgroundColor: isHighlighted ? Colors.greenAccent : Colors.white12,
+          foregroundColor: isHighlighted ? Colors.black : Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
         child: Column(
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(buttonTitle, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
-                Text(product.priceString, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  product.priceString,
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             ..._getBulletsForPackage(product.identifier, isHighlighted),
           ],
         ),
@@ -5135,25 +5116,20 @@ class _PaywallScreenState extends State<PaywallScreen> {
     );
   }
 
-  List<Widget> _getBulletsForPackage(String identifier, bool isSpecificAlbum) {
-    if (isSpecificAlbum) {
-      return [_buildBullet("Full access to this album")];
-    } else if (identifier.toLowerCase().contains("lifetime")) {
-      return [_buildBullet("Catalog + Lifetime access to every new album")];
-    } else {
-      return [_buildBullet("Opens All Songs")];
-    }
+  List<Widget> _getBulletsForPackage(String identifier, bool isSpecific) {
+    if (isSpecific) return [_buildBullet("Full access to this album")];
+    if (identifier.contains("lifetime")) return [_buildBullet("Lifetime access + all future albums")];
+    return [_buildBullet("Unlock entire catalog")];
   }
 
   Widget _buildBullet(String text) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 6),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Icon(Icons.check_circle, color: Colors.greenAccent, size: 18),
           const SizedBox(width: 12),
-          Expanded(child: Text(text, style: const TextStyle(fontSize: 15.5, color: Colors.white70))),
+          Expanded(child: Text(text, style: const TextStyle(color: Colors.white70))),
         ],
       ),
     );
