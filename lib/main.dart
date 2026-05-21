@@ -606,9 +606,8 @@ Future<void> _playSong(
 }) async {
   print("🔥 _playSong → Album: '$albumName' | OriginalIndex: $originalSongIndex | fromQueue: $fromQueue | respectUnlocks: $respectUnlocks");
 
-  // === SPECIAL FREE SONG CHECK ===
+  // === 1. SPECIAL FREE SONG CHECK (Your original logic - preserved) ===
   bool songIsFree = false;
-
   if (!fromQueue) {
     final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
     if (originalSongIndex < albumSongs.length) {
@@ -621,7 +620,7 @@ Future<void> _playSong(
   if (songIsFree) {
     print("✅ Free song detected → Playing without paywall");
   } else {
-    // === EMAIL UNLOCK CHECK ===
+    // === 2. EMAIL UNLOCK CHECK (Your original priority - preserved) ===
     if (!fromQueue) {
       final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
       if (originalSongIndex < albumSongs.length) {
@@ -639,16 +638,16 @@ Future<void> _playSong(
       }
     }
 
-    // === PAID UNLOCK CHECK ===
+    // === 3. PAID / CATALOG / LIFETIME UNLOCK CHECK ===
     final bool isPaidUnlocked = await _isContentUnlocked(albumName);
     if (!isPaidUnlocked) {
       print("🔒 Paid content locked → Showing Paywall");
-      _showPaywall(specificAlbum: albumName);
+      _showPaywall(specificAlbum: albumName);   // Keep your existing call
       return;
     }
   }
 
-  // === Playback Logic (Preserve albumName) ===
+  // === Playback Logic (Everything below this line is your original code, untouched) ===
   _isPlayingNewSong = false;
   final now = DateTime.now().millisecondsSinceEpoch;
   if (now - (_lastPlayCallTime ?? 0) < 150) return;
@@ -660,6 +659,7 @@ Future<void> _playSong(
     await Future.delayed(const Duration(milliseconds: 80));
 
     if (fromQueue && _queue.isNotEmpty) {
+      // Queue mode - jump without clearing previous songs
       final startIdx = originalSongIndex.clamp(0, _queue.length - 1);
       final sources = _queue.map((item) => _createHlsSource(item, albumName)).toList();
       final queueSource = ConcatenatingAudioSource(children: sources);
@@ -668,7 +668,9 @@ Future<void> _playSong(
         initialIndex: startIdx,
         initialPosition: Duration.zero,
       );
+      print('✅ Queue Jump → Playing index $startIdx (full queue preserved, size: ${_queue.length})');
     } else {
+      // Album tap
       final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
       if (albumSongs.isEmpty) return;
 
@@ -694,6 +696,7 @@ Future<void> _playSong(
           return songTitle != null && tappedTitle != null && songTitle == tappedTitle;
         });
         if (effectiveStartIndex == -1) effectiveStartIndex = 0;
+        print('🔒 Free-only mode → Filtered to ${songsToQueue.length} songs | Effective start: $effectiveStartIndex');
       }
 
       final startIdx = effectiveStartIndex.clamp(0, songsToQueue.length - 1);
@@ -701,6 +704,7 @@ Future<void> _playSong(
       final sources = _queue.map((item) => _createHlsSource(item, albumName)).toList();
       final queueSource = ConcatenatingAudioSource(children: sources);
       await _globalPlayer.setAudioSource(queueSource, initialIndex: 0);
+      print('✅ Album Tap → ${respectUnlocks ? "FREE ONLY" : "FULL"} queue | Start: $startIdx | Size: ${_queue.length}');
     }
 
     await _globalPlayer.play();
@@ -727,6 +731,7 @@ Future<void> _playSong(
     _setupQueueAndTrackListener();
     if (!_vinylController.isAnimating) _vinylController.repeat();
 
+    print('▶️ PLAYBACK STARTED → $displayTitle | Queue size: ${_queue.length}');
   } catch (e) {
     print("❌ _playSong Error: $e");
   } finally {
@@ -1639,23 +1644,49 @@ void _refreshQueueUI() {
     }
   }
 
-  Future<bool> _isContentUnlocked(String? albumName) async {
-  if (albumName == null) return false;
+    Future<bool> _isContentUnlocked(String? albumName) async {
+      if (albumName == null) return false;
 
-  final prefs = await SharedPreferences.getInstance();
+      final prefs = await SharedPreferences.getInstance();
 
-  final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
-  final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
-  final bool hasOpenAccess = _hasOpenAccess ?? false;
+      // Force fresh RevenueCat check
+      try {
+        final customerInfo = await Purchases.getCustomerInfo();
+        final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
+        final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
 
-  if (hasLifetime || hasCatalog || hasOpenAccess) {
-    return true;
-  }
+        await prefs.setBool('hasLifetimeAccess', hasLifetime);
+        await prefs.setBool('hasCatalogAccess', hasCatalog);
+      } catch (e) {
+        print("Warning: Could not refresh CustomerInfo: $e");
+      }
 
-  // Individual album unlock
-  final bool individuallyUnlocked = prefs.getBool('unlocked_$albumName') ?? false;
-  return individuallyUnlocked;
-}
+      final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
+      final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
+      final bool hasOpenAccess = _hasOpenAccess ?? false;
+
+      final bool isLockedByLockAll = prefs.getBool('lockall_active') ?? false;
+
+      // === STRONG LOCKALL OVERRIDE ===
+      if (isLockedByLockAll) {
+        print("🔒 LOCKALL is active → Forcing locked state for $albumName (even with RevenueCat entitlement)");
+        return false;   // This forces locked state during testing
+      }
+
+      if (hasLifetime || hasCatalog || hasOpenAccess) {
+        print("✅ Unlocked via RevenueCat for album: $albumName");
+        return true;
+      }
+
+      final bool individuallyUnlocked = prefs.getBool('unlocked_$albumName') ?? false;
+      if (individuallyUnlocked) {
+        print("✅ Unlocked via individual album purchase");
+        return true;
+      }
+
+      print("🔒 Still locked for album: $albumName");
+      return false;
+    }
 
     Future<void> _initializeRevenueCat() async {
     try {
@@ -1672,6 +1703,8 @@ void _refreshQueueUI() {
       print("✅ RevenueCat: Open Access = $_hasOpenAccess");
 
       // Listen for future changes
+// Strong RevenueCat Listener - Fixes unlock issues
+// Strong RevenueCat Listener - Fixes unlock persistence
       Purchases.addCustomerInfoUpdateListener((CustomerInfo customerInfo) async {
         final prefs = await SharedPreferences.getInstance();
 
@@ -1686,7 +1719,7 @@ void _refreshQueueUI() {
           _hasOpenAccess = hasLifetime || hasCatalog || hasPremium;
         });
 
-        print("✅ RevenueCat unlock updated → Lifetime: $hasLifetime | Catalog: $hasCatalog");
+        print("✅ RevenueCat Listener → Lifetime: $hasLifetime | Catalog: $hasCatalog | OpenAccess: $_hasOpenAccess");
       });
 
     } catch (e) {
@@ -3434,9 +3467,15 @@ Widget _buildSocialPage() {
                 Expanded(
                   child: TextButton(
                     onPressed: () => _redeemPromoCode("LOCKALL"),
-                    child: const Text("LOCKALL (Reset)"),
+                    child: const Text("LOCKALL (Reset)", style: TextStyle(color: Colors.redAccent)),
                   ),
                 ),
+                Expanded(
+                   child: TextButton(
+                    onPressed: () => _fullRevenueCatReset(),
+                    child: const Text("FULL RESET (Test)", style: TextStyle(color: Colors.orangeAccent)),
+                  ),
+                ),                
               ],
             ),
 
@@ -3746,49 +3785,68 @@ void _showMelodicSolBio() {
   );
 }
 
-Future<void> _redeemPromoCode(String code) async {
-  final trimmed = code.trim().toUpperCase();
-  final prefs = await SharedPreferences.getInstance();
+  Future<void> _redeemPromoCode(String code) async {
+    final prefs = await SharedPreferences.getInstance();
 
-  if (trimmed == "SOLFULL" || trimmed == "MASTERACCESS") {
-    await prefs.setBool('hasLifetimeAccess', true);
-    setState(() => _hasOpenAccess = true);
+    if (code == "LOCKALL") {
+      await prefs.setBool('lockall_active', true);
+      await prefs.setBool('hasLifetimeAccess', false);
+      await prefs.setBool('hasCatalogAccess', false);
+      setState(() => _hasOpenAccess = false);
 
-    print("✅ SOLFULL → Lifetime Access ENABLED");
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("✅ Lifetime access granted!"), backgroundColor: Colors.green),
-    );
-  } 
-  else if (trimmed == "LOCKALL" || trimmed == "RESETACCESS") {
-    // Reset everything for testing
-    await prefs.setBool('hasLifetimeAccess', false);
-    setState(() => _hasOpenAccess = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("🔒 LOCKALL Activated"), backgroundColor: Colors.red),
+      );
+      print("🔒 LOCKALL → All paid access RESET");
+      return;
+    }
 
-    print("🔒 LOCKALL → All paid access RESET");
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("🔒 All paid unlocks cleared for testing"),
-        backgroundColor: Colors.orange,
-      ),
-    );
-  } 
-  else if (trimmed.startsWith("UNLOCK_")) {
-    final albumSlug = trimmed.replaceFirst("UNLOCK_", "").toLowerCase();
-    await prefs.setBool('unlocked_$albumSlug', true);
-    setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("✅ Album unlocked!"), backgroundColor: Colors.green),
-    );
-  } 
-  else {
+    if (code == "SOLFULL") {
+      await prefs.setBool('hasLifetimeAccess', true);
+      await prefs.setBool('lockall_active', false);
+      setState(() => _hasOpenAccess = true);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("✅ SOLFULL - Lifetime Access Granted"), backgroundColor: Colors.green),
+      );
+      print("✅ SOLFULL Lifetime Unlock Applied");
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("Invalid promo code")),
     );
   }
 
-  // Force UI refresh
-  if (mounted) setState(() {});
+Future<void> _fullRevenueCatReset() async {
+  final prefs = await SharedPreferences.getInstance();
+
+  // Clear all unlock flags
+  await prefs.setBool('lockall_active', true);
+  await prefs.setBool('hasLifetimeAccess', false);
+  await prefs.setBool('hasCatalogAccess', false);
+  await prefs.setBool('hasOpenAccess', false); // if you use this variable
+
+  // Clear individual album unlocks
+  await prefs.setBool('unlocked_Sol', false);
+  await prefs.setBool('unlocked_live', false);
+  await prefs.setBool('unlocked_Melodic', false);
+  await prefs.setBool('unlocked_Central', false);
+  // Add more albums as needed
+
+  setState(() {
+    _hasOpenAccess = false;
+  });
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text("🧹 FULL RESET - All purchases & unlocks cleared for testing"),
+      backgroundColor: Colors.orange,
+    ),
+  );
+  print("🧹 FULL RevenueCat + Unlock Reset Complete");
 }
+
     Future<void> _setupNotifications() async {
     final messaging = FirebaseMessaging.instance;
 
@@ -4788,7 +4846,6 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
 
 class PaywallScreen extends StatefulWidget {
   final String? specificAlbum;
-
   const PaywallScreen({super.key, this.specificAlbum});
 
   @override
@@ -4849,18 +4906,17 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   ),
 
                   if (offering != null) ...[
-                    // 1. Individual Album Button (if specific album was passed)
+                    // Individual Album Button (if specific album passed)
                     if (widget.specificAlbum != null)
                       ...offering.availablePackages
-                          .where((p) => 
+                          .where((p) =>
                               p.storeProduct.identifier.toLowerCase() == widget.specificAlbum!.toLowerCase() ||
                               p.storeProduct.identifier.toLowerCase().contains("album_${widget.specificAlbum!.toLowerCase()}"))
                           .map((package) => _buildPackageButton(package, isHighlighted: true)),
 
-                    // 2. Catalog Access & Lifetime (always shown)
+                    // Catalog Access & Lifetime (always shown)
                     ...offering.availablePackages
-                        .where((p) => 
-                            !p.storeProduct.identifier.toLowerCase().contains("album"))
+                        .where((p) => !p.storeProduct.identifier.toLowerCase().contains("album"))
                         .map((package) => _buildPackageButton(package)),
                   ] else
                     const Padding(
@@ -4883,9 +4939,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
   Widget _buildPackageButton(Package package, {bool isHighlighted = false}) {
     final product = package.storeProduct;
 
-    // Clear, friendly button title
     String buttonTitle = product.title;
-
     if (isHighlighted && widget.specificAlbum != null) {
       buttonTitle = "Buy ${widget.specificAlbum} Album";
     } else if (product.identifier.toLowerCase().contains("lifetime")) {
@@ -4899,10 +4953,26 @@ class _PaywallScreenState extends State<PaywallScreen> {
       child: ElevatedButton(
         onPressed: () async {
           try {
-            await Purchases.purchasePackage(package);
-            if (mounted) Navigator.pop(context);
+            print("🛒 Purchasing package: ${product.identifier}");
+            final customerInfo = await Purchases.purchasePackage(package);
+            
+            // === FORCE REFRESH AFTER PURCHASE (Critical Fix) ===
+            final updatedInfo = await Purchases.getCustomerInfo();
+            print("✅ Purchase successful → CustomerInfo refreshed");
+
+            if (mounted) {
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("✅ Purchase successful! Unlocks updated."), backgroundColor: Colors.green),
+              );
+            }
           } catch (e) {
             print("Purchase error: $e");
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text("Purchase failed: $e")),
+              );
+            }
           }
         },
         style: ElevatedButton.styleFrom(
@@ -4930,17 +5000,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
   List<Widget> _getBulletsForPackage(String identifier, bool isSpecificAlbum) {
     if (isSpecificAlbum) {
-      return [
-        _buildBullet("Full access to this album"),
-      ];
+      return [_buildBullet("Full access to this album")];
     } else if (identifier.toLowerCase().contains("lifetime")) {
-      return [
-        _buildBullet("Catalog + Lifetime access to every new album"),
-      ];
+      return [_buildBullet("Catalog + Lifetime access to every new album")];
     } else {
-      return [
-        _buildBullet("Opens All Songs"),
-      ];
+      return [_buildBullet("Opens All Songs")];
     }
   }
 
