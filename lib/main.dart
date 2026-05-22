@@ -648,6 +648,14 @@ Future<void> _playSong(
     }
   }
 
+      // === PAID UNLOCK CHECK ===
+    final bool isUnlocked = await _isContentUnlocked(albumName);
+    if (!isUnlocked) {
+      print("🔒 Paid content locked → Showing Paywall");
+      _showPaywall(albumName);   // Pass album name
+      return;
+    }
+
   // === Playback Logic (Everything below this line is your original code, untouched) ===
   _isPlayingNewSong = false;
   final now = DateTime.now().millisecondsSinceEpoch;
@@ -1141,6 +1149,13 @@ void _showQueueSongOptions(Map<String, dynamic> queueItem, int queueIndex) {
       ],
     ),
   );
+}
+
+void _refreshAfterPurchase() {
+  setState(() {
+    // Force rebuild of album page, song list, lock icons, etc.
+    print("🔄 Refreshing UI after purchase");
+  });
 }
 
 void _showSongOptions(Map<String, dynamic> song, String albumName, int index) {
@@ -1645,42 +1660,47 @@ void _refreshQueueUI() {
     }
   }
 
-Future<bool> _isContentUnlocked(String? albumName) async {
-  if (albumName == null) return false;
+  Future<bool> _isContentUnlocked(String? albumName) async {
+    if (albumName == null) return false;
 
-  final prefs = await SharedPreferences.getInstance();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload(); // Force fresh read from disk
 
-  try {
-    // Force fresh data from RevenueCat
-    final customerInfo = await Purchases.getCustomerInfo();
-    
-    final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
-    final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
-    
-    await prefs.setBool('hasLifetimeAccess', hasLifetime);
-    await prefs.setBool('hasCatalogAccess', hasCatalog);
+    try {
+      final customerInfo = await Purchases.getCustomerInfo();
+      final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
+      final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
 
-    print("📡 RevenueCat check → Lifetime: $hasLifetime | Catalog: $hasCatalog | Album: $albumName");
-  } catch (e) {
-    print("⚠️ RevenueCat check failed: $e");
+      await prefs.setBool('hasLifetimeAccess', hasLifetime);
+      await prefs.setBool('hasCatalogAccess', hasCatalog);
+
+      print("📡 RevenueCat refreshed → Lifetime: $hasLifetime | Catalog: $hasCatalog");
+    } catch (e) {
+      print("⚠️ RevenueCat fetch failed: $e");
+    }
+
+    final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
+    final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
+    final bool hasOpenAccess = _hasOpenAccess ?? false;
+    final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
+    final bool lockAllActive = prefs.getBool('lockall_active') ?? false;
+
+    print("🔍 CHECK FOR '$albumName' → Individual: $hasIndividual | Lifetime: $hasLifetime | Catalog: $hasCatalog | LockAll: $lockAllActive");
+
+    if (lockAllActive && !hasLifetime && !hasCatalog) {
+      print("🔒 LOCKALL active — forcing locked");
+      return false;
+    }
+
+    if (hasLifetime || hasCatalog || hasOpenAccess || hasIndividual) {
+      print("✅ ✅ ✅ SUCCESSFULLY UNLOCKED for $albumName");
+      await prefs.setBool('lockall_active', false);
+      return true;
+    }
+
+    print("🔒 Still locked for $albumName");
+    return false;
   }
-
-  final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
-  final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
-  final bool hasOpenAccess = _hasOpenAccess ?? false;
-
-  // Individual album unlock check
-  final bool hasIndividualUnlock = prefs.getBool('unlocked_$albumName') ?? false;
-
-  if (hasLifetime || hasCatalog || hasOpenAccess || hasIndividualUnlock) {
-    print("✅ UNLOCKED via RevenueCat for album: $albumName");
-    await prefs.setBool('lockall_active', false); // Clear test lock
-    return true;
-  }
-
-  print("🔒 Still locked for album: $albumName");
-  return false;
-}
 
     Future<void> _initializeRevenueCat() async {
     try {
@@ -3340,8 +3360,18 @@ Widget _buildSocialPage() {
                 child: Image.asset('assets/logo.png', height: 120),
               ),
             ),
-
-            _buildDebugButton(),
+            // Replace any existing debug button with this
+            if (kDebugMode)
+              Positioned(
+                right: 16,
+                bottom: 100,
+                child: FloatingActionButton(
+                  mini: true,
+                  backgroundColor: Colors.purple,
+                  child: const Icon(Icons.bug_report),
+                  onPressed: _showExpandedDebugPanel,
+                ),
+              ),
 
             const SizedBox(height: 40),
 
@@ -4002,13 +4032,18 @@ Future<void> _fullRevenueCatReset() async {
     });
   }
 
-void _showPaywall([String? specificAlbum]) {
-  Navigator.push(
+Future<void> _showPaywall([String? specificAlbum]) async {
+  await Navigator.push(
     context,
     MaterialPageRoute(
       builder: (context) => PaywallScreen(specificAlbum: specificAlbum),
     ),
   );
+
+  // Force full refresh after returning from paywall
+  setState(() {});
+    print("🔄 Full UI refresh after paywall");
+  
 }
 
     Future<void> _showLocalNotification(RemoteMessage message) async {
@@ -5064,14 +5099,13 @@ class _PaywallScreenState extends State<PaywallScreen> {
           try {
             print("🛒 Purchasing: ${product.identifier}");
             await Purchases.purchasePackage(package);
-            
-            // Force refresh
+
             final customerInfo = await Purchases.getCustomerInfo();
-            
-            // Save individual album unlock if this was a specific album purchase
+
             if (widget.specificAlbum != null) {
               final prefs = await SharedPreferences.getInstance();
               await prefs.setBool('unlocked_${widget.specificAlbum}', true);
+              print("💾 Saved individual unlock for ${widget.specificAlbum}");
             }
 
             if (mounted) {
