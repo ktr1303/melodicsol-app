@@ -607,7 +607,16 @@ Future<void> _playSong(
 }) async {
   print("🔥 _playSong → Album: '$albumName' | OriginalIndex: $originalSongIndex | fromQueue: $fromQueue | respectUnlocks: $respectUnlocks");
 
-  // === 1. SPECIAL FREE SONG CHECK (Your original logic - preserved) ===
+  // === STRONG UNLOCK CHECK (Top Priority) ===
+  final bool isUnlocked = await _isContentUnlocked(albumName);
+  if (!isUnlocked) {
+    print("🔒 Paid content locked → Showing Paywall for $albumName");
+    _showPaywall(albumName);
+    return;
+  }
+  // === END STRONG UNLOCK CHECK ===
+
+  // === 1. SPECIAL FREE SONG CHECK (Preserved) ===
   bool songIsFree = false;
   if (!fromQueue) {
     final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
@@ -617,17 +626,15 @@ Future<void> _playSong(
                    ((songData['emailUnlock'] as bool? ?? false) && (_hasConfirmedEmail ?? false));
     }
   }
-
   if (songIsFree) {
     print("✅ Free song detected → Playing without paywall");
   } else {
-    // === 2. EMAIL UNLOCK CHECK (Your original priority - preserved) ===
+    // === 2. EMAIL UNLOCK CHECK (Preserved) ===
     if (!fromQueue) {
       final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
       if (originalSongIndex < albumSongs.length) {
         final songData = albumSongs[originalSongIndex] as Map<String, dynamic>;
         final bool isEmailUnlockSong = songData['emailUnlock'] as bool? ?? false;
-
         if (isEmailUnlockSong && !(_hasConfirmedEmail ?? false)) {
           print("📧 Email unlock song tapped → Showing UserInfoScreen");
           _showUserInfoScreen(
@@ -638,25 +645,9 @@ Future<void> _playSong(
         }
       }
     }
-
-    // === 3. PAID / CATALOG / LIFETIME UNLOCK CHECK ===
-    final bool isPaidUnlocked = await _isContentUnlocked(albumName);
-    if (!isPaidUnlocked) {
-      print("🔒 Paid content locked → Showing Paywall");
-      _showPaywall(albumName);   // Keep your existing call
-      return;
-    }
   }
 
-      // === PAID UNLOCK CHECK ===
-    final bool isUnlocked = await _isContentUnlocked(albumName);
-    if (!isUnlocked) {
-      print("🔒 Paid content locked → Showing Paywall");
-      _showPaywall(albumName);   // Pass album name
-      return;
-    }
-
-  // === Playback Logic (Everything below this line is your original code, untouched) ===
+  // === Playback Logic (Your original code preserved) ===
   _isPlayingNewSong = false;
   final now = DateTime.now().millisecondsSinceEpoch;
   if (now - (_lastPlayCallTime ?? 0) < 150) return;
@@ -1660,47 +1651,47 @@ void _refreshQueueUI() {
     }
   }
 
-  Future<bool> _isContentUnlocked(String? albumName) async {
-    if (albumName == null) return false;
+    Future<bool> _isContentUnlocked(String? albumName) async {
+      if (albumName == null) return false;
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload(); // Force fresh read from disk
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload(); // Force fresh read from disk
 
-    try {
-      final customerInfo = await Purchases.getCustomerInfo();
-      final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
-      final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
+      try {
+        final customerInfo = await Purchases.getCustomerInfo();
+        final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
+        final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
 
-      await prefs.setBool('hasLifetimeAccess', hasLifetime);
-      await prefs.setBool('hasCatalogAccess', hasCatalog);
+        await prefs.setBool('hasLifetimeAccess', hasLifetime);
+        await prefs.setBool('hasCatalogAccess', hasCatalog);
 
-      print("📡 RevenueCat refreshed → Lifetime: $hasLifetime | Catalog: $hasCatalog");
-    } catch (e) {
-      print("⚠️ RevenueCat fetch failed: $e");
-    }
+        print("📡 RevenueCat refreshed → Lifetime: $hasLifetime | Catalog: $hasCatalog");
+      } catch (e) {
+        print("⚠️ RevenueCat fetch failed: $e");
+      }
 
-    final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
-    final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
-    final bool hasOpenAccess = _hasOpenAccess ?? false;
-    final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
-    final bool lockAllActive = prefs.getBool('lockall_active') ?? false;
+      final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
+      final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
+      final bool hasOpenAccess = _hasOpenAccess ?? false;
+      final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
+      final bool lockAllActive = prefs.getBool('lockall_active') ?? false;
 
-    print("🔍 CHECK FOR '$albumName' → Individual: $hasIndividual | Lifetime: $hasLifetime | Catalog: $hasCatalog | LockAll: $lockAllActive");
+      print("🔍 CHECK FOR '$albumName' → Individual: $hasIndividual | Lifetime: $hasLifetime | Catalog: $hasCatalog | LockAll: $lockAllActive");
 
-    if (lockAllActive && !hasLifetime && !hasCatalog) {
-      print("🔒 LOCKALL active — forcing locked");
+      if (lockAllActive && !hasLifetime && !hasCatalog) {
+        print("🔒 LOCKALL active — forcing locked");
+        return false;
+      }
+
+      if (hasLifetime || hasCatalog || hasOpenAccess || hasIndividual) {
+        print("✅ ✅ ✅ SUCCESSFULLY UNLOCKED for $albumName");
+        await prefs.setBool('lockall_active', false);
+        return true;
+      }
+
+      print("🔒 Still locked for $albumName");
       return false;
     }
-
-    if (hasLifetime || hasCatalog || hasOpenAccess || hasIndividual) {
-      print("✅ ✅ ✅ SUCCESSFULLY UNLOCKED for $albumName");
-      await prefs.setBool('lockall_active', false);
-      return true;
-    }
-
-    print("🔒 Still locked for $albumName");
-    return false;
-  }
 
     Future<void> _initializeRevenueCat() async {
     try {
@@ -4040,10 +4031,13 @@ Future<void> _showPaywall([String? specificAlbum]) async {
     ),
   );
 
-  // Force full refresh after returning from paywall
-  setState(() {});
-    print("🔄 Full UI refresh after paywall");
-  
+  // Strong refresh after returning from paywall
+  await Future.delayed(const Duration(milliseconds: 400));
+  if (mounted) {
+    setState(() {
+      print("🔄 Full UI refresh after paywall");
+    });
+  }
 }
 
     Future<void> _showLocalNotification(RemoteMessage message) async {
@@ -5105,6 +5099,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
             if (widget.specificAlbum != null) {
               final prefs = await SharedPreferences.getInstance();
               await prefs.setBool('unlocked_${widget.specificAlbum}', true);
+              await prefs.reload();
               print("💾 Saved individual unlock for ${widget.specificAlbum}");
             }
 
