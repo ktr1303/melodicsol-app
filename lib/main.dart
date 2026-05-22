@@ -129,6 +129,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   final AudioPlayer _globalPlayer = AudioPlayer();
   final TextEditingController _promoCodeController = TextEditingController();
+  // Albums that can be purchased individually ($7 each)
+final Set<String> _individuallyPurchasableAlbums = {'live', 'Sol', 'Melodic'};
 
 
   late VideoPlayerController _videoController;
@@ -196,6 +198,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   String? _currentViewedAlbum;   // ← Add this  
   bool _isQueueTutorialShowing = false;
    // Add this if missing
+ Set<String> _unlockedAlbums = {}; // Global unlocked albums
 
   Future<bool> hasEntitlement(String entitlementId) async {
   try {
@@ -352,6 +355,7 @@ void initState() {
     _createFreeSongsPlaylist();     // ← This will now read isFree correctly
     _showMainAlbumTutorial();
     _loadPlaylists();
+    _loadSavedUnlocks();
   }
   
   // This helps just_audio_background know the current state
@@ -569,6 +573,23 @@ Future<void> _loadPlaylists() async {
     final firstSong = playlist["songs"][0] as Map<String, dynamic>;
     _playSong(firstSong["albumName"] as String, 0);
   }
+
+  Future<void> _loadSavedUnlocks() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.reload();
+
+  _unlockedAlbums.clear();
+
+  for (String album in _individuallyPurchasableAlbums) {
+    final bool isUnlocked = prefs.getBool('unlocked_$album') ?? false;
+    if (isUnlocked) {
+      _unlockedAlbums.add(album);
+      print("✅ Restored saved unlock for $album");
+    }
+  }
+
+  print("🔄 Loaded ${_unlockedAlbums.length} saved album unlocks");
+}
 
 void _showUserInfoScreen({String? pendingAlbumName, int? pendingSongIndex}) {
   print("📱 _showUserInfoScreen called → Pushing UserInfoScreen");
@@ -1647,35 +1668,23 @@ void _refreshQueueUI() {
       if (albumName == null) return false;
 
       final prefs = await SharedPreferences.getInstance();
-      await prefs.reload(); // Critical
+      await prefs.reload();
 
-      try {
-        final customerInfo = await Purchases.getCustomerInfo();
-        final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
-        final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
-
-        await prefs.setBool('hasLifetimeAccess', hasLifetime);
-        await prefs.setBool('hasCatalogAccess', hasCatalog);
-      } catch (e) {
-        print("⚠️ RevenueCat fetch failed: $e");
-      }
-
+      // Global unlocks (these should unlock everything)
       final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
       final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
-      final bool hasOpenAccess = _hasOpenAccess ?? false;
-      final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
       final bool lockAllActive = prefs.getBool('lockall_active') ?? false;
 
-      print("🔍 CHECK FOR '$albumName' → Individual: $hasIndividual | Lifetime: $hasLifetime | Catalog: $hasCatalog | LockAll: $lockAllActive");
-
-      if (lockAllActive && !hasLifetime && !hasCatalog) {
-        print("🔒 LOCKALL active — forcing locked");
-        return false;
+      if (hasLifetime || hasCatalog) {
+        print("✅ GLOBAL UNLOCK (Lifetime/Catalog) for $albumName");
+        return true;
       }
 
-      if (hasLifetime || hasCatalog || hasOpenAccess || hasIndividual) {
-        print("✅ ✅ ✅ SUCCESSFULLY UNLOCKED for $albumName");
-        await prefs.setBool('lockall_active', false);
+      // Individual album unlock (only this album)
+      final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
+      if (hasIndividual) {
+        _unlockedAlbums.add(albumName);   // Only add the specific one
+        print("✅ INDIVIDUAL UNLOCK for $albumName");
         return true;
       }
 
@@ -2243,91 +2252,112 @@ return Column(
     ),
     const SizedBox(height: 12),
 
-    // === SONG LIST ===
+    // === SONG LIST WITH STRONG PULL-TO-REFRESH ===
     Expanded(
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        itemCount: songs.length,
-        itemBuilder: (context, index) {
-          final song = songs[index] as Map<String, dynamic>;
-          final title = song['Title'] as String? ?? "Unknown Track";
-          final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-          final isFree = song['isFree'] as bool? ?? false;
-          final emailUnlock = song['emailUnlock'] as bool? ?? false;
-
-          final bool isUnlockedByEmail = emailUnlock && _hasConfirmedEmail;
-          final bool isUnlocked = isFree || isUnlockedByEmail || _hasOpenAccess;
-
-          return ListTile(
-            leading: ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: CachedNetworkImage(
-                imageUrl: artUrl,
-                width: 48,
-                height: 48,
-                fit: BoxFit.cover,
-                errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
-              ),
-            ),
-            title: Text(
-              title,
-              style: TextStyle(
-                fontSize: 16.5,
-                color: isUnlocked ? Colors.white : Colors.white70,
-                fontWeight: isUnlocked ? FontWeight.w500 : FontWeight.normal,
-              ),
-            ),
-            trailing: isUnlocked
-                ? null
-                : (emailUnlock
-                    ? const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22)
-                    : const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20)),
-            
-                    onTap: () async {
-                      print("🔥 ALBUM DETAIL TAP → Album: $albumName | Index: $index");
-
-                      final prefs = await SharedPreferences.getInstance();
-                      final bool hasLifetimeLocal = prefs.getBool('hasLifetimeAccess') ?? false;
-                      final bool hasRevenueCatAccess = await hasEntitlement('lifetime_access') ||
-                                                      await hasEntitlement('catalog_access');
-                      final bool isActuallyUnlocked = isUnlocked || hasLifetimeLocal || hasRevenueCatAccess;
-
-                      if (!isActuallyUnlocked && emailUnlock) {
-                        showDialog(
-                          context: context,
-                          barrierColor: Colors.transparent,
-                          builder: (context) => UserInfoScreen(
-                            pendingAlbumName: albumName,
-                            pendingSongIndex: index,
-                          ),
-                        );
-                      } else if (!isActuallyUnlocked) {
-                        _showPaywall(albumName);
-                      } else {
-                        final songData = songs[index] as Map<String, dynamic>;
-                        final isFreeSong = (songData['isFree'] as bool? ?? false) ||
-                                          ((songData['emailUnlock'] as bool? ?? false) && _hasConfirmedEmail);
-
-                        await _playSong(
-                          albumName,
-                          index,
-                          fromQueue: false,
-                          respectUnlocks: isFreeSong,        // ← Only free songs if this song is free
-                          directUrl: songData['url'] as String?,
-                          titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
-                          artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
-                        );
-                      }
-                    },
-            onLongPress: () => _showSongOptions(song, albumName, index),
-          );
+      child: RefreshIndicator(
+        onRefresh: () async {
+          print("🔄 Pull-to-refresh triggered on $albumName album");
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.reload();
+          
+          // Only check this specific album
+          if (await _isContentUnlocked(albumName)) {
+            _unlockedAlbums.add(albumName);
+          }
+          
+          await Future.delayed(const Duration(milliseconds: 600));
+          if (mounted) {
+            setState(() {
+              print("🔄 Strong rebuild after pull-to-refresh for $albumName");
+            });
+          }
         },
+        color: Colors.greenAccent,
+        backgroundColor: Colors.black87,
+        child: ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          itemCount: songs.length,
+          itemBuilder: (context, index) {
+            final song = songs[index] as Map<String, dynamic>;
+            final title = song['Title'] as String? ?? "Unknown Track";
+            final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+            final isFree = song['isFree'] as bool? ?? false;
+            final emailUnlock = song['emailUnlock'] as bool? ?? false;
+            final bool isUnlockedByEmail = emailUnlock && _hasConfirmedEmail;
+            
+            // Stronger unlock check every time a tile builds
+            final bool isUnlocked = isFree || 
+                                   isUnlockedByEmail || 
+                                   _hasOpenAccess ||
+                                   _unlockedAlbums.contains(albumName);
+
+            return ListTile(
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: CachedNetworkImage(
+                  imageUrl: artUrl,
+                  width: 48,
+                  height: 48,
+                  fit: BoxFit.cover,
+                  errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
+                ),
+              ),
+              title: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 16.5,
+                  color: isUnlocked ? Colors.white : Colors.white70,
+                  fontWeight: isUnlocked ? FontWeight.w500 : FontWeight.normal,
+                ),
+              ),
+              trailing: isUnlocked
+                  ? null
+                  : (emailUnlock
+                      ? const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22)
+                      : const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20)),
+              
+              onTap: () async {
+                print("🔥 ALBUM DETAIL TAP → Album: $albumName | Index: $index");
+                
+                final bool actuallyUnlocked = await _isContentUnlocked(albumName);
+                
+                if (!actuallyUnlocked && emailUnlock) {
+                  showDialog(
+                    context: context,
+                    barrierColor: Colors.transparent,
+                    builder: (context) => UserInfoScreen(
+                      pendingAlbumName: albumName,
+                      pendingSongIndex: index,
+                    ),
+                  );
+                } else if (!actuallyUnlocked) {
+                  _showPaywall(albumName);
+                } else {
+                  final songData = songs[index] as Map<String, dynamic>;
+                  final isFreeSong = (songData['isFree'] as bool? ?? false) ||
+                                    ((songData['emailUnlock'] as bool? ?? false) && _hasConfirmedEmail);
+                  await _playSong(
+                    albumName,
+                    index,
+                    fromQueue: false,
+                    respectUnlocks: isFreeSong,
+                    directUrl: songData['url'] as String?,
+                    titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
+                    artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
+                  );
+                }
+              },
+              onLongPress: () => _showSongOptions(song, albumName, index),
+            );
+          },
+        ),
       ),
     ),
   ],
 );
-  }
 }
+}
+
 
 void _saveQueueAsPlaylist() {
   if (_queue.isEmpty) {
@@ -3303,24 +3333,15 @@ Widget _buildSocialPage() {
 
   return Stack(
     children: [
-      // Background Video - Same controller & video as Welcome Screen
-      SizedBox(
+// Background Image from S3 / CloudFront
+      Image.network(
+        "https://dhufx08tsdp2a.cloudfront.net/MelodicsolBioImage.png",  // ← Change this URL
         width: double.infinity,
         height: screenHeight,
-        child: FittedBox(
-          fit: BoxFit.cover,
-          child: SizedBox(
-            width: _videoController.value.size.width > 0 
-                ? _videoController.value.size.width 
-                : 1920,
-            height: _videoController.value.size.height > 0 
-                ? _videoController.value.size.height 
-                : 1080,
-            child: _videoController.value.isInitialized
-                ? VideoPlayer(_videoController)
-                : Image.asset('assets/spine.png', fit: BoxFit.cover),
-          ),
-        ),
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return Image.asset('assets/spine.png', fit: BoxFit.cover); // Fallback
+        },
       ),
 
       // Dark overlay for text readability
@@ -3443,7 +3464,7 @@ Widget _buildSocialPage() {
             ),
             const SizedBox(height: 8),
             const Text(
-              "Unlock lifetime access or test features",
+              "Have a code? Put it here",
               style: TextStyle(fontSize: 15, color: Colors.white70),
             ),
             const SizedBox(height: 16),
@@ -3451,7 +3472,7 @@ Widget _buildSocialPage() {
               controller: _promoCodeController,
               textCapitalization: TextCapitalization.characters,
               decoration: const InputDecoration(
-                hintText: "Enter promo code (e.g. SOLFULL)",
+                hintText: "Enter promo code",
                 filled: true,
                 fillColor: Colors.white10,
                 border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
@@ -3480,46 +3501,6 @@ Widget _buildSocialPage() {
               ),
               child: const Text("Redeem Promo Code", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
             ),
-
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: TextButton(
-                    onPressed: () => _redeemPromoCode("SOLFULL"),
-                    child: const Text("SOLFULL (Lifetime)"),
-                  ),
-                ),
-                Expanded(
-                  child: TextButton(
-                    onPressed: () => _redeemPromoCode("LOCKALL"),
-                    child: const Text("LOCKALL (Reset)", style: TextStyle(color: Colors.redAccent)),
-                  ),
-                ),
-                Expanded(
-                   child: TextButton(
-                    onPressed: () => _fullRevenueCatReset(),
-                    child: const Text("FULL RESET (Test)", style: TextStyle(color: Colors.orangeAccent)),
-                  ),
-                ),                
-              ],
-            ),
-
-            const SizedBox(height: 60),
-
-            // Logout Button
-            Center(
-              child: ElevatedButton.icon(
-                onPressed: _logout,
-                icon: const Icon(Icons.logout, color: Colors.white),
-                label: const Text("Logout (Testing)", style: TextStyle(color: Colors.white)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.redAccent,
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-                ),
-              ),
-            ),
-            const SizedBox(height: 40),
           ],
         ),
       ),
@@ -4017,18 +3998,26 @@ Future<void> _fullRevenueCatReset() async {
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => PaywallScreen(specificAlbum: specificAlbum),
+          builder: (context) => PaywallScreen(
+            specificAlbum: specificAlbum,
+            onUnlockSuccess: () {
+              setState(() {
+                if (specificAlbum != null) {
+                  _unlockedAlbums.add(specificAlbum);
+                }
+                print("🔄 UI refreshed from Paywall callback for $specificAlbum");
+              });
+            },
+            purchasableAlbums: _individuallyPurchasableAlbums,
+            albumTitleStyle: specificAlbum != null ? _getAlbumFont(specificAlbum) : null,
+          ),
         ),
       );
 
-      await Future.delayed(const Duration(milliseconds: 600)); // Give time for prefs
-      if (mounted) {
-        setState(() {
-          print("🔄 Full UI refresh after paywall");
-        });
-      }
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (mounted) setState(() {});
     }
-
+    
     Future<void> _showLocalNotification(RemoteMessage message) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'melodicsol_channel',
@@ -4984,7 +4973,17 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
 
 class PaywallScreen extends StatefulWidget {
   final String? specificAlbum;
-  const PaywallScreen({super.key, this.specificAlbum});
+  final VoidCallback? onUnlockSuccess;
+  final Set<String> purchasableAlbums;
+  final TextStyle? albumTitleStyle;
+
+  const PaywallScreen({
+    super.key,
+    this.specificAlbum,
+    this.onUnlockSuccess,
+    this.purchasableAlbums = const {'live', 'Sol', 'Melodic'},
+    this.albumTitleStyle,
+  });
 
   @override
   State<PaywallScreen> createState() => _PaywallScreenState();
@@ -5003,7 +5002,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
   Future<void> _loadOfferings() async {
     try {
       final offerings = await Purchases.getOfferings();
-      print("🔍 PaywallScreen → Offerings loaded. Packages: ${offerings.current?.availablePackages.map((p) => p.storeProduct.identifier).join(', ')}");
       setState(() {
         _offerings = offerings;
         _loading = false;
@@ -5020,33 +5018,80 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(title: const Text("Unlock Content"), backgroundColor: Colors.black),
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text("Back to Album", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        centerTitle: true,
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: Colors.greenAccent))
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.symmetric(horizontal: 12), // Reduced horizontal padding
               child: Column(
                 children: [
-                  const Text(
-                    "I don't need Spotify.\nI need YOU",
-                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color.fromARGB(255, 27, 203, 74)),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 30),
+                  const SizedBox(height: 20), // Reduced top spacing
 
-                  // DEBUG INFO
-                  Text(
-                    "specificAlbum: ${widget.specificAlbum}\nAvailable: ${offering?.availablePackages.map((p) => p.storeProduct.identifier).join(', ')}",
-                    style: const TextStyle(color: Colors.yellow, fontSize: 14),
+                  // Top Headline
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(
+                      "I Built this App to\nEmpower Musicians",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 24, // Slightly smaller
+                        fontWeight: FontWeight.bold,
+                        color: Color.fromARGB(255, 0, 255, 30),
+                        height: 1.1,
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 30),
+
+                  const SizedBox(height: 12),
+
+                  // Paragraph 1
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(
+                      "Streaming services like Spotify are keeping up to 70% of revenue from artists streams.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.white70,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // New Paragraph
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(
+                      "all proceeds go directly to the artist",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.greenAccent,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 24), // Reduced spacing before buttons
 
                   if (offering != null) ...[
-                    // FORCE "Buy Sol Album"
-                    if (widget.specificAlbum?.toLowerCase() == "sol")
+                    // Individual Album Button
+                    if (widget.specificAlbum != null &&
+                        widget.purchasableAlbums.contains(widget.specificAlbum))
                       _buildPackageButton(
                         offering.availablePackages.firstWhere(
-                          (p) => p.storeProduct.identifier.contains("album_sol"),
+                          (p) => p.storeProduct.identifier.toLowerCase().contains("album_${widget.specificAlbum!.toLowerCase()}"),
                           orElse: () => offering.availablePackages.first,
                         ),
                         isHighlighted: true,
@@ -5054,15 +5099,28 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
                     // Catalog + Lifetime
                     ...offering.availablePackages
-                        .where((p) => !p.storeProduct.identifier.contains("album"))
-                        .map((p) => _buildPackageButton(p)),
+                        .where((p) => !p.storeProduct.identifier.toLowerCase().contains("album"))
+                        .map((package) => _buildPackageButton(package)),
                   ],
 
-                  const SizedBox(height: 40),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text("Cancel", style: TextStyle(color: Colors.white70)),
+                  const SizedBox(height: 30), // Reduced bottom spacing
+
+                  // Bottom Headline
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 20),
+                    child: Text(
+                      "We don't need Spotify\nWe need you!",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Color.fromARGB(255, 3, 239, 7),
+                        height: 1.1,
+                      ),
+                    ),
                   ),
+
+                  const SizedBox(height: 20),
                 ],
               ),
             ),
@@ -5071,24 +5129,26 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
   Widget _buildPackageButton(Package package, {bool isHighlighted = false}) {
     final product = package.storeProduct;
-    String title = isHighlighted && widget.specificAlbum != null 
-        ? "Buy ${widget.specificAlbum} Album" 
-        : product.title;
+    String buttonTitle = product.title;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+    if (isHighlighted && widget.specificAlbum != null) {
+      buttonTitle = "Buy ${widget.specificAlbum} Album";
+    }
+
+    // Consistent base font size for all buttons
+    const double buttonFontSize = 18.0;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6),
       child: ElevatedButton(
         onPressed: () async {
           try {
             print("🛒 Purchasing: ${product.identifier}");
             await Purchases.purchasePackage(package);
 
-            final customerInfo = await Purchases.getCustomerInfo();
-
             if (widget.specificAlbum != null) {
               final prefs = await SharedPreferences.getInstance();
               await prefs.setBool('unlocked_${widget.specificAlbum}', true);
-              await prefs.reload();
               print("💾 Saved individual unlock for ${widget.specificAlbum}");
             }
 
@@ -5097,36 +5157,63 @@ class _PaywallScreenState extends State<PaywallScreen> {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text("✅ Album unlocked!"), backgroundColor: Colors.green),
               );
+              widget.onUnlockSuccess?.call();
             }
           } catch (e) {
             print("❌ Purchase error: $e");
           }
         },
         style: ElevatedButton.styleFrom(
-          backgroundColor: isHighlighted ? Colors.greenAccent : Colors.white12,
-          foregroundColor: isHighlighted ? Colors.black : Colors.white,
-          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          backgroundColor: Colors.white.withOpacity(0.1),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
         child: Column(
           children: [
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  child: isHighlighted && widget.specificAlbum != null && widget.albumTitleStyle != null
+                      ? RichText(
+                          text: TextSpan(
+                            style: TextStyle(
+                              fontSize: buttonFontSize,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                            children: [
+                              const TextSpan(text: "Buy "),
+                              TextSpan(
+                                text: widget.specificAlbum,
+                                style: widget.albumTitleStyle!.copyWith(
+                                  fontSize: buttonFontSize,        // Same size
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const TextSpan(text: " Album"),
+                            ],
+                          ),
+                        )
+                      : Text(
+                          buttonTitle,
+                          style: TextStyle(
+                            fontSize: buttonFontSize,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                 ),
-                const SizedBox(width: 12),
                 Text(
                   product.priceString,
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    fontSize: buttonFontSize + 2,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             ..._getBulletsForPackage(product.identifier, isHighlighted),
           ],
         ),
@@ -5134,20 +5221,25 @@ class _PaywallScreenState extends State<PaywallScreen> {
     );
   }
 
-  List<Widget> _getBulletsForPackage(String identifier, bool isSpecific) {
-    if (isSpecific) return [_buildBullet("Full access to this album")];
-    if (identifier.contains("lifetime")) return [_buildBullet("Lifetime access + all future albums")];
-    return [_buildBullet("Unlock entire catalog")];
+  List<Widget> _getBulletsForPackage(String identifier, bool isSpecificAlbum) {
+    if (isSpecificAlbum) {
+      return [_buildBullet("Buy this album")];
+    } else if (identifier.toLowerCase().contains("lifetime")) {
+      return [_buildBullet("Catalog + All new Future releases")];
+    } else {
+      return [_buildBullet("Opens All Current Albums and Songs on App")];
+    }
   }
 
   Widget _buildBullet(String text) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 5),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.check_circle, color: Colors.greenAccent, size: 18),
-          const SizedBox(width: 12),
-          Expanded(child: Text(text, style: const TextStyle(color: Colors.white70))),
+          const Icon(Icons.check_circle, color: Colors.greenAccent, size: 16),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 14, color: Colors.white70))),
         ],
       ),
     );
