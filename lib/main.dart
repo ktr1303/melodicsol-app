@@ -605,18 +605,18 @@ Future<void> _playSong(
   String? titleToPlay,
   String? artUrl,
 }) async {
-  print("🔥 _playSong → Album: '$albumName' | OriginalIndex: $originalSongIndex | fromQueue: $fromQueue | respectUnlocks: $respectUnlocks");
+  print("🔥 _playSong → Album: '$albumName' | OriginalIndex: $originalSongIndex | fromQueue: $fromQueue");
 
-  // === STRONG UNLOCK CHECK (Top Priority) ===
+  // === SINGLE STRONG UNLOCK CHECK (Top Priority) ===
   final bool isUnlocked = await _isContentUnlocked(albumName);
   if (!isUnlocked) {
     print("🔒 Paid content locked → Showing Paywall for $albumName");
     _showPaywall(albumName);
     return;
   }
-  // === END STRONG UNLOCK CHECK ===
+  // === END UNLOCK CHECK ===
 
-  // === 1. SPECIAL FREE SONG CHECK (Preserved) ===
+  // === SPECIAL FREE SONG CHECK (Preserved) ===
   bool songIsFree = false;
   if (!fromQueue) {
     final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
@@ -629,7 +629,7 @@ Future<void> _playSong(
   if (songIsFree) {
     print("✅ Free song detected → Playing without paywall");
   } else {
-    // === 2. EMAIL UNLOCK CHECK (Preserved) ===
+    // === EMAIL UNLOCK CHECK (Preserved) ===
     if (!fromQueue) {
       final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
       if (originalSongIndex < albumSongs.length) {
@@ -647,7 +647,7 @@ Future<void> _playSong(
     }
   }
 
-  // === Playback Logic (Your original code preserved) ===
+  // === Playback Logic (Your original code preserved from here) ===
   _isPlayingNewSong = false;
   final now = DateTime.now().millisecondsSinceEpoch;
   if (now - (_lastPlayCallTime ?? 0) < 150) return;
@@ -659,24 +659,18 @@ Future<void> _playSong(
     await Future.delayed(const Duration(milliseconds: 80));
 
     if (fromQueue && _queue.isNotEmpty) {
-      // Queue mode - jump without clearing previous songs
       final startIdx = originalSongIndex.clamp(0, _queue.length - 1);
       final sources = _queue.map((item) => _createHlsSource(item, albumName)).toList();
       final queueSource = ConcatenatingAudioSource(children: sources);
-      await _globalPlayer.setAudioSource(
-        queueSource,
-        initialIndex: startIdx,
-        initialPosition: Duration.zero,
-      );
-      print('✅ Queue Jump → Playing index $startIdx (full queue preserved, size: ${_queue.length})');
+      await _globalPlayer.setAudioSource(queueSource, initialIndex: startIdx, initialPosition: Duration.zero);
+      print('✅ Queue Jump → Playing index $startIdx');
     } else {
-      // Album tap
       final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
       if (albumSongs.isEmpty) return;
 
       List<Map<String, dynamic>> songsToQueue = albumSongs.map((s) {
         final map = Map<String, dynamic>.from(s);
-        map['albumName'] = albumName;   // ← CRITICAL: Preserve album name
+        map['albumName'] = albumName;
         return map;
       }).toList();
 
@@ -696,7 +690,6 @@ Future<void> _playSong(
           return songTitle != null && tappedTitle != null && songTitle == tappedTitle;
         });
         if (effectiveStartIndex == -1) effectiveStartIndex = 0;
-        print('🔒 Free-only mode → Filtered to ${songsToQueue.length} songs | Effective start: $effectiveStartIndex');
       }
 
       final startIdx = effectiveStartIndex.clamp(0, songsToQueue.length - 1);
@@ -704,7 +697,6 @@ Future<void> _playSong(
       final sources = _queue.map((item) => _createHlsSource(item, albumName)).toList();
       final queueSource = ConcatenatingAudioSource(children: sources);
       await _globalPlayer.setAudioSource(queueSource, initialIndex: 0);
-      print('✅ Album Tap → ${respectUnlocks ? "FREE ONLY" : "FULL"} queue | Start: $startIdx | Size: ${_queue.length}');
     }
 
     await _globalPlayer.play();
@@ -1655,7 +1647,7 @@ void _refreshQueueUI() {
       if (albumName == null) return false;
 
       final prefs = await SharedPreferences.getInstance();
-      await prefs.reload(); // Force fresh read from disk
+      await prefs.reload(); // Critical
 
       try {
         final customerInfo = await Purchases.getCustomerInfo();
@@ -1664,8 +1656,6 @@ void _refreshQueueUI() {
 
         await prefs.setBool('hasLifetimeAccess', hasLifetime);
         await prefs.setBool('hasCatalogAccess', hasCatalog);
-
-        print("📡 RevenueCat refreshed → Lifetime: $hasLifetime | Catalog: $hasCatalog");
       } catch (e) {
         print("⚠️ RevenueCat fetch failed: $e");
       }
@@ -1692,7 +1682,7 @@ void _refreshQueueUI() {
       print("🔒 Still locked for $albumName");
       return false;
     }
-
+    
     Future<void> _initializeRevenueCat() async {
     try {
       setState(() => _isCheckingSubscription = true);
@@ -4023,22 +4013,21 @@ Future<void> _fullRevenueCatReset() async {
     });
   }
 
-Future<void> _showPaywall([String? specificAlbum]) async {
-  await Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (context) => PaywallScreen(specificAlbum: specificAlbum),
-    ),
-  );
+    Future<void> _showPaywall([String? specificAlbum]) async {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PaywallScreen(specificAlbum: specificAlbum),
+        ),
+      );
 
-  // Strong refresh after returning from paywall
-  await Future.delayed(const Duration(milliseconds: 400));
-  if (mounted) {
-    setState(() {
-      print("🔄 Full UI refresh after paywall");
-    });
-  }
-}
+      await Future.delayed(const Duration(milliseconds: 600)); // Give time for prefs
+      if (mounted) {
+        setState(() {
+          print("🔄 Full UI refresh after paywall");
+        });
+      }
+    }
 
     Future<void> _showLocalNotification(RemoteMessage message) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
