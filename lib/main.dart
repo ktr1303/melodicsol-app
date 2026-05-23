@@ -9,6 +9,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:io';  // For exit(0)
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:video_player/video_player.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -2269,10 +2270,10 @@ return Column(
             
             // Stronger unlock check every time a tile builds
             final bool isUnlocked = isFree || 
-                                   isUnlockedByEmail || 
-                                   _hasOpenAccess ||
-                                   _unlockedAlbums.contains(albumName);
-                                   _globalUnlockTrigger.value > 0;
+              isUnlockedByEmail || 
+               _hasOpenAccess || 
+               _unlockedAlbums.contains(albumName) ||
+               _globalUnlockTrigger.value > 0;   // ← Forces rebuild on global change
             return ListTile(
               leading: ClipRRect(
                 borderRadius: BorderRadius.circular(6),
@@ -3868,7 +3869,6 @@ void _showExpandedDebugPanel() {
               return const Text("Loading RevenueCat...");
             },
           ),
-
           const SizedBox(height: 20),
           const Divider(color: Colors.white24),
 
@@ -3886,7 +3886,30 @@ void _showExpandedDebugPanel() {
               _fullLocalReset();
             },
           ),
+          const SizedBox(height: 10),
 
+          // Restart App Button (Simple & Reliable)
+          ElevatedButton.icon(
+            icon: const Icon(Icons.restart_alt, color: Colors.white),
+            label: const Text("Restart App"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orangeAccent,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 52),
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Restarting app..."),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+              Future.delayed(const Duration(milliseconds: 700), () {
+                exit(0);
+              });
+            },
+          ),
           const SizedBox(height: 10),
 
           ElevatedButton.icon(
@@ -3908,7 +3931,6 @@ void _showExpandedDebugPanel() {
               );
             },
           ),
-
           const SizedBox(height: 10),
 
           ElevatedButton.icon(
@@ -3922,10 +3944,8 @@ void _showExpandedDebugPanel() {
             onPressed: () async {
               Navigator.pop(context);
               try {
-                // Fixed version - no forceRefresh
                 final customerInfo = await Purchases.getCustomerInfo();
                 print("✅ RevenueCat refreshed. Active entitlements: ${customerInfo.entitlements.active.keys}");
-                
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text("RevenueCat refreshed (${customerInfo.entitlements.active.length} entitlements)"),
@@ -3940,7 +3960,6 @@ void _showExpandedDebugPanel() {
               }
             },
           ),
-
           const SizedBox(height: 10),
 
           ElevatedButton.icon(
@@ -3959,7 +3978,6 @@ void _showExpandedDebugPanel() {
               );
             },
           ),
-
           const SizedBox(height: 10),
 
           ElevatedButton.icon(
@@ -3975,7 +3993,6 @@ void _showExpandedDebugPanel() {
               _redeemPromoCode("SOLFULL");
             },
           ),
-
           const SizedBox(height: 10),
 
           ElevatedButton.icon(
@@ -3991,7 +4008,6 @@ void _showExpandedDebugPanel() {
               _redeemPromoCode("LOCKALL");
             },
           ),
-
           const SizedBox(height: 30),
           const Divider(color: Colors.white24),
 
@@ -4109,30 +4125,28 @@ Future<void> _fullRevenueCatReset() async {
     });
   }
 
-  Future<void> _showPaywall([String? specificAlbum]) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => PaywallScreen(
-          specificAlbum: specificAlbum,
-          onUnlockSuccess: () {
-            _globalUnlockTrigger.value++; // Force rebuild on all album pages
-            setState(() {
+    Future<void> _showPaywall([String? specificAlbum]) async {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PaywallScreen(
+            specificAlbum: specificAlbum,
+            onUnlockSuccess: () {
+              _globalUnlockTrigger.value++; // This forces rebuild on ALL album pages
               if (specificAlbum != null) {
                 _unlockedAlbums.add(specificAlbum);
               }
-            });
-            print("🔄 Global unlock trigger fired");
-          },
-          purchasableAlbums: _individuallyPurchasableAlbums,
-          albumTitleStyle: specificAlbum != null ? _getAlbumFont(specificAlbum) : null,
+              print("🔄 Global unlock trigger fired - forcing rebuild");
+            },
+            purchasableAlbums: _individuallyPurchasableAlbums,
+            albumTitleStyle: specificAlbum != null ? _getAlbumFont(specificAlbum) : null,
+          ),
         ),
-      ),
-    );
+      );
 
-  await Future.delayed(const Duration(milliseconds: 400));
-  if (mounted) setState(() {});
-}
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (mounted) setState(() {});
+    }
     
     Future<void> _showLocalNotification(RemoteMessage message) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
