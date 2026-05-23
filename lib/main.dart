@@ -130,7 +130,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   final AudioPlayer _globalPlayer = AudioPlayer();
   final TextEditingController _promoCodeController = TextEditingController();
   // Albums that can be purchased individually ($7 each)
-final Set<String> _individuallyPurchasableAlbums = {'live', 'Sol', 'Melodic'};
+  final Set<String> _individuallyPurchasableAlbums = {'live', 'Sol', 'Melodic'};
+  final ValueNotifier<bool> _globalUnlockChanged = ValueNotifier<bool>(false);  
+  final ValueNotifier<int> _globalUnlockTrigger = ValueNotifier<int>(0);
 
 
   late VideoPlayerController _videoController;
@@ -626,18 +628,9 @@ Future<void> _playSong(
   String? titleToPlay,
   String? artUrl,
 }) async {
-  print("🔥 _playSong → Album: '$albumName' | OriginalIndex: $originalSongIndex | fromQueue: $fromQueue");
+  print("🔥 _playSong → Album: '$albumName' | OriginalIndex: $originalSongIndex | fromQueue: $fromQueue | respectUnlocks: $respectUnlocks");
 
-  // === SINGLE STRONG UNLOCK CHECK (Top Priority) ===
-  final bool isUnlocked = await _isContentUnlocked(albumName);
-  if (!isUnlocked) {
-    print("🔒 Paid content locked → Showing Paywall for $albumName");
-    _showPaywall(albumName);
-    return;
-  }
-  // === END UNLOCK CHECK ===
-
-  // === SPECIAL FREE SONG CHECK (Preserved) ===
+  // === 1. SPECIAL FREE SONG CHECK - Must come FIRST (bypass everything) ===
   bool songIsFree = false;
   if (!fromQueue) {
     final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
@@ -647,28 +640,20 @@ Future<void> _playSong(
                    ((songData['emailUnlock'] as bool? ?? false) && (_hasConfirmedEmail ?? false));
     }
   }
+
   if (songIsFree) {
-    print("✅ Free song detected → Playing without paywall");
+    print("✅ Free song detected → Bypassing all unlock checks");
   } else {
-    // === EMAIL UNLOCK CHECK (Preserved) ===
-    if (!fromQueue) {
-      final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
-      if (originalSongIndex < albumSongs.length) {
-        final songData = albumSongs[originalSongIndex] as Map<String, dynamic>;
-        final bool isEmailUnlockSong = songData['emailUnlock'] as bool? ?? false;
-        if (isEmailUnlockSong && !(_hasConfirmedEmail ?? false)) {
-          print("📧 Email unlock song tapped → Showing UserInfoScreen");
-          _showUserInfoScreen(
-            pendingAlbumName: albumName,
-            pendingSongIndex: originalSongIndex,
-          );
-          return;
-        }
-      }
+    // === 2. NORMAL UNLOCK CHECK for paid songs ===
+    final bool isUnlocked = await _isContentUnlocked(albumName);
+    if (!isUnlocked) {
+      print("🔒 Paid content locked → Showing Paywall for $albumName");
+      _showPaywall(albumName);
+      return;
     }
   }
 
-  // === Playback Logic (Your original code preserved from here) ===
+  // === Playback Logic (Everything below stays exactly as you had it) ===
   _isPlayingNewSong = false;
   final now = DateTime.now().millisecondsSinceEpoch;
   if (now - (_lastPlayCallTime ?? 0) < 150) return;
@@ -1670,20 +1655,17 @@ void _refreshQueueUI() {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
 
-      // Global unlocks (these should unlock everything)
       final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
       final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
-      final bool lockAllActive = prefs.getBool('lockall_active') ?? false;
 
       if (hasLifetime || hasCatalog) {
-        print("✅ GLOBAL UNLOCK (Lifetime/Catalog) for $albumName");
+        print("✅ GLOBAL UNLOCK active for $albumName");
         return true;
       }
 
-      // Individual album unlock (only this album)
       final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
       if (hasIndividual) {
-        _unlockedAlbums.add(albumName);   // Only add the specific one
+        _unlockedAlbums.add(albumName);
         print("✅ INDIVIDUAL UNLOCK for $albumName");
         return true;
       }
@@ -2290,7 +2272,7 @@ return Column(
                                    isUnlockedByEmail || 
                                    _hasOpenAccess ||
                                    _unlockedAlbums.contains(albumName);
-
+                                   _globalUnlockTrigger.value > 0;
             return ListTile(
               leading: ClipRRect(
                 borderRadius: BorderRadius.circular(6),
@@ -2314,14 +2296,32 @@ return Column(
                   ? null
                   : (emailUnlock
                       ? const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22)
-                      : const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20)),
-              
+                      : const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20)),              
               onTap: () async {
                 print("🔥 ALBUM DETAIL TAP → Album: $albumName | Index: $index");
-                
-                final bool actuallyUnlocked = await _isContentUnlocked(albumName);
-                
-                if (!actuallyUnlocked && emailUnlock) {
+
+                final songData = songs[index] as Map<String, dynamic>;
+                final bool isFreeSong = (songData['isFree'] as bool? ?? false) ||
+                                      ((songData['emailUnlock'] as bool? ?? false) && _hasConfirmedEmail);
+
+                // === 1. FREE SONG CHECK - Bypass everything ===
+                if (isFreeSong) {
+                  print("✅ Free song detected → Playing without paywall");
+                  await _playSong(
+                    albumName,
+                    index,
+                    fromQueue: false,
+                    respectUnlocks: true,           // Only queue free songs from here down
+                    directUrl: songData['url'] as String?,
+                    titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
+                    artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
+                  );
+                  return;
+                }
+
+                // === 2. Email Unlock Check ===
+                final bool emailUnlock = songData['emailUnlock'] as bool? ?? false;
+                if (emailUnlock && !_hasConfirmedEmail) {
                   showDialog(
                     context: context,
                     barrierColor: Colors.transparent,
@@ -2330,17 +2330,20 @@ return Column(
                       pendingSongIndex: index,
                     ),
                   );
-                } else if (!actuallyUnlocked) {
+                  return;
+                }
+
+                // === 3. Paid Content Check ===
+                final bool actuallyUnlocked = await _isContentUnlocked(albumName);
+
+                if (!actuallyUnlocked) {
                   _showPaywall(albumName);
                 } else {
-                  final songData = songs[index] as Map<String, dynamic>;
-                  final isFreeSong = (songData['isFree'] as bool? ?? false) ||
-                                    ((songData['emailUnlock'] as bool? ?? false) && _hasConfirmedEmail);
                   await _playSong(
                     albumName,
                     index,
                     fromQueue: false,
-                    respectUnlocks: isFreeSong,
+                    respectUnlocks: false,
                     directUrl: songData['url'] as String?,
                     titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
                     artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
@@ -3843,23 +3846,23 @@ void _showExpandedDebugPanel() {
         controller: scrollController,
         padding: const EdgeInsets.all(20),
         children: [
-          const Text("🔧 MelodicSol Debug Panel", 
+          const Text("🔧 MelodicSol Debug Panel",
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
           const SizedBox(height: 8),
-          const Text("Development & Troubleshooting Only", 
+          const Text("Development & Troubleshooting Only",
               style: TextStyle(color: Colors.white54)),
-
           const Divider(color: Colors.white24, height: 30),
 
-          Text("hasOpenAccess: ${_hasOpenAccess ?? false}", 
+          // Current Status
+          Text("hasOpenAccess: ${_hasOpenAccess ?? false}",
               style: const TextStyle(color: Colors.white70, fontSize: 16)),
-
+          
           FutureBuilder<CustomerInfo>(
             future: Purchases.getCustomerInfo(),
             builder: (context, snapshot) {
               if (snapshot.hasData) {
                 final active = snapshot.data!.entitlements.active.keys.toList();
-                return Text("RevenueCat Active: $active", 
+                return Text("RevenueCat Active: $active",
                     style: const TextStyle(color: Colors.greenAccent, fontSize: 16));
               }
               return const Text("Loading RevenueCat...");
@@ -3869,51 +3872,163 @@ void _showExpandedDebugPanel() {
           const SizedBox(height: 20),
           const Divider(color: Colors.white24),
 
-          // Quick Actions
+          // === Reset & Troubleshooting Buttons ===
           ElevatedButton.icon(
-            icon: const Icon(Icons.refresh),
-            label: const Text("FULL LOCAL RESET"),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            icon: const Icon(Icons.delete_forever, color: Colors.white),
+            label: const Text("FULL LOCAL RESET (Everything)"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 52),
+            ),
             onPressed: () {
               Navigator.pop(context);
-              _fullRevenueCatReset();
+              _fullLocalReset();
             },
           ),
-          const SizedBox(height: 12),
+
+          const SizedBox(height: 10),
 
           ElevatedButton.icon(
-            icon: const Icon(Icons.person_off),
-            label: const Text("Reset RevenueCat User (New ID)"),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+            icon: const Icon(Icons.email_outlined, color: Colors.white),
+            label: const Text("Reset Email Login Only"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            onPressed: () async {
+              Navigator.pop(context);
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('email_confirmed', false);
+              _hasConfirmedEmail = false;
+              setState(() {});
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Email login state reset")),
+              );
+            },
+          ),
+
+          const SizedBox(height: 10),
+
+          ElevatedButton.icon(
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            label: const Text("Refresh RevenueCat Status"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blueAccent,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            onPressed: () async {
+              Navigator.pop(context);
+              try {
+                // Fixed version - no forceRefresh
+                final customerInfo = await Purchases.getCustomerInfo();
+                print("✅ RevenueCat refreshed. Active entitlements: ${customerInfo.entitlements.active.keys}");
+                
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text("RevenueCat refreshed (${customerInfo.entitlements.active.length} entitlements)"),
+                    backgroundColor: Colors.blue,
+                  ),
+                );
+              } catch (e) {
+                print("❌ RevenueCat refresh failed: $e");
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("Refresh failed: $e"), backgroundColor: Colors.red),
+                );
+              }
+            },
+          ),
+
+          const SizedBox(height: 10),
+
+          ElevatedButton.icon(
+            icon: const Icon(Icons.queue_music, color: Colors.white),
+            label: const Text("Clear Queue Only"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.purple,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 48),
+            ),
             onPressed: () {
               Navigator.pop(context);
-              _resetRevenueCatUser();
+              setState(() => _queue.clear());
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Queue cleared")),
+              );
             },
           ),
-          const SizedBox(height: 12),
+
+          const SizedBox(height: 10),
 
           ElevatedButton.icon(
-            icon: const Icon(Icons.lock_open),
+            icon: const Icon(Icons.lock_open, color: Colors.white),
             label: const Text("Grant Lifetime (SOLFULL)"),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.greenAccent,
+              foregroundColor: Colors.black,
+              minimumSize: const Size(double.infinity, 48),
+            ),
             onPressed: () {
               Navigator.pop(context);
               _redeemPromoCode("SOLFULL");
             },
           ),
-          const SizedBox(height: 12),
+
+          const SizedBox(height: 10),
 
           ElevatedButton.icon(
-            icon: const Icon(Icons.lock),
-            label: const Text("LOCKALL"),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            icon: const Icon(Icons.lock, color: Colors.white),
+            label: const Text("LOCKALL (Reset)"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 48),
+            ),
             onPressed: () {
               Navigator.pop(context);
               _redeemPromoCode("LOCKALL");
             },
           ),
+
+          const SizedBox(height: 30),
+          const Divider(color: Colors.white24),
+
+          ElevatedButton.icon(
+            icon: const Icon(Icons.close),
+            label: const Text("Close Debug Panel"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.grey[800],
+              minimumSize: const Size(double.infinity, 50),
+            ),
+            onPressed: () => Navigator.pop(context),
+          ),
         ],
       ),
+    ),
+  );
+}
+
+Future<void> _fullLocalReset() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.clear();
+
+  _hasConfirmedEmail = false;
+  _unlockedAlbums.clear();
+  _queue.clear();
+  _currentAlbum = null;
+  _selectedAlbum = null;
+  _currentSongIndex = 0;
+
+  print("🧹 FULL LOCAL RESET completed - including email login");
+
+  setState(() {});
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text("✅ Full reset completed"),
+      backgroundColor: Colors.red,
     ),
   );
 }
@@ -3994,29 +4109,30 @@ Future<void> _fullRevenueCatReset() async {
     });
   }
 
-    Future<void> _showPaywall([String? specificAlbum]) async {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PaywallScreen(
-            specificAlbum: specificAlbum,
-            onUnlockSuccess: () {
-              setState(() {
-                if (specificAlbum != null) {
-                  _unlockedAlbums.add(specificAlbum);
-                }
-                print("🔄 UI refreshed from Paywall callback for $specificAlbum");
-              });
-            },
-            purchasableAlbums: _individuallyPurchasableAlbums,
-            albumTitleStyle: specificAlbum != null ? _getAlbumFont(specificAlbum) : null,
-          ),
+  Future<void> _showPaywall([String? specificAlbum]) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PaywallScreen(
+          specificAlbum: specificAlbum,
+          onUnlockSuccess: () {
+            _globalUnlockTrigger.value++; // Force rebuild on all album pages
+            setState(() {
+              if (specificAlbum != null) {
+                _unlockedAlbums.add(specificAlbum);
+              }
+            });
+            print("🔄 Global unlock trigger fired");
+          },
+          purchasableAlbums: _individuallyPurchasableAlbums,
+          albumTitleStyle: specificAlbum != null ? _getAlbumFont(specificAlbum) : null,
         ),
-      );
+      ),
+    );
 
-      await Future.delayed(const Duration(milliseconds: 600));
-      if (mounted) setState(() {});
-    }
+  await Future.delayed(const Duration(milliseconds: 400));
+  if (mounted) setState(() {});
+}
     
     Future<void> _showLocalNotification(RemoteMessage message) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
@@ -5146,8 +5262,19 @@ class _PaywallScreenState extends State<PaywallScreen> {
             print("🛒 Purchasing: ${product.identifier}");
             await Purchases.purchasePackage(package);
 
-            if (widget.specificAlbum != null) {
-              final prefs = await SharedPreferences.getInstance();
+            final prefs = await SharedPreferences.getInstance();
+
+            // === CORRECT GLOBAL vs INDIVIDUAL HANDLING ===
+            if (product.identifier.contains("lifetime_access") || product.identifier.contains("lifetime")) {
+              await prefs.setBool('hasLifetimeAccess', true);
+              print("💾 Saved GLOBAL Lifetime Access");
+            } 
+            else if (product.identifier.contains("catalog_access") || product.identifier.contains("catalog")) {
+              await prefs.setBool('hasCatalogAccess', true);
+              print("💾 Saved GLOBAL Catalog Access");
+            } 
+            else if (widget.specificAlbum != null) {
+              // Individual album purchase
               await prefs.setBool('unlocked_${widget.specificAlbum}', true);
               print("💾 Saved individual unlock for ${widget.specificAlbum}");
             }
@@ -5155,7 +5282,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
             if (mounted) {
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("✅ Album unlocked!"), backgroundColor: Colors.green),
+                const SnackBar(content: Text("✅ Purchase successful!"), backgroundColor: Colors.green),
               );
               widget.onUnlockSuccess?.call();
             }
