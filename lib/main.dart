@@ -595,7 +595,7 @@ Future<void> _loadPlaylists() async {
 }
 
 void _showUserInfoScreen({String? pendingAlbumName, int? pendingSongIndex}) {
-  print("📱 Showing UserInfoScreen for $pendingAlbumName");
+  print("📱 Showing UserInfoScreen for album: $pendingAlbumName");
 
   Navigator.push(
     context,
@@ -613,14 +613,13 @@ void _showUserInfoScreen({String? pendingAlbumName, int? pendingSongIndex}) {
 
 Future<void> _handleEmailConfirmationSuccess([String? pendingAlbumName]) async {
   final prefs = await SharedPreferences.getInstance();
-  await prefs.setBool('email_confirmed', true);
   await prefs.reload();
 
   setState(() {
     _hasConfirmedEmail = true;
   });
 
-  print("✅ Email confirmed successfully → Refreshing UI");
+  print("✅ Email confirmation handled successfully");
 
   ScaffoldMessenger.of(context).showSnackBar(
     const SnackBar(
@@ -629,9 +628,9 @@ Future<void> _handleEmailConfirmationSuccess([String? pendingAlbumName]) async {
     ),
   );
 
-  // Force refresh current album if we have one
+  // Refresh current album if we came from one
   if (pendingAlbumName != null && mounted) {
-    setState(() {}); // Rebuild current album detail
+    setState(() {});
   }
 }
 
@@ -4935,8 +4934,6 @@ Future<void> _submitToHighLevel() async {
       "source": "Melodicsol App - Sign Up",
     };
 
-    print("📤 Sending with tags: ${jsonEncode(payload)}");
-
     final response = await http.post(
       Uri.parse("https://rest.gohighlevel.com/v1/contacts/"),
       headers: {
@@ -4947,37 +4944,47 @@ Future<void> _submitToHighLevel() async {
     );
 
     if ((response.statusCode == 200 || response.statusCode == 201) && mounted) {
-      // === FIREBASE AUTH CREATION ===
-      final User? user = await _authService.signUpWithEmail(
-        _emailController.text.trim().toLowerCase(),
-        _nameController.text.trim(),
-      );
+      final String email = _emailController.text.trim().toLowerCase();
 
-      if (user != null) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('isLoggedIn', true);
-        await prefs.setBool('email_confirmed', false);
-        print("✅ Firebase user created - email_confirmed set to FALSE");
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isLoggedIn', true);
+      await prefs.setBool('email_confirmed', false);
 
-        // === CALL THE CALLBACK HERE (Step 3) ===
-        if (widget.onEmailConfirmed != null) {
-          widget.onEmailConfirmed!();
-        }
+      print("✅ HighLevel contact created. Sending Firebase magic link...");
 
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => EmailVerificationScreen(
-              pendingAlbumName: widget.pendingAlbumName,
-              pendingSongIndex: widget.pendingSongIndex,
-            ),
-          ),
+      // Send Passwordless Magic Link
+      try {
+        final acs = ActionCodeSettings(
+          url: 'https://melodicsol.page.link/confirm', // ← Update this with your actual Dynamic Link domain
+          handleCodeInApp: true,
+          iOSBundleId: 'com.melodicsol.music',
+          androidPackageName: 'com.melodicsol.music',
+          androidInstallApp: true,
         );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Failed to create Firebase account")),
+
+        await FirebaseAuth.instance.sendSignInLinkToEmail(
+          email: email,
+          actionCodeSettings: acs,
         );
+
+        print("✅ Magic link sent to $email");
+      } catch (e) {
+        print("⚠️ Failed to send magic link: $e");
       }
+
+      if (widget.onEmailConfirmed != null) {
+        widget.onEmailConfirmed!();
+      }
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => EmailVerificationScreen(
+            pendingAlbumName: widget.pendingAlbumName,
+            pendingSongIndex: widget.pendingSongIndex,
+          ),
+        ),
+      );
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -5414,6 +5421,94 @@ class _PaywallScreenState extends State<PaywallScreen> {
           const SizedBox(width: 8),
           Expanded(child: Text(text, style: const TextStyle(fontSize: 14, color: Colors.white70))),
         ],
+      ),
+    );
+  }
+}
+// ====================== EMAIL VERIFICATION SCREEN ======================
+class EmailVerificationScreen extends StatefulWidget {
+  final String? pendingAlbumName;
+  final int? pendingSongIndex;
+
+  const EmailVerificationScreen({
+    super.key,
+    this.pendingAlbumName,
+    this.pendingSongIndex,
+  });
+
+  @override
+  State<EmailVerificationScreen> createState() => _EmailVerificationScreenState();
+}
+
+class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenForEmailConfirmation();
+  }
+
+  void _listenForEmailConfirmation() {
+    FirebaseAuth.instance.authStateChanges().listen((User? user) async {
+      if (user != null && mounted) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('email_confirmed', true);
+        await prefs.setBool('isLoggedIn', true);
+
+        setState(() => _isLoading = false);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("✅ Email successfully confirmed!"),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        // Return to the album the user was trying to access
+        if (widget.pendingAlbumName != null) {
+          Navigator.popUntil(context, (route) => route.isFirst);
+        } else {
+          Navigator.pop(context);
+        }
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text("Confirm Your Email"),
+        backgroundColor: Colors.black,
+        elevation: 0,
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.mark_email_read, size: 90, color: Colors.greenAccent),
+              const SizedBox(height: 32),
+              const Text(
+                "Check your inbox",
+                style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                "We sent a confirmation link to your email.\nClick the link to unlock songs.",
+                style: TextStyle(fontSize: 17, color: Colors.white70, height: 1.4),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 50),
+              if (_isLoading)
+                const CircularProgressIndicator(color: Colors.greenAccent),
+            ],
+          ),
+        ),
       ),
     );
   }
