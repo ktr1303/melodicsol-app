@@ -4732,61 +4732,6 @@ class SongStoryPage extends StatelessWidget {
   }
 }
 
-// New screen shown after email is entered
-// ====================== EMAIL CONFIRMATION SCREEN ======================
-// ====================== EMAIL CONFIRMATION SCREEN ======================
-class EmailConfirmationScreen extends StatelessWidget {
-  final String email;
-  const EmailConfirmationScreen({super.key, required this.email});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.email_outlined, size: 100, color: Colors.white),
-              const SizedBox(height: 40),
-              const Text(
-                "Check Your Inbox",
-                style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 20),
-              Text(
-                "We sent a confirmation link to:\n$email",
-                style: const TextStyle(fontSize: 18, color: Colors.white70),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 60),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (_) => const HomePage()),
-                  );
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.greenAccent,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-                ),
-                child: const Text("Back to App", style: TextStyle(fontSize: 18)),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-// ====================== EMAIL CONFIRMED LANDING PAGE ======================
-// ====================== EMAIL CONFIRMED LANDING PAGE ======================
-// ====================== EMAIL CONFIRMED LANDING PAGE ======================
 class EmailConfirmedScreen extends StatelessWidget {
   final String email;
   const EmailConfirmedScreen({super.key, required this.email});
@@ -4955,7 +4900,7 @@ Future<void> _submitToHighLevel() async {
       // Send Passwordless Magic Link
       try {
         final acs = ActionCodeSettings(
-          url: 'https://melodicsol.page.link/confirm', // ← Update this with your actual Dynamic Link domain
+          url: 'https://melodicsol.page.link/confirm', // ← Change to your real Dynamic Link domain
           handleCodeInApp: true,
           iOSBundleId: 'com.melodicsol.music',
           androidPackageName: 'com.melodicsol.music',
