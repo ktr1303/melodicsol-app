@@ -595,17 +595,44 @@ Future<void> _loadPlaylists() async {
 }
 
 void _showUserInfoScreen({String? pendingAlbumName, int? pendingSongIndex}) {
-  print("📱 _showUserInfoScreen called → Pushing UserInfoScreen");
+  print("📱 Showing UserInfoScreen for $pendingAlbumName");
 
   Navigator.push(
-    context,   // ← This works because we're inside _HomePageState
+    context,
     MaterialPageRoute(
       builder: (context) => UserInfoScreen(
         pendingAlbumName: pendingAlbumName,
         pendingSongIndex: pendingSongIndex,
+        onEmailConfirmed: () {
+          _handleEmailConfirmationSuccess(pendingAlbumName);
+        },
       ),
     ),
   );
+}
+
+Future<void> _handleEmailConfirmationSuccess([String? pendingAlbumName]) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setBool('email_confirmed', true);
+  await prefs.reload();
+
+  setState(() {
+    _hasConfirmedEmail = true;
+  });
+
+  print("✅ Email confirmed successfully → Refreshing UI");
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text("✅ Email confirmed! Email unlock songs are now available."),
+      backgroundColor: Colors.green,
+    ),
+  );
+
+  // Force refresh current album if we have one
+  if (pendingAlbumName != null && mounted) {
+    setState(() {}); // Rebuild current album detail
+  }
 }
 
 Future<void> _loadConfirmedStatus() async {
@@ -4831,11 +4858,13 @@ class EmailConfirmedScreen extends StatelessWidget {
 class UserInfoScreen extends StatefulWidget {
   final String? pendingAlbumName;
   final int? pendingSongIndex;
+  final VoidCallback? onEmailConfirmed;
 
   const UserInfoScreen({
     super.key,
     this.pendingAlbumName,
     this.pendingSongIndex,
+    this.onEmailConfirmed,
   });
 
   @override
@@ -4875,95 +4904,98 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
     });
   }
 
-  Future<void> _submitToHighLevel() async {
-    if (!_formKey.currentState!.validate()) return;
+Future<void> _submitToHighLevel() async {
+  if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _isSubmitting = true);
+  setState(() => _isSubmitting = true);
 
-    try {
-      final String token = await FirebaseMessaging.instance.getToken() ?? "";
-      List<String> tags = ["melodicsol-app"];
+  try {
+    final String token = await FirebaseMessaging.instance.getToken() ?? "";
+    List<String> tags = ["melodicsol-app"];
+    if (_wantsNotifications) {
+      if (_newMusic) tags.add("opt_in_new_music");
+      if (_liveShows) tags.add("opt_in_live_shows");
+      if (_livestreams) tags.add("opt_in_livestream");
+      if (_giveaways) tags.add("opt_in_giveaways");
+    }
 
-      if (_wantsNotifications) {
-        if (_newMusic) tags.add("opt_in_new_music");
-        if (_liveShows) tags.add("opt_in_live_shows");
-        if (_livestreams) tags.add("opt_in_livestream");
-        if (_giveaways) tags.add("opt_in_giveaways");
-      }
+    final payload = {
+      "name": _nameController.text.trim(),
+      "email": _emailController.text.trim().toLowerCase(),
+      "customField": {
+        "2kx1hmvcDBvKJ7vLqnQ2": _zipController.text.trim(),
+        "76EIOSnGiezG9oLSH7Sq": token,
+        "493AUidrObK3WBNugX3j": _wantsNotifications ? "Yes" : "No",
+        "thZdMuEnumktzhkHG7bi": _newMusic ? "Yes" : "No",
+        "zN4kxIDkm7rtiwM7oNLU": _liveShows ? "Yes" : "No",
+        "iLD4QkXTyyGe31rBtqEw": _livestreams ? "Yes" : "No",
+        "slI4j8daum6R2q1EBPHF": _giveaways ? "Yes" : "No",
+      },
+      "tags": tags,
+      "source": "Melodicsol App - Sign Up",
+    };
 
-      final payload = {
-        "name": _nameController.text.trim(),
-        "email": _emailController.text.trim().toLowerCase(),
-        "customField": {
-          "2kx1hmvcDBvKJ7vLqnQ2": _zipController.text.trim(),
-          "76EIOSnGiezG9oLSH7Sq": token,
-          "493AUidrObK3WBNugX3j": _wantsNotifications ? "Yes" : "No",
-          "thZdMuEnumktzhkHG7bi": _newMusic ? "Yes" : "No",
-          "zN4kxIDkm7rtiwM7oNLU": _liveShows ? "Yes" : "No",
-          "iLD4QkXTyyGe31rBtqEw": _livestreams ? "Yes" : "No",
-          "slI4j8daum6R2q1EBPHF": _giveaways ? "Yes" : "No",
-        },
-        "tags": tags,
-        "source": "Melodicsol App - Sign Up",
-      };
+    print("📤 Sending with tags: ${jsonEncode(payload)}");
 
-      print("📤 Sending with tags: ${jsonEncode(payload)}");
+    final response = await http.post(
+      Uri.parse("https://rest.gohighlevel.com/v1/contacts/"),
+      headers: {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U",
+        "Content-Type": "application/json",
+      },
+      body: jsonEncode(payload),
+    );
 
-      final response = await http.post(
-        Uri.parse("https://rest.gohighlevel.com/v1/contacts/"),
-        headers: {
-          "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U",
-          "Content-Type": "application/json",
-        },
-        body: jsonEncode(payload),
+    if ((response.statusCode == 200 || response.statusCode == 201) && mounted) {
+      // === FIREBASE AUTH CREATION ===
+      final User? user = await _authService.signUpWithEmail(
+        _emailController.text.trim().toLowerCase(),
+        _nameController.text.trim(),
       );
 
-      if ((response.statusCode == 200 || response.statusCode == 201) && mounted) {
-        // === FIREBASE AUTH CREATION ===
-        final User? user = await _authService.signUpWithEmail(
-          _emailController.text.trim().toLowerCase(),
-          _nameController.text.trim(),
-        );
+      if (user != null) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('isLoggedIn', true);
+        await prefs.setBool('email_confirmed', false);
+        print("✅ Firebase user created - email_confirmed set to FALSE");
 
-        if (user != null) {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setBool('isLoggedIn', true);
-          await prefs.setBool('email_confirmed', false);   // ← IMPORTANT FIX
+        // === CALL THE CALLBACK HERE (Step 3) ===
+        if (widget.onEmailConfirmed != null) {
+          widget.onEmailConfirmed!();
+        }
 
-          print("✅ Firebase user created - email_confirmed set to FALSE");
-
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => EmailVerificationScreen(
-                pendingAlbumName: widget.pendingAlbumName,
-                pendingSongIndex: widget.pendingSongIndex,
-              ),
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => EmailVerificationScreen(
+              pendingAlbumName: widget.pendingAlbumName,
+              pendingSongIndex: widget.pendingSongIndex,
             ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Failed to create Firebase account")),
-          );
-        }
+          ),
+        );
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("HighLevel failed: ${response.statusCode}")),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to create Firebase account")),
+        );
       }
-    } catch (e) {
-      print("❌ Signup error: $e");
+    } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Network error. Please try again.")),
+          SnackBar(content: Text("HighLevel failed: ${response.statusCode}")),
         );
       }
-    } finally {
-      if (mounted) setState(() => _isSubmitting = false);
     }
+  } catch (e) {
+    print("❌ Signup error: $e");
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Network error. Please try again.")),
+      );
+    }
+  } finally {
+    if (mounted) setState(() => _isSubmitting = false);
   }
+}
 
   @override
   Widget build(BuildContext context) {
