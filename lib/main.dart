@@ -345,44 +345,35 @@ void initState() {
     _loadSavedUnlocks();
     final appLinks = AppLinks();
     appLinks.uriLinkStream.listen((Uri? uri) async {
-      print("🔗 [GLOBAL] Deep link received: $uri");
       if (uri == null) return;
 
-      final String link = uri.toString();
+      print("🔗 Deep link received: $uri");
 
-      // Validate that this is a valid Firebase email link
-      if (FirebaseAuth.instance.isSignInWithEmailLink(link)) {
-        final email = uri.queryParameters['email'] ?? '';
+      // Your custom HighLevel link contains "confirm"
+      if (uri.toString().contains('confirm') || uri.queryParameters.containsKey('email')) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('isLoggedIn', true);
+        await prefs.setBool('email_confirmed', true);
+        await prefs.reload();
 
-        print("🔄 Valid email link detected. Completing sign-in for: $email");
+        print("✅ EMAIL CONFIRMED via custom HighLevel link!");
 
-        try {
-          final UserCredential userCredential = await FirebaseAuth.instance.signInWithEmailLink(
-            email: email,
-            emailLink: link,
-          );
+        setState(() {
+          _hasConfirmedEmail = true;
+        });
 
-          if (userCredential.user != null) {
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setBool('isLoggedIn', true);
-            await prefs.setBool('email_confirmed', true);
-            await prefs.reload();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("✅ Email confirmed! Email unlock songs are now available."),
+            backgroundColor: Colors.green,
+          ),
+        );
 
-            print("✅ Firebase user created successfully: ${userCredential.user!.uid}");
-
-            if (mounted) {
-              _handleEmailConfirmationSuccess();
-            }
-          }
-        } catch (e) {
-          print("❌ Failed to complete sign-in with email link: $e");
-        }
-      } else {
-        print("⚠️ Received link is not a valid Firebase email link");
+        // Refresh current screen
+        if (mounted) setState(() {});
       }
     });
   }
-  
   // This helps just_audio_background know the current state
 );
 
@@ -4874,103 +4865,116 @@ class _UserInfoScreenState extends State<UserInfoScreen> {
     });
   }
 
-  Future<void> _submitToHighLevel() async {
-    if (!_formKey.currentState!.validate()) {
-      print("❌ Form validation failed");
-      return;
-    }
+Future<void> _submitToHighLevel() async {
+  print("🚀 Create Account button clicked");
 
-    setState(() => _isSubmitting = true);
-    print("🚀 Submit button clicked - Starting HighLevel submission");
-
-    try {
-      final String email = _emailController.text.trim().toLowerCase();
-      final String name = _nameController.text.trim();
-      final String token = await FirebaseMessaging.instance.getToken() ?? "";
-
-      List<String> tags = ["melodicsol-app"];
-      if (_wantsNotifications) {
-        if (_newMusic) tags.add("opt_in_new_music");
-        if (_liveShows) tags.add("opt_in_live_shows");
-        if (_livestreams) tags.add("opt_in_livestream");
-        if (_giveaways) tags.add("opt_in_giveaways");
-      }
-
-      final payload = {
-        "name": name,
-        "email": email,
-        "customField": {
-          "2kx1hmvcDBvKJ7vLqnQ2": _zipController.text.trim(),
-          "76EIOSnGiezG9oLSH7Sq": token,
-          "493AUidrObK3WBNugX3j": _wantsNotifications ? "Yes" : "No",
-          "thZdMuEnumktzhkHG7bi": _newMusic ? "Yes" : "No",
-          "zN4kxIDkm7rtiwM7oNLU": _liveShows ? "Yes" : "No",
-          "iLD4QkXTyyGe31rBtqEw": _livestreams ? "Yes" : "No",
-          "slI4j8daum6R2q1EBPHF": _giveaways ? "Yes" : "No",
-        },
-        "tags": tags,
-        "source": "Melodicsol App - Sign Up",
-      };
-
-      print("📤 Sending to HighLevel: ${jsonEncode(payload)}");
-
-      final response = await http.post(
-        Uri.parse("https://rest.gohighlevel.com/v1/contacts/"),
-        headers: {
-          "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U",
-          "Content-Type": "application/json",
-        },
-        body: jsonEncode(payload),
-      );
-
-      print("📥 HighLevel Response Status: ${response.statusCode}");
-
-      if ((response.statusCode == 200 || response.statusCode == 201) && mounted) {
-        print("✅ HighLevel contact created successfully!");
-
-        // Create Firebase user with auto-generated password
-        try {
-          final String autoPassword = "Temp_${DateTime.now().millisecondsSinceEpoch}";
-
-          final UserCredential userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-            email: email,
-            password: autoPassword,
-          );
-
-          if (userCredential.user != null) {
-            print("✅ Firebase user created: ${userCredential.user!.uid}");
-
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setBool('isLoggedIn', true);
-            await prefs.setBool('email_confirmed', false); // Keep false until they click email link
-
-            if (widget.onEmailConfirmed != null) {
-              widget.onEmailConfirmed!();
-            }
-
-            // Show "Check your inbox" screen
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (_) => EmailVerificationScreen(
-                  pendingAlbumName: widget.pendingAlbumName,
-                  pendingSongIndex: widget.pendingSongIndex,
-                ),
-              ),
-            );
-          }
-        } catch (e) {
-          print("❌ Firebase user creation failed: $e");
-        }
-      } else {
-        print("❌ HighLevel failed with status: ${response.statusCode}");
-      }
-    } catch (e) {
-      print("❌ Signup error: $e");
-    } finally {
-      if (mounted) setState(() => _isSubmitting = false);
-    }
+  if (!_formKey.currentState!.validate()) {
+    print("❌ Form validation failed");
+    return;
   }
+
+  setState(() => _isSubmitting = true);
+
+  try {
+    final String email = _emailController.text.trim().toLowerCase();
+    final String name = _nameController.text.trim();
+    final String token = await FirebaseMessaging.instance.getToken() ?? "";
+
+    List<String> tags = ["melodicsol-app"];
+    if (_wantsNotifications) {
+      if (_newMusic) tags.add("opt_in_new_music");
+      if (_liveShows) tags.add("opt_in_live_shows");
+      if (_livestreams) tags.add("opt_in_livestream");
+      if (_giveaways) tags.add("opt_in_giveaways");
+    }
+
+    final payload = {
+      "name": name,
+      "email": email,
+      "customField": {
+        "2kx1hmvcDBvKJ7vLqnQ2": _zipController.text.trim(),
+        "76EIOSnGiezG9oLSH7Sq": token,
+        "493AUidrObK3WBNugX3j": _wantsNotifications ? "Yes" : "No",
+        "thZdMuEnumktzhkHG7bi": _newMusic ? "Yes" : "No",
+        "zN4kxIDkm7rtiwM7oNLU": _liveShows ? "Yes" : "No",
+        "iLD4QkXTyyGe31rBtqEw": _livestreams ? "Yes" : "No",
+        "slI4j8daum6R2q1EBPHF": _giveaways ? "Yes" : "No",
+      },
+      "tags": tags,
+      "source": "Melodicsol App - Sign Up",
+    };
+
+    print("📤 Sending to HighLevel: ${jsonEncode(payload)}");
+
+    final response = await http.post(
+      Uri.parse("https://rest.gohighlevel.com/v1/contacts/"),
+      headers: {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsb2NhdGlvbl9pZCI6IkhqTDF4Wm1nZTdXWTBib1kwTnQ3IiwidmVyc2lvbiI6MSwiaWF0IjoxNzc1OTk3MzQ5NDczLCJzdWIiOiJDaVZQYjd4YUdjZVRWbENaaGtPWCJ9.v5K9eOGiiEAZhhj83xTkr70GMIQfaDR4Xobo0y8DU9U", // ← PUT YOUR REAL HIGHLEVEL API KEY HERE
+        "Content-Type": "application/json",
+      },
+      body: jsonEncode(payload),
+    );
+
+    print("📥 HighLevel Status: ${response.statusCode}");
+
+    if ((response.statusCode == 200 || response.statusCode == 201) && mounted) {
+      print("✅ HighLevel contact created successfully!");
+
+      try {
+        final String autoPassword = "Temp_${DateTime.now().millisecondsSinceEpoch}";
+
+        final UserCredential userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: email,
+          password: autoPassword,
+        );
+
+        if (userCredential.user != null) {
+          print("✅ Firebase user created: ${userCredential.user!.uid}");
+
+          // Send verification email
+          await userCredential.user!.sendEmailVerification();
+          print("✅ Firebase verification email sent to $email");
+
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('isLoggedIn', true);
+          await prefs.setBool('email_confirmed', false);   // Keep false until they click link
+
+          if (widget.onEmailConfirmed != null) {
+            widget.onEmailConfirmed!();
+          }
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => EmailVerificationScreen(
+                pendingAlbumName: widget.pendingAlbumName,
+                pendingSongIndex: widget.pendingSongIndex,
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        print("❌ Firebase user creation failed: $e");
+      }
+    } else {
+      print("❌ HighLevel failed with status: ${response.statusCode}");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("HighLevel error: ${response.statusCode}")),
+        );
+      }
+    }
+  } catch (e) {
+    print("❌ Signup error: $e");
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Network error. Please try again.")),
+      );
+    }
+  } finally {
+    if (mounted) setState(() => _isSubmitting = false);
+  }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -5395,7 +5399,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     );
   }
 }
-// ====================== EMAIL VERIFICATION SCREEN ======================
+// ====================== CHECK YOUR INBOX SCREEN ======================
 class EmailVerificationScreen extends StatefulWidget {
   final String? pendingAlbumName;
   final int? pendingSongIndex;
@@ -5411,52 +5415,17 @@ class EmailVerificationScreen extends StatefulWidget {
 }
 
 class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
-  bool _isLoading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _listenForEmailConfirmation();
-  }
-
-  void _listenForEmailConfirmation() {
-    FirebaseAuth.instance.authStateChanges().listen((User? user) async {
-      if (user != null && mounted) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('email_confirmed', true);
-        await prefs.setBool('isLoggedIn', true);
-
-        setState(() => _isLoading = false);
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("✅ Email successfully confirmed!"),
-            backgroundColor: Colors.green,
-          ),
-        );
-
-        // Return to the album the user was trying to access
-        if (widget.pendingAlbumName != null) {
-          Navigator.popUntil(context, (route) => route.isFirst);
-        } else {
-          Navigator.pop(context);
-        }
-      }
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text("Confirm Your Email"),
+        title: const Text("Check Your Inbox"),
         backgroundColor: Colors.black,
-        elevation: 0,
       ),
       body: Center(
         child: Padding(
-          padding: const EdgeInsets.all(32.0),
+          padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -5469,13 +5438,16 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
               ),
               const SizedBox(height: 16),
               const Text(
-                "We sent a confirmation link to your email.\nClick the link to unlock songs.",
+                "We sent a confirmation link to your email.\nPlease click it to unlock songs.",
                 style: TextStyle(fontSize: 17, color: Colors.white70, height: 1.4),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 50),
-              if (_isLoading)
-                const CircularProgressIndicator(color: Colors.greenAccent),
+              const SizedBox(height: 40),
+              const Text(
+                "You can close this screen and come back after confirming your email.",
+                style: TextStyle(fontSize: 14, color: Colors.white54),
+                textAlign: TextAlign.center,
+              ),
             ],
           ),
         ),
