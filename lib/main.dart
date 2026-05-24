@@ -1193,6 +1193,22 @@ void _refreshAfterPurchase() {
   });
 }
 
+void _forceFullUnlockRefresh() {
+  setState(() {
+    _hasOpenAccess = true;
+  });
+  _globalUnlockTrigger.value++;
+  
+  // Also force refresh current album view if we're on one
+  if (_selectedAlbum != null) {
+    final albumName = _selectedAlbum!;
+    final prefs = SharedPreferences.getInstance();
+    prefs.then((p) => p.reload());
+  }
+
+  print("🔄 Strong full unlock refresh triggered");
+}
+
 void _showSongOptions(Map<String, dynamic> song, String albumName, int index) {
   showModalBottomSheet(
     context: context,
@@ -1695,65 +1711,78 @@ void _refreshQueueUI() {
     }
   }
 
-    Future<bool> _isContentUnlocked(String? albumName) async {
-      if (albumName == null) return false;
+  Future<bool> _isContentUnlocked(String? albumName) async {
+    if (albumName == null) return false;
 
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.reload();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
 
-      final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
-      final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
-
-      if (hasLifetime || hasCatalog) {
-        print("✅ GLOBAL UNLOCK active for $albumName");
-        return true;
-      }
-
-      final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
-      if (hasIndividual) {
-        _unlockedAlbums.add(albumName);
-        print("✅ INDIVIDUAL UNLOCK for $albumName");
-        return true;
-      }
-
-      print("🔒 Still locked for $albumName");
-      return false;
+    // LIFETIME = Everything forever
+    final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
+    if (hasLifetime) {
+      print("✅ LIFETIME UNLOCK → $albumName");
+      return true;
     }
+
+    // CATALOG = Snapshot of albums at time of purchase
+    final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
+    final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
+
+    if (hasCatalog && hasIndividual) {
+      print("✅ CATALOG SNAPSHOT UNLOCK → $albumName");
+      return true;
+    }
+
+    // Individual Album Purchase
+    if (hasIndividual) {
+      print("✅ INDIVIDUAL ALBUM UNLOCK → $albumName");
+      return true;
+    }
+
+    print("🔒 Still locked for $albumName");
+    return false;
+  }
     
-    Future<void> _initializeRevenueCat() async {
+  Future<void> _initializeRevenueCat() async {
     try {
       setState(() => _isCheckingSubscription = true);
-
       final customerInfo = await Purchases.getCustomerInfo();
       final hasAccess = customerInfo.entitlements.active.containsKey("premium_access");
-
       setState(() {
         _hasOpenAccess = hasAccess;
         _isCheckingSubscription = false;
       });
-
       print("✅ RevenueCat: Open Access = $_hasOpenAccess");
 
-      // Listen for future changes
-// Strong RevenueCat Listener - Fixes unlock issues
-// Strong RevenueCat Listener - Fixes unlock persistence
-      Purchases.addCustomerInfoUpdateListener((CustomerInfo customerInfo) async {
-        final prefs = await SharedPreferences.getInstance();
+    Purchases.addCustomerInfoUpdateListener((CustomerInfo customerInfo) async {
+      final prefs = await SharedPreferences.getInstance();
 
-        final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
-        final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
-        final bool hasPremium = customerInfo.entitlements.active.containsKey("premium_access");
+      final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
+      final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
+      final bool hasPremium = customerInfo.entitlements.active.containsKey("premium_access");
 
-        await prefs.setBool('hasLifetimeAccess', hasLifetime);
-        await prefs.setBool('hasCatalogAccess', hasCatalog || hasPremium);
+      await prefs.setBool('hasLifetimeAccess', hasLifetime);
+      await prefs.setBool('hasCatalogAccess', hasCatalog || hasPremium);
 
-        setState(() {
-          _hasOpenAccess = hasLifetime || hasCatalog || hasPremium;
+      // SNAPSHOT CATALOG: Unlock current albums only
+      if (hasCatalog) {
+        _albums.forEach((albumKey, _) {
+          if (!['Base', 'Central', 'Track'].contains(albumKey)) {
+            prefs.setBool('unlocked_$albumKey', true);
+            _unlockedAlbums.add(albumKey);
+          }
         });
+        print("✅ Catalog purchased → Snapshot of current albums unlocked");
+      }
 
-        print("✅ RevenueCat Listener → Lifetime: $hasLifetime | Catalog: $hasCatalog | OpenAccess: $_hasOpenAccess");
+      setState(() {
+        _hasOpenAccess = hasLifetime || hasCatalog || hasPremium;
       });
 
+      _globalUnlockTrigger.value++; // Force UI refresh everywhere
+
+      print("✅ RevenueCat Listener → Lifetime: $hasLifetime | Catalog: $hasCatalog");
+    });
     } catch (e) {
       print("❌ RevenueCat error: $e");
       setState(() {
@@ -2343,59 +2372,39 @@ return Column(
                   : (emailUnlock
                       ? const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22)
                       : const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20)),              
-              onTap: () async {
-                print("🔥 ALBUM DETAIL TAP → Album: $albumName | Index: $index");
+                onTap: () async {
+                  print("🔥 ALBUM DETAIL TAP → Album: $albumName | Index: $index");
 
-                final songData = songs[index] as Map<String, dynamic>;
-                final bool isFreeSong = (songData['isFree'] as bool? ?? false) ||
+                  final bool isUnlocked = await _isContentUnlocked(albumName);
+
+                  if (!isUnlocked && emailUnlock) {
+                    showDialog(
+                      context: context,
+                      barrierColor: Colors.transparent,
+                      builder: (context) => UserInfoScreen(
+                        pendingAlbumName: albumName,
+                        pendingSongIndex: index,
+                      ),
+                    );
+                  } else if (!isUnlocked) {
+                    _showPaywall(albumName);
+                  } else {
+                    // Song is unlocked - play it
+                    final songData = songs[index] as Map<String, dynamic>;
+                    final isFreeSong = (songData['isFree'] as bool? ?? false) ||
                                       ((songData['emailUnlock'] as bool? ?? false) && _hasConfirmedEmail);
 
-                // === 1. FREE SONG CHECK - Bypass everything ===
-                if (isFreeSong) {
-                  print("✅ Free song detected → Playing without paywall");
-                  await _playSong(
-                    albumName,
-                    index,
-                    fromQueue: false,
-                    respectUnlocks: true,           // Only queue free songs from here down
-                    directUrl: songData['url'] as String?,
-                    titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
-                    artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
-                  );
-                  return;
-                }
-
-                // === 2. Email Unlock Check ===
-                final bool emailUnlock = songData['emailUnlock'] as bool? ?? false;
-                if (emailUnlock && !_hasConfirmedEmail) {
-                  showDialog(
-                    context: context,
-                    barrierColor: Colors.transparent,
-                    builder: (context) => UserInfoScreen(
-                      pendingAlbumName: albumName,
-                      pendingSongIndex: index,
-                    ),
-                  );
-                  return;
-                }
-
-                // === 3. Paid Content Check ===
-                final bool actuallyUnlocked = await _isContentUnlocked(albumName);
-
-                if (!actuallyUnlocked) {
-                  _showPaywall(albumName);
-                } else {
-                  await _playSong(
-                    albumName,
-                    index,
-                    fromQueue: false,
-                    respectUnlocks: false,
-                    directUrl: songData['url'] as String?,
-                    titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
-                    artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
-                  );
-                }
-              },
+                    await _playSong(
+                      albumName,
+                      index,
+                      fromQueue: false,
+                      respectUnlocks: isFreeSong,
+                      directUrl: songData['url'] as String?,
+                      titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
+                      artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
+                    );
+                  }
+                },
               onLongPress: () => _showSongOptions(song, albumName, index),
             );
           },
@@ -4177,10 +4186,19 @@ Future<void> _fullRevenueCatReset() async {
           builder: (context) => PaywallScreen(
             specificAlbum: specificAlbum,
             onUnlockSuccess: () {
-              _globalUnlockTrigger.value++; // This forces rebuild on ALL album pages
+              _globalUnlockTrigger.value++; // Force rebuild across all album pages
+
               if (specificAlbum != null) {
                 _unlockedAlbums.add(specificAlbum);
+                // Persist immediately
+                SharedPreferences.getInstance().then((prefs) {
+                  prefs.setBool('unlocked_$specificAlbum', true);
+                });
               }
+
+              // Extra strong refresh
+              _forceFullUnlockRefresh(); 
+
               print("🔄 Global unlock trigger fired - forcing rebuild");
             },
             purchasableAlbums: _individuallyPurchasableAlbums,
