@@ -343,6 +343,9 @@ void initState() {
     _showMainAlbumTutorial();
     _loadPlaylists();
     _loadSavedUnlocks();
+    _initializeRevenueCat();
+    // Optional: Call it again after a short delay for reliability
+    Future.delayed(const Duration(milliseconds: 800), _initializeRevenueCat);
     final appLinks = AppLinks();
     appLinks.uriLinkStream.listen((Uri? uri) async {
       if (uri == null) return;
@@ -1720,20 +1723,18 @@ void _refreshQueueUI() {
         return true;
       }
 
-      final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
+      if (prefs.getBool('hasCatalogAccess') ?? false) {
+        print("✅ CATALOG UNLOCK → $albumName");
+        return true;
+      }
+
       final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
-
-      if (hasCatalog && hasIndividual) {
-        print("✅ CATALOG SNAPSHOT UNLOCK → $albumName");
-        return true;
-      }
-
       if (hasIndividual) {
-        print("✅ INDIVIDUAL ALBUM UNLOCK → $albumName");
+        print("✅ INDIVIDUAL UNLOCK → $albumName");
         return true;
       }
 
-      print("🔒 Still locked for $albumName");
+      print("🔒 STILL LOCKED → $albumName");
       return false;
     }
     
@@ -1749,30 +1750,41 @@ void _refreshQueueUI() {
         print("✅ RevenueCat: Open Access = $_hasOpenAccess");
 
         // Strong RevenueCat Listener
-      Purchases.addCustomerInfoUpdateListener((CustomerInfo customerInfo) async {
-        final prefs = await SharedPreferences.getInstance();
+Purchases.addCustomerInfoUpdateListener((CustomerInfo customerInfo) async {
+  final prefs = await SharedPreferences.getInstance();
 
-        final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
-        final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
+  final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
+  final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
 
-        await prefs.setBool('hasLifetimeAccess', hasLifetime);
-        await prefs.setBool('hasCatalogAccess', hasCatalog);
+  await prefs.setBool('hasLifetimeAccess', hasLifetime);
+  await prefs.setBool('hasCatalogAccess', hasCatalog);
 
-        if (hasCatalog) {
-          for (var albumKey in _albums.keys) {
-            if (!['Base', 'Central', 'Track'].contains(albumKey)) {
-              await prefs.setBool('unlocked_$albumKey', true);
-              _unlockedAlbums.add(albumKey);
-            }
-          }
-          print("✅ Catalog snapshot applied to all current albums");
-        }
+  print("📡 Listener fired → Lifetime: $hasLifetime | Catalog: $hasCatalog");
 
-        _forceFullUnlockRefresh();
-        _globalUnlockTrigger.value++;
+  if (hasLifetime) {
+    print("✅ LIFETIME PURCHASE — Unlocking ALL albums");
+    for (var key in _albums.keys) {
+      await prefs.setBool('unlocked_$key', true);
+      _unlockedAlbums.add(key);
+    }
+  } else if (hasCatalog) {
+    print("✅ CATALOG PURCHASE — Applying snapshot");
+    int count = 0;
+    for (var key in _albums.keys) {
+      if (!['Base', 'Central', 'Track'].contains(key)) {
+        await prefs.setBool('unlocked_$key', true);
+        _unlockedAlbums.add(key);
+        count++;
+      }
+    }
+    print("✅ Snapshot applied to $count albums");
+  } else {
+    print("ℹ️ No global unlock — individual purchase only (listener ignored)");
+  }
 
-        print("✅ RevenueCat Listener → Lifetime: $hasLifetime | Catalog: $hasCatalog");
-      });
+  setState(() {});
+  _globalUnlockTrigger.value++;
+});
       } catch (e) {
         print("❌ RevenueCat error: $e");
         setState(() {
@@ -4114,6 +4126,21 @@ void _showExpandedDebugPanel() {
               _redeemPromoCode("LOCKALL");
             },
           ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.delete_forever, color: Colors.red),
+            label: const Text("CLEAR ALL UNLOCKS (Test)"),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () async {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.clear();  // Clear everything
+              _unlockedAlbums.clear();
+              setState(() {});
+              print("🗑️ ALL UNLOCKS CLEARED");
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("All unlocks cleared"), backgroundColor: Colors.red),
+              );
+            },
+          ),
           const SizedBox(height: 30),
           const Divider(color: Colors.white24),
 
@@ -4238,19 +4265,13 @@ Future<void> _showPaywall([String? specificAlbum]) async {
       builder: (context) => PaywallScreen(
         specificAlbum: specificAlbum,
         onUnlockSuccess: () {
-          if (specificAlbum != null) {
-            _forceFullUnlockRefresh(specificAlbum: specificAlbum);
-          } else {
-            _forceFullUnlockRefresh();
-          }
+          print("🔄 onUnlockSuccess called for ${specificAlbum ?? 'GLOBAL'}");
+          _globalUnlockTrigger.value++;
+          setState(() {});
         },
-        purchasableAlbums: _individuallyPurchasableAlbums,
-        albumTitleStyle: specificAlbum != null ? _getAlbumFont(specificAlbum) : null,
       ),
     ),
   );
-
-  _forceFullUnlockRefresh();
 }
     
     Future<void> _showLocalNotification(RemoteMessage message) async {
@@ -5216,45 +5237,52 @@ class _PaywallScreenState extends State<PaywallScreen> {
     }
   }
 
-  Future<void> _purchasePackage(Package package) async {
-    if (_isPurchasing) return;
+Future<void> _purchasePackage(Package package) async {
+  if (_isPurchasing) return;
+  setState(() => _isPurchasing = true);
 
-    setState(() => _isPurchasing = true);
+  try {
+    print("🛒 PURCHASING: ${package.identifier} | Specific: ${widget.specificAlbum}");
 
-    try {
-      print("🛒 Purchasing: ${package.identifier}");
-      final customerInfo = await Purchases.purchasePackage(package);
-      print("✅ Purchase successful → ${package.identifier}");
+    final customerInfo = await Purchases.purchasePackage(package);
+    print("✅ Purchase successful → ${package.identifier}");
 
-      final prefs = await SharedPreferences.getInstance();
+    final prefs = await SharedPreferences.getInstance();
 
-      if (package.identifier.contains("lifetime_access") || package.identifier.contains("lifetime")) {
-        await prefs.setBool('hasLifetimeAccess', true);
-      } else if (package.identifier.contains("catalog_access") || package.identifier.contains("catalog")) {
-        await prefs.setBool('hasCatalogAccess', true);
-      } else if (widget.specificAlbum != null) {
-        await prefs.setBool('unlocked_${widget.specificAlbum}', true);
-      }
-
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ Purchase successful!"), backgroundColor: Colors.green),
-        );
-        widget.onUnlockSuccess?.call();
-      }
-    } catch (e) {
-      print("❌ Purchase error: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Purchase failed. Please try again.")),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isPurchasing = false);
+    if (package.identifier.contains("lifetime_access") || package.identifier.contains("lifetime")) {
+      await prefs.setBool('hasLifetimeAccess', true);
+      print("✅ Saved LIFETIME");
+    } 
+    else if (package.identifier.contains("catalog_access") || package.identifier.contains("catalog")) {
+      await prefs.setBool('hasCatalogAccess', true);
+      print("✅ Saved CATALOG");
+    } 
+    else if (widget.specificAlbum != null) {
+      // INDIVIDUAL ONLY - No parent variables used
+      await prefs.setBool('unlocked_${widget.specificAlbum}', true);
+      await prefs.setBool('hasLifetimeAccess', false);
+      await prefs.setBool('hasCatalogAccess', false);
+      print("✅ Saved INDIVIDUAL ONLY for ${widget.specificAlbum} — Globals cleared");
     }
-  }
 
+    if (mounted) {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("✅ Purchase successful!"), backgroundColor: Colors.green),
+      );
+      widget.onUnlockSuccess?.call();
+    }
+  } catch (e) {
+    print("❌ Purchase error: $e");
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Purchase failed. Please try again.")),
+      );
+    }
+  } finally {
+    if (mounted) setState(() => _isPurchasing = false);
+  }
+}
   @override
   Widget build(BuildContext context) {
     final offering = _offerings?.getOffering("main_paywall") ?? _offerings?.current;
