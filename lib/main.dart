@@ -1193,17 +1193,23 @@ void _refreshAfterPurchase() {
   });
 }
 
-void _forceFullUnlockRefresh({bool isGlobalUnlock = false}) {
+void _forceFullUnlockRefresh({bool isGlobalUnlock = false, String? specificAlbum}) {
   setState(() {
-    _hasOpenAccess = isGlobalUnlock;   // Only set true for Lifetime/Catalog
+    if (isGlobalUnlock) {
+      _hasOpenAccess = true;
+    }
   });
-  
+
   _globalUnlockTrigger.value++;
+
+  if (specificAlbum != null) {
+    _unlockedAlbums.add(specificAlbum);
+  }
 
   if (isGlobalUnlock) {
     print("🔄 Strong GLOBAL unlock refresh triggered");
   } else {
-    print("🔄 Local album unlock refresh triggered");
+    print("🔄 Local album unlock refresh triggered for: $specificAlbum");
   }
 }
 
@@ -2312,6 +2318,7 @@ return Column(
     const SizedBox(height: 12),
 
     // === SONG LIST WITH STRONG PULL-TO-REFRESH ===
+// === SONG LIST WITH STRONG PULL-TO-REFRESH ===
     Expanded(
       child: RefreshIndicator(
         onRefresh: () async {
@@ -2319,7 +2326,6 @@ return Column(
           final prefs = await SharedPreferences.getInstance();
           await prefs.reload();
           
-          // Only check this specific album
           if (await _isContentUnlocked(albumName)) {
             _unlockedAlbums.add(albumName);
           }
@@ -2343,13 +2349,13 @@ return Column(
             final isFree = song['isFree'] as bool? ?? false;
             final emailUnlock = song['emailUnlock'] as bool? ?? false;
             final bool isUnlockedByEmail = emailUnlock && _hasConfirmedEmail;
-            
-            // Stronger unlock check every time a tile builds
+
+            // NO AWAIT HERE - Use cached state only
             final bool isUnlocked = isFree || 
-              isUnlockedByEmail || 
-               _hasOpenAccess || 
-               _unlockedAlbums.contains(albumName) ||
-               _globalUnlockTrigger.value > 0;   // ← Forces rebuild on global change
+                                  isUnlockedByEmail || 
+                                  _unlockedAlbums.contains(albumName) ||
+                                  _hasOpenAccess;
+
             return ListTile(
               leading: ClipRRect(
                 borderRadius: BorderRadius.circular(6),
@@ -2374,39 +2380,38 @@ return Column(
                   : (emailUnlock
                       ? const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22)
                       : const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20)),              
-                onTap: () async {
-                  print("🔥 ALBUM DETAIL TAP → Album: $albumName | Index: $index");
+              onTap: () async {
+                print("🔥 ALBUM DETAIL TAP → Album: $albumName | Index: $index");
 
-                  final bool isUnlocked = await _isContentUnlocked(albumName);
+                final bool actuallyUnlocked = await _isContentUnlocked(albumName);
 
-                  if (!isUnlocked && emailUnlock) {
-                    showDialog(
-                      context: context,
-                      barrierColor: Colors.transparent,
-                      builder: (context) => UserInfoScreen(
-                        pendingAlbumName: albumName,
-                        pendingSongIndex: index,
-                      ),
-                    );
-                  } else if (!isUnlocked) {
-                    _showPaywall(albumName);
-                  } else {
-                    // Song is unlocked - play it
-                    final songData = songs[index] as Map<String, dynamic>;
-                    final isFreeSong = (songData['isFree'] as bool? ?? false) ||
-                                      ((songData['emailUnlock'] as bool? ?? false) && _hasConfirmedEmail);
+                if (!actuallyUnlocked && emailUnlock) {
+                  showDialog(
+                    context: context,
+                    barrierColor: Colors.transparent,
+                    builder: (context) => UserInfoScreen(
+                      pendingAlbumName: albumName,
+                      pendingSongIndex: index,
+                    ),
+                  );
+                } else if (!actuallyUnlocked) {
+                  _showPaywall(albumName);
+                } else {
+                  final songData = songs[index] as Map<String, dynamic>;
+                  final isFreeSong = (songData['isFree'] as bool? ?? false) ||
+                                    ((songData['emailUnlock'] as bool? ?? false) && _hasConfirmedEmail);
 
-                    await _playSong(
-                      albumName,
-                      index,
-                      fromQueue: false,
-                      respectUnlocks: isFreeSong,
-                      directUrl: songData['url'] as String?,
-                      titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
-                      artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
-                    );
-                  }
-                },
+                  await _playSong(
+                    albumName,
+                    index,
+                    fromQueue: false,
+                    respectUnlocks: isFreeSong,
+                    directUrl: songData['url'] as String?,
+                    titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
+                    artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
+                  );
+                }
+              },
               onLongPress: () => _showSongOptions(song, albumName, index),
             );
           },
@@ -4188,14 +4193,9 @@ Future<void> _fullRevenueCatReset() async {
           builder: (context) => PaywallScreen(
             specificAlbum: specificAlbum,
             onUnlockSuccess: () {
-              _globalUnlockTrigger.value++; 
-
               if (specificAlbum != null) {
-                _unlockedAlbums.add(specificAlbum);
-                SharedPreferences.getInstance().then((prefs) {
-                  prefs.setBool('unlocked_$specificAlbum', true);
-                });
-                _forceFullUnlockRefresh(isGlobalUnlock: false); // Individual purchase
+                // Individual album purchase
+                _forceFullUnlockRefresh(isGlobalUnlock: false, specificAlbum: specificAlbum);
               } else {
                 // Catalog or Lifetime purchase
                 _forceFullUnlockRefresh(isGlobalUnlock: true);
