@@ -346,10 +346,8 @@ void initState() {
     final appLinks = AppLinks();
     appLinks.uriLinkStream.listen((Uri? uri) async {
       if (uri == null) return;
-
       print("🔗 Deep link received: $uri");
 
-      // Your custom HighLevel link contains "confirm"
       if (uri.toString().contains('confirm') || uri.queryParameters.containsKey('email')) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('isLoggedIn', true);
@@ -369,8 +367,10 @@ void initState() {
           ),
         );
 
-        // Refresh current screen
-        if (mounted) setState(() {});
+        // Auto-navigate to main app if still on verification screen
+        if (mounted) {
+          Navigator.popUntil(context, (route) => route.isFirst); // Return to main spine
+        }
       }
     });
   }
@@ -1467,7 +1467,6 @@ void _showLoadPlaylistDialog() {
           if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
-
           final prefs = snapshot.data!;
           final List<String> playlistNames = prefs.getStringList('playlist_names') ?? [];
 
@@ -1499,7 +1498,6 @@ void _showLoadPlaylistDialog() {
                                   ],
                                 ),
                               );
-
                               if (confirm == true) {
                                 final updated = List<String>.from(playlistNames);
                                 updated.remove(name);
@@ -1513,15 +1511,17 @@ void _showLoadPlaylistDialog() {
                           onTap: () async {
                             Navigator.pop(context);
                             final String json = prefs.getString('playlist_$name') ?? '[]';
-                            final List<dynamic> songs = jsonDecode(json);
+                            final List<dynamic> loadedSongs = jsonDecode(json);
 
-                            if (songs.isEmpty) {
+                            if (loadedSongs.isEmpty) {
                               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Playlist is empty")));
                               return;
                             }
 
+                            // Clear and rebuild queue with correct indexing
                             setState(() {
-                              _queue.addAll(songs.map((s) => Map<String, dynamic>.from(s as Map)).toList());
+                              _queue.clear();
+                              _queue.addAll(loadedSongs.map((s) => Map<String, dynamic>.from(s as Map)).toList());
                             });
 
                             _forceQueueRebuild();
@@ -2319,105 +2319,122 @@ return Column(
 
     // === SONG LIST WITH STRONG PULL-TO-REFRESH ===
 // === SONG LIST WITH STRONG PULL-TO-REFRESH ===
-    Expanded(
-      child: RefreshIndicator(
-        onRefresh: () async {
-          print("🔄 Pull-to-refresh triggered on $albumName album");
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.reload();
-          
-          if (await _isContentUnlocked(albumName)) {
-            _unlockedAlbums.add(albumName);
-          }
-          
-          await Future.delayed(const Duration(milliseconds: 600));
-          if (mounted) {
-            setState(() {
-              print("🔄 Strong rebuild after pull-to-refresh for $albumName");
-            });
-          }
-        },
-        color: Colors.greenAccent,
-        backgroundColor: Colors.black87,
-        child: ListView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          itemCount: songs.length,
-          itemBuilder: (context, index) {
-            final song = songs[index] as Map<String, dynamic>;
-            final title = song['Title'] as String? ?? "Unknown Track";
-            final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
-            final isFree = song['isFree'] as bool? ?? false;
-            final emailUnlock = song['emailUnlock'] as bool? ?? false;
-            final bool isUnlockedByEmail = emailUnlock && _hasConfirmedEmail;
+Expanded(
+  child: RefreshIndicator(
+    onRefresh: () async {
+      print("🔄 Pull-to-refresh triggered on $albumName album");
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      
+      if (await _isContentUnlocked(albumName)) {
+        _unlockedAlbums.add(albumName);
+      }
+      
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (mounted) {
+        setState(() {
+          print("🔄 Strong rebuild after pull-to-refresh for $albumName");
+        });
+      }
+    },
+    color: Colors.greenAccent,
+    backgroundColor: Colors.black87,
+    child: ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      itemCount: songs.length,
+      itemBuilder: (context, index) {
+        final song = songs[index] as Map<String, dynamic>;
+        final title = song['Title'] as String? ?? "Unknown Track";
+        final artUrl = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? "";
+        final isFree = song['isFree'] as bool? ?? false;
+        final emailUnlock = song['emailUnlock'] as bool? ?? false;
+        final bool isUnlockedByEmail = emailUnlock && _hasConfirmedEmail;
 
-            // NO AWAIT HERE - Use cached state only
-            final bool isUnlocked = isFree || 
-                                  isUnlockedByEmail || 
-                                  _unlockedAlbums.contains(albumName) ||
-                                  _hasOpenAccess;
+        // Stronger unlock check
+        final bool isUnlocked = isFree || 
+                               isUnlockedByEmail || 
+                               _unlockedAlbums.contains(albumName) ||
+                               _hasOpenAccess;
 
-            return ListTile(
-              leading: ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: CachedNetworkImage(
-                  imageUrl: artUrl,
-                  width: 48,
-                  height: 48,
-                  fit: BoxFit.cover,
-                  errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
+        return ListTile(
+          leading: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: CachedNetworkImage(
+              imageUrl: artUrl,
+              width: 48,
+              height: 48,
+              fit: BoxFit.cover,
+              errorWidget: (context, url, error) => const Icon(Icons.music_note, size: 48, color: Colors.white38),
+            ),
+          ),
+          title: Text(
+            title,
+            style: TextStyle(
+              fontSize: 16.5,
+              color: isUnlocked ? Colors.white : Colors.white70,
+              fontWeight: isUnlocked ? FontWeight.w500 : FontWeight.normal,
+            ),
+          ),
+          trailing: isUnlocked
+              ? null
+              : (emailUnlock
+                  ? const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22)
+                  : const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20)),              
+          onTap: () async {
+            print("🔥 ALBUM DETAIL TAP → Album: $albumName | Index: $index");
+
+            // === FREE SONG CHECK - MUST COME FIRST ===
+            final bool isFreeSong = isFree || 
+                                  (emailUnlock && _hasConfirmedEmail);
+
+            if (isFreeSong) {
+              print("✅ Free song detected → Playing directly");
+              final songData = songs[index] as Map<String, dynamic>;
+              await _playSong(
+                albumName,
+                index,
+                fromQueue: false,
+                respectUnlocks: true,        // Important for free songs
+                directUrl: songData['url'] as String?,
+                titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
+                artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
+              );
+              return;
+            }
+
+            // === Regular paid song flow ===
+            final bool actuallyUnlocked = await _isContentUnlocked(albumName);
+
+            if (!actuallyUnlocked && emailUnlock) {
+              showDialog(
+                context: context,
+                barrierColor: Colors.transparent,
+                builder: (context) => UserInfoScreen(
+                  pendingAlbumName: albumName,
+                  pendingSongIndex: index,
                 ),
-              ),
-              title: Text(
-                title,
-                style: TextStyle(
-                  fontSize: 16.5,
-                  color: isUnlocked ? Colors.white : Colors.white70,
-                  fontWeight: isUnlocked ? FontWeight.w500 : FontWeight.normal,
-                ),
-              ),
-              trailing: isUnlocked
-                  ? null
-                  : (emailUnlock
-                      ? const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22)
-                      : const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20)),              
-              onTap: () async {
-                print("🔥 ALBUM DETAIL TAP → Album: $albumName | Index: $index");
-
-                final bool actuallyUnlocked = await _isContentUnlocked(albumName);
-
-                if (!actuallyUnlocked && emailUnlock) {
-                  showDialog(
-                    context: context,
-                    barrierColor: Colors.transparent,
-                    builder: (context) => UserInfoScreen(
-                      pendingAlbumName: albumName,
-                      pendingSongIndex: index,
-                    ),
-                  );
-                } else if (!actuallyUnlocked) {
-                  _showPaywall(albumName);
-                } else {
-                  final songData = songs[index] as Map<String, dynamic>;
-                  final isFreeSong = (songData['isFree'] as bool? ?? false) ||
-                                    ((songData['emailUnlock'] as bool? ?? false) && _hasConfirmedEmail);
-
-                  await _playSong(
-                    albumName,
-                    index,
-                    fromQueue: false,
-                    respectUnlocks: isFreeSong,
-                    directUrl: songData['url'] as String?,
-                    titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
-                    artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
-                  );
-                }
-              },
-              onLongPress: () => _showSongOptions(song, albumName, index),
-            );
+              );
+            } else if (!actuallyUnlocked) {
+              _showPaywall(albumName);
+            } else {
+              final songData = songs[index] as Map<String, dynamic>;
+              await _playSong(
+                albumName,
+                index,
+                fromQueue: false,
+                respectUnlocks: false,
+                directUrl: songData['url'] as String?,
+                titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
+                artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
+              );
+            }
           },
-        ),
-      ),
+          onLongPress: () => _showSongOptions(song, albumName, index),
+        );
+      },
     ),
+  ),
+),
   ],
 );
 }
@@ -3442,13 +3459,28 @@ Widget _buildSocialPage() {
 
             const SizedBox(height: 40),
 
-            // Social Media Links
+            // Social Media Links - Enhanced with Native App Preference
             ..._socialLinks.entries.map((entry) {
               final data = entry.value;
               return Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: ElevatedButton.icon(
-                  onPressed: () => _launchUrl(data["url"] as String),
+                  onPressed: () async {
+                    final String urlString = data["url"] as String;
+                    final Uri url = Uri.parse(urlString);
+
+                    // Try to open in native app first
+                    if (await canLaunchUrl(url)) {
+                      await launchUrl(
+                        url,
+                        mode: LaunchMode.externalApplication, // Prefers native app when available
+                      );
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Could not open link")),
+                      );
+                    }
+                  },
                   icon: Icon(data["icon"] as IconData, color: data["color"] as Color),
                   label: Text(entry.key),
                   style: ElevatedButton.styleFrom(
@@ -3614,11 +3646,11 @@ void _showAlbumStory(String albumName) {
     );
     return;
   }
-
   final story = _albumStories[albumName] ?? "Story coming soon for $albumName...";
   final themeColor = _getAlbumThemeColor(albumName);
   final artUrl = album['artUrl'] as String? ?? '';
-  final displayName = _getAlbumDisplayName(albumName);   // ← Use helper
+  final displayName = _getAlbumDisplayName(albumName);
+  final bool canPurchaseIndividually = album['canPurchaseIndividually'] == true;
 
   showModalBottomSheet(
     context: context,
@@ -3647,7 +3679,6 @@ void _showAlbumStory(String albumName) {
             ),
           ),
           const SizedBox(height: 16),
-
           // Clickable Album Art
           GestureDetector(
             onTap: () {
@@ -3674,18 +3705,14 @@ void _showAlbumStory(String albumName) {
                   : const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
             ),
           ),
-
           const SizedBox(height: 20),
-
-          // Album Title - Using helper
+          // Album Title
           Text(
             displayName,
             style: _getAlbumFont(albumName).copyWith(fontSize: 28),
             textAlign: TextAlign.center,
           ),
-
           const SizedBox(height: 20),
-
           // Story Text
           Expanded(
             child: SingleChildScrollView(
@@ -3697,13 +3724,15 @@ void _showAlbumStory(String albumName) {
               ),
             ),
           ),
-
-          // Individual Album Purchase Button
-          if (album['canPurchaseIndividually'] == true)
+          // === BUY THIS ALBUM BUTTON - Now Fully Integrated ===
+          if (canPurchaseIndividually)
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
               child: ElevatedButton(
-                onPressed: () => _purchaseIndividualAlbum(albumName),
+                onPressed: () {
+                  Navigator.pop(context); // Close story first
+                  _showPaywall(albumName); // Reuse the exact same PaywallScreen
+                },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.greenAccent,
                   foregroundColor: Colors.black87,
@@ -3716,7 +3745,6 @@ void _showAlbumStory(String albumName) {
                 ),
               ),
             ),
-
           // Close Button
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
@@ -5423,13 +5451,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
 class EmailVerificationScreen extends StatefulWidget {
   final String? pendingAlbumName;
   final int? pendingSongIndex;
-
   const EmailVerificationScreen({
     super.key,
     this.pendingAlbumName,
     this.pendingSongIndex,
   });
-
   @override
   State<EmailVerificationScreen> createState() => _EmailVerificationScreenState();
 }
@@ -5463,8 +5489,24 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 40),
+
+              // "Go to App" Button - Always visible
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pushReplacementNamed(context, '/'); // Returns to main spine grid
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.greenAccent,
+                  foregroundColor: Colors.black,
+                  minimumSize: const Size(double.infinity, 62),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                ),
+                child: const Text("Go to App", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+              ),
+
+              const SizedBox(height: 20),
               const Text(
-                "You can close this screen and come back after confirming your email.",
+                "You can return here after confirming your email.",
                 style: TextStyle(fontSize: 14, color: Colors.white54),
                 textAlign: TextAlign.center,
               ),
