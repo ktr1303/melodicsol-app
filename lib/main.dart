@@ -1715,37 +1715,35 @@ void _refreshQueueUI() {
     }
   }
 
-  Future<bool> _isContentUnlocked(String? albumName) async {
-    if (albumName == null) return false;
+    Future<bool> _isContentUnlocked(String? albumName) async {
+      if (albumName == null) return false;
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
 
-    // LIFETIME = Everything forever
-    final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
-    if (hasLifetime) {
-      print("✅ LIFETIME UNLOCK → $albumName");
-      return true;
+      // Lifetime = Everything, forever
+      if (prefs.getBool('hasLifetimeAccess') ?? false) {
+        print("✅ LIFETIME UNLOCK → $albumName");
+        return true;
+      }
+
+      // Catalog = Snapshot of albums at time of purchase
+      final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
+      final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
+
+      if (hasCatalog && hasIndividual) {
+        print("✅ CATALOG SNAPSHOT UNLOCK → $albumName");
+        return true;
+      }
+
+      if (hasIndividual) {
+        print("✅ INDIVIDUAL ALBUM UNLOCK → $albumName");
+        return true;
+      }
+
+      print("🔒 Still locked for $albumName");
+      return false;
     }
-
-    // CATALOG = Snapshot of albums at time of purchase
-    final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
-    final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
-
-    if (hasCatalog && hasIndividual) {
-      print("✅ CATALOG SNAPSHOT UNLOCK → $albumName");
-      return true;
-    }
-
-    // Individual Album Purchase
-    if (hasIndividual) {
-      print("✅ INDIVIDUAL ALBUM UNLOCK → $albumName");
-      return true;
-    }
-
-    print("🔒 Still locked for $albumName");
-    return false;
-  }
     
     Future<void> _initializeRevenueCat() async {
       try {
@@ -1761,14 +1759,13 @@ void _refreshQueueUI() {
         // Strong RevenueCat Listener with Snapshot Catalog
         Purchases.addCustomerInfoUpdateListener((CustomerInfo customerInfo) async {
           final prefs = await SharedPreferences.getInstance();
+
           final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
           final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
-          final bool hasPremium = customerInfo.entitlements.active.containsKey("premium_access");
 
           await prefs.setBool('hasLifetimeAccess', hasLifetime);
-          await prefs.setBool('hasCatalogAccess', hasCatalog || hasPremium);
+          await prefs.setBool('hasCatalogAccess', hasCatalog);
 
-          // === SNAPSHOT CATALOG LOGIC ===
           if (hasCatalog) {
             _albums.forEach((albumKey, _) {
               if (!['Base', 'Central', 'Track'].contains(albumKey)) {
@@ -1777,19 +1774,16 @@ void _refreshQueueUI() {
               }
             });
             print("✅ Catalog purchased → Snapshot of current albums unlocked");
-            _forceFullUnlockRefresh(isGlobalUnlock: true);   // Global for Catalog
-          } 
-          else if (hasLifetime) {
-            _forceFullUnlockRefresh(isGlobalUnlock: true);   // Global for Lifetime
           }
 
           setState(() {
-            _hasOpenAccess = hasLifetime || hasCatalog || hasPremium;
+            _hasOpenAccess = hasLifetime || hasCatalog;
           });
 
-          _globalUnlockTrigger.value++; // Extra safety refresh
+          _globalUnlockTrigger.value++;   // Force full UI refresh
+          _forceFullUnlockRefresh(isGlobalUnlock: hasLifetime || hasCatalog);
 
-          print("✅ RevenueCat Listener → Lifetime: $hasLifetime | Catalog: $hasCatalog | OpenAccess: $_hasOpenAccess");
+          print("✅ RevenueCat Listener → Lifetime: $hasLifetime | Catalog: $hasCatalog");
         });
       } catch (e) {
         print("❌ RevenueCat error: $e");
@@ -5183,6 +5177,7 @@ class PaywallScreen extends StatefulWidget {
 class _PaywallScreenState extends State<PaywallScreen> {
   Offerings? _offerings;
   bool _loading = true;
+  bool _isPurchasing = false;   // ← Prevents multiple taps
 
   @override
   void initState() {
@@ -5200,6 +5195,46 @@ class _PaywallScreenState extends State<PaywallScreen> {
     } catch (e) {
       print("RevenueCat error: $e");
       setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _purchasePackage(Package package) async {
+    if (_isPurchasing) return;   // ← Safety check
+
+    setState(() => _isPurchasing = true);
+
+    try {
+      print("🛒 Purchasing: ${package.identifier}");
+      final customerInfo = await Purchases.purchasePackage(package);
+
+      print("✅ Purchase successful → ${package.identifier}");
+
+      // Handle unlocks
+      final prefs = await SharedPreferences.getInstance();
+      if (package.identifier.contains("lifetime_access") || package.identifier.contains("lifetime")) {
+        await prefs.setBool('hasLifetimeAccess', true);
+      } else if (package.identifier.contains("catalog_access") || package.identifier.contains("catalog")) {
+        await prefs.setBool('hasCatalogAccess', true);
+      } else if (widget.specificAlbum != null) {
+        await prefs.setBool('unlocked_${widget.specificAlbum}', true);
+      }
+
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("✅ Purchase successful!"), backgroundColor: Colors.green),
+        );
+        widget.onUnlockSuccess?.call();
+      }
+    } catch (e) {
+      print("❌ Purchase error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Purchase failed. Please try again.")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isPurchasing = false);
     }
   }
 
@@ -5222,11 +5257,10 @@ class _PaywallScreenState extends State<PaywallScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: Colors.greenAccent))
           : SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 12), // Reduced horizontal padding
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Column(
                 children: [
-                  const SizedBox(height: 20), // Reduced top spacing
-
+                  const SizedBox(height: 20),
                   // Top Headline
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 8),
@@ -5234,52 +5268,38 @@ class _PaywallScreenState extends State<PaywallScreen> {
                       "I Built this App to\nEmpower Musicians",
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        fontSize: 24, // Slightly smaller
+                        fontSize: 24,
                         fontWeight: FontWeight.bold,
                         color: Color.fromARGB(255, 0, 255, 30),
                         height: 1.1,
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 12),
-
                   // Paragraph 1
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 8),
                     child: Text(
                       "Streaming services like Spotify are keeping up to 70% of revenue from artists streams.",
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.white70,
-                        height: 1.4,
-                      ),
+                      style: TextStyle(fontSize: 14, color: Colors.white70, height: 1.4),
                     ),
                   ),
-
                   const SizedBox(height: 10),
-
                   // New Paragraph
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 8),
                     child: Text(
                       "all proceeds go directly to the artist",
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.greenAccent,
-                        height: 1.4,
-                      ),
+                      style: TextStyle(fontSize: 14, color: Colors.greenAccent, height: 1.4),
                     ),
                   ),
-
-                  const SizedBox(height: 24), // Reduced spacing before buttons
+                  const SizedBox(height: 24),
 
                   if (offering != null) ...[
                     // Individual Album Button
-                    if (widget.specificAlbum != null &&
-                        widget.purchasableAlbums.contains(widget.specificAlbum))
+                    if (widget.specificAlbum != null && widget.purchasableAlbums.contains(widget.specificAlbum))
                       _buildPackageButton(
                         offering.availablePackages.firstWhere(
                           (p) => p.storeProduct.identifier.toLowerCase().contains("album_${widget.specificAlbum!.toLowerCase()}"),
@@ -5287,15 +5307,12 @@ class _PaywallScreenState extends State<PaywallScreen> {
                         ),
                         isHighlighted: true,
                       ),
-
                     // Catalog + Lifetime
                     ...offering.availablePackages
                         .where((p) => !p.storeProduct.identifier.toLowerCase().contains("album"))
                         .map((package) => _buildPackageButton(package)),
                   ],
-
-                  const SizedBox(height: 30), // Reduced bottom spacing
-
+                  const SizedBox(height: 30),
                   // Bottom Headline
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 20),
@@ -5310,7 +5327,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 20),
                 ],
               ),
@@ -5321,104 +5337,61 @@ class _PaywallScreenState extends State<PaywallScreen> {
   Widget _buildPackageButton(Package package, {bool isHighlighted = false}) {
     final product = package.storeProduct;
     String buttonTitle = product.title;
-
     if (isHighlighted && widget.specificAlbum != null) {
       buttonTitle = "Buy ${widget.specificAlbum} Album";
     }
 
-    // Consistent base font size for all buttons
-    const double buttonFontSize = 18.0;
-
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 6),
       child: ElevatedButton(
-        onPressed: () async {
-          try {
-            print("🛒 Purchasing: ${product.identifier}");
-            await Purchases.purchasePackage(package);
-
-            final prefs = await SharedPreferences.getInstance();
-
-            // === CORRECT GLOBAL vs INDIVIDUAL HANDLING ===
-            if (product.identifier.contains("lifetime_access") || product.identifier.contains("lifetime")) {
-              await prefs.setBool('hasLifetimeAccess', true);
-              print("💾 Saved GLOBAL Lifetime Access");
-            } 
-            else if (product.identifier.contains("catalog_access") || product.identifier.contains("catalog")) {
-              await prefs.setBool('hasCatalogAccess', true);
-              print("💾 Saved GLOBAL Catalog Access");
-            } 
-            else if (widget.specificAlbum != null) {
-              // Individual album purchase
-              await prefs.setBool('unlocked_${widget.specificAlbum}', true);
-              print("💾 Saved individual unlock for ${widget.specificAlbum}");
-            }
-
-            if (mounted) {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("✅ Purchase successful!"), backgroundColor: Colors.green),
-              );
-              widget.onUnlockSuccess?.call();
-            }
-          } catch (e) {
-            print("❌ Purchase error: $e");
-          }
-        },
+        onPressed: _isPurchasing ? null : () => _purchasePackage(package),
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.white.withOpacity(0.1),
           foregroundColor: Colors.white,
           padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
-        child: Column(
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: isHighlighted && widget.specificAlbum != null && widget.albumTitleStyle != null
-                      ? RichText(
-                          text: TextSpan(
-                            style: TextStyle(
-                              fontSize: buttonFontSize,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                            children: [
-                              const TextSpan(text: "Buy "),
-                              TextSpan(
-                                text: widget.specificAlbum,
-                                style: widget.albumTitleStyle!.copyWith(
-                                  fontSize: buttonFontSize,        // Same size
-                                  fontWeight: FontWeight.bold,
+        child: _isPurchasing
+            ? const CircularProgressIndicator(color: Colors.white)
+            : Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: isHighlighted && widget.specificAlbum != null && widget.albumTitleStyle != null
+                            ? RichText(
+                                text: TextSpan(
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                  children: [
+                                    const TextSpan(text: "Buy "),
+                                    TextSpan(
+                                      text: widget.specificAlbum,
+                                      style: widget.albumTitleStyle!.copyWith(fontSize: 18),
+                                    ),
+                                    const TextSpan(text: " Album"),
+                                  ],
                                 ),
+                              )
+                            : Text(
+                                buttonTitle,
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                               ),
-                              const TextSpan(text: " Album"),
-                            ],
-                          ),
-                        )
-                      : Text(
-                          buttonTitle,
-                          style: TextStyle(
-                            fontSize: buttonFontSize,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                ),
-                Text(
-                  product.priceString,
-                  style: TextStyle(
-                    fontSize: buttonFontSize + 2,
-                    fontWeight: FontWeight.bold,
+                      ),
+                      Text(
+                        product.priceString,
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                    ],
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            ..._getBulletsForPackage(product.identifier, isHighlighted),
-          ],
-        ),
+                  const SizedBox(height: 10),
+                  ..._getBulletsForPackage(product.identifier, isHighlighted),
+                ],
+              ),
       ),
     );
   }
