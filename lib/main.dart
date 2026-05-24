@@ -1200,16 +1200,16 @@ void _forceFullUnlockRefresh({bool isGlobalUnlock = false, String? specificAlbum
     }
   });
 
-  _globalUnlockTrigger.value++;
-
   if (specificAlbum != null) {
     _unlockedAlbums.add(specificAlbum);
   }
 
+  _globalUnlockTrigger.value++;
+
   if (isGlobalUnlock) {
-    print("🔄 Strong GLOBAL unlock refresh triggered");
+    print("🔄 GLOBAL unlock refresh (Catalog or Lifetime)");
   } else {
-    print("🔄 Local album unlock refresh triggered for: $specificAlbum");
+    print("🔄 LOCAL album unlock refresh for: $specificAlbum");
   }
 }
 
@@ -1757,34 +1757,34 @@ void _refreshQueueUI() {
         print("✅ RevenueCat: Open Access = $_hasOpenAccess");
 
         // Strong RevenueCat Listener with Snapshot Catalog
-        Purchases.addCustomerInfoUpdateListener((CustomerInfo customerInfo) async {
-          final prefs = await SharedPreferences.getInstance();
+      Purchases.addCustomerInfoUpdateListener((CustomerInfo customerInfo) async {
+        final prefs = await SharedPreferences.getInstance();
 
-          final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
-          final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
+        final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
+        final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
 
-          await prefs.setBool('hasLifetimeAccess', hasLifetime);
-          await prefs.setBool('hasCatalogAccess', hasCatalog);
+        await prefs.setBool('hasLifetimeAccess', hasLifetime);
+        await prefs.setBool('hasCatalogAccess', hasCatalog);
 
-          if (hasCatalog) {
-            _albums.forEach((albumKey, _) {
-              if (!['Base', 'Central', 'Track'].contains(albumKey)) {
-                prefs.setBool('unlocked_$albumKey', true);
-                _unlockedAlbums.add(albumKey);
-              }
-            });
-            print("✅ Catalog purchased → Snapshot of current albums unlocked");
-          }
-
-          setState(() {
-            _hasOpenAccess = hasLifetime || hasCatalog;
+        if (hasCatalog) {
+          _albums.forEach((albumKey, _) {
+            if (!['Base', 'Central', 'Track'].contains(albumKey)) {
+              prefs.setBool('unlocked_$albumKey', true);
+              _unlockedAlbums.add(albumKey);
+            }
           });
+          _forceFullUnlockRefresh(isGlobalUnlock: true);
+          print("✅ Catalog purchased → Snapshot unlocked");
+        } else if (hasLifetime) {
+          _forceFullUnlockRefresh(isGlobalUnlock: true);
+        }
 
-          _globalUnlockTrigger.value++;   // Force full UI refresh
-          _forceFullUnlockRefresh(isGlobalUnlock: hasLifetime || hasCatalog);
-
-          print("✅ RevenueCat Listener → Lifetime: $hasLifetime | Catalog: $hasCatalog");
+        setState(() {
+          _hasOpenAccess = hasLifetime || hasCatalog;
         });
+
+        _globalUnlockTrigger.value++;
+      });
       } catch (e) {
         print("❌ RevenueCat error: $e");
         setState(() {
@@ -2344,7 +2344,7 @@ Expanded(
         final emailUnlock = song['emailUnlock'] as bool? ?? false;
         final bool isUnlockedByEmail = emailUnlock && _hasConfirmedEmail;
 
-        // Stronger unlock check
+        // Strong unlock check (Free songs have priority)
         final bool isUnlocked = isFree || 
                                isUnlockedByEmail || 
                                _unlockedAlbums.contains(albumName) ||
@@ -4208,32 +4208,33 @@ Future<void> _fullRevenueCatReset() async {
     });
   }
 
-    Future<void> _showPaywall([String? specificAlbum]) async {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PaywallScreen(
-            specificAlbum: specificAlbum,
-            onUnlockSuccess: () {
-              if (specificAlbum != null) {
-                // Individual album purchase
-                _forceFullUnlockRefresh(isGlobalUnlock: false, specificAlbum: specificAlbum);
-              } else {
-                // Catalog or Lifetime purchase
-                _forceFullUnlockRefresh(isGlobalUnlock: true);
-              }
+Future<void> _showPaywall([String? specificAlbum]) async {
+  await Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => PaywallScreen(
+        specificAlbum: specificAlbum,
+        onUnlockSuccess: () {
+          if (specificAlbum != null) {
+            // === INDIVIDUAL ALBUM PURCHASE ===
+            _forceFullUnlockRefresh(isGlobalUnlock: false, specificAlbum: specificAlbum);
+            print("🔄 Individual album unlock processed: $specificAlbum");
+          } else {
+            // === CATALOG OR LIFETIME PURCHASE ===
+            _forceFullUnlockRefresh(isGlobalUnlock: true);
+            print("🔄 Global (Catalog or Lifetime) unlock processed");
+          }
+        },
+        purchasableAlbums: _individuallyPurchasableAlbums,
+        albumTitleStyle: specificAlbum != null ? _getAlbumFont(specificAlbum) : null,
+      ),
+    ),
+  );
 
-              print("🔄 Unlock success processed");
-            },
-            purchasableAlbums: _individuallyPurchasableAlbums,
-            albumTitleStyle: specificAlbum != null ? _getAlbumFont(specificAlbum) : null,
-          ),
-        ),
-      );
-
-      await Future.delayed(const Duration(milliseconds: 600));
-      if (mounted) setState(() {});
-    }
+  // Extra safety refresh after returning from Paywall
+  _forceFullUnlockRefresh(isGlobalUnlock: false);
+  print("🔄 Post-paywall full refresh triggered");
+}
     
     Future<void> _showLocalNotification(RemoteMessage message) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
