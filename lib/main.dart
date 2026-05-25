@@ -333,6 +333,7 @@ void initState() {
   _setupProcessingListener;
   _setupQueueAndTrackListener();
   _setupCompletedListener();
+  _startLivestreamStatusChecker();
   _pageController = PageController(initialPage: 1);
   _boneStaggerController = AnimationController(
       duration: const Duration(milliseconds: 1800), vsync: this)
@@ -997,27 +998,53 @@ Future<void> _showQueueTutorial() async {
   );
 }
 
-// Check livestream status from S3 JSON file
+// ==================== LIVESTREAM REMOTE CONTROL ====================
+
+String _livestreamTitle = "LIVE NOW";
+String _livestreamMessage = "";
+
 Future<void> _checkLivestreamStatus() async {
   try {
-    final response = await http.get(
-      Uri.parse("https://dhufx08tsdp2a.cloudfront.net/livestream-status.json?t=${DateTime.now().millisecondsSinceEpoch}"),
-    );
+    final doc = await FirebaseFirestore.instance
+        .doc('app_settings/livestream_status')
+        .get();
 
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      final bool isActive = data['isActive'] ?? false;
-      final String url = data['streamUrl'] ?? "https://www.youtube.com/@melodicsol/live";
-
-      if (mounted && (isActive != _isLivestreamActive || url != _livestreamUrl)) {
-        setState(() {
-          _isLivestreamActive = isActive;
-          _livestreamUrl = url;
-        });
-      }
+    if (doc.exists) {
+      final data = doc.data() ?? {};
+      setState(() {
+        _isLivestreamActive = data['isActive'] ?? false;
+        _livestreamUrl = data['streamUrl'] ?? "";
+        _livestreamTitle = data['title'] ?? "LIVE NOW";
+        _livestreamMessage = data['message'] ?? "";
+      });
+      print("📡 Livestream status checked → Active: $_isLivestreamActive");
     }
   } catch (e) {
-    // Silently fail if offline or file not found
+    print("❌ Livestream status check failed: $e");
+  }
+}
+
+void _startLivestreamStatusChecker() {
+  _checkLivestreamStatus(); // Initial check
+  Timer.periodic(const Duration(seconds: 20), (timer) {
+    _checkLivestreamStatus();
+  });
+}
+
+Future<void> _toggleLivestream(bool active, {String? url, String? title}) async {
+  try {
+    await FirebaseFirestore.instance.doc('app_settings/livestream_status').set({
+      'isActive': active,
+      'streamUrl': url ?? _livestreamUrl,
+      'title': title ?? _livestreamTitle,
+      'message': active ? "Melodicsol is LIVE!" : "",
+      'lastUpdated': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    setState(() => _isLivestreamActive = active);
+    print("🔴 Livestream status updated → $active");
+  } catch (e) {
+    print("❌ Failed to update livestream status: $e");
   }
 }
 void handleDeepLink(Uri uri) {
@@ -1232,7 +1259,7 @@ void _showSongOptions(Map<String, dynamic> song, String albumName, int index) {
             title: const Text("View Song Story"),
             onTap: () {
               Navigator.pop(context);
-              _navigateToSongStory(song, albumName);
+              _showSongStory(albumName, index);
             },
           ),
           ListTile(
@@ -2321,11 +2348,15 @@ return Column(
     ),
 
     // Album Title
-    Text(
-      _albumDisplayNames[albumName] ?? albumName,
-      style: _getAlbumFont(albumName).copyWith(fontSize: 28),
-      textAlign: TextAlign.center,
-    ),
+// Album Title - Now Clickable
+GestureDetector(
+  onTap: _showAlbumSelectorPopup,
+  child: Text(
+    _albumDisplayNames[albumName] ?? albumName,
+    style: _getAlbumFont(albumName).copyWith(fontSize: 28),
+    textAlign: TextAlign.center,
+  ),
+),
     const SizedBox(height: 12),
 
     // === SONG LIST WITH STRONG PULL-TO-REFRESH ===
@@ -2451,6 +2482,62 @@ Expanded(
 }
 }
 
+void _showAlbumSelectorPopup() {
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: Colors.grey[900],
+      title: const Text(
+        "Select Album",
+        style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+      ),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 420,
+        child: ListView.builder(
+          itemCount: _albums.keys.length,
+          itemBuilder: (context, index) {
+            final albumKey = _albums.keys.toList()[index];
+            final displayName = _albumDisplayNames[albumKey] ?? albumKey;
+
+            return ListTile(
+              contentPadding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: CachedNetworkImage(
+                  imageUrl: _albums[albumKey]?['artUrl'] ?? '',
+                  width: 48,
+                  height: 48,
+                  fit: BoxFit.cover,
+                  errorWidget: (_, __, ___) => const Icon(Icons.album, color: Colors.white38),
+                ),
+              ),
+              title: Text(
+                displayName,
+                style: _getAlbumFont(albumKey).copyWith(
+                  fontSize: 18,
+                  color: Colors.white,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context); // Close popup
+                setState(() {
+                  _selectedAlbum = albumKey;
+                });
+              },
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text("Cancel", style: TextStyle(color: Colors.white70)),
+        ),
+      ],
+    ),
+  );
+}
 
 void _saveQueueAsPlaylist() {
   if (_queue.isEmpty) {
@@ -3747,7 +3834,7 @@ void _showAlbumStory(String startingAlbumName) {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                       ),
                       child: const Text(
-                        "Buy This Album — \$17",
+                        "Buy This Album — \$7",
                         style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                       ),
                     ),
@@ -3972,7 +4059,57 @@ void _showExpandedDebugPanel() {
           const SizedBox(height: 20),
           const Divider(color: Colors.white24),
 
-          // === NEW FORCE REFRESH BUTTON ===
+          // === LIVESTREAM STATUS SECTION ===
+          const Text("🔴 Livestream Control",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.redAccent)),
+          const SizedBox(height: 8),
+
+          Text("Current Status: ${_isLivestreamActive ? 'LIVE' : 'Offline'}",
+              style: TextStyle(
+                color: _isLivestreamActive ? Colors.red : Colors.white70,
+                fontSize: 16,
+              )),
+
+          const SizedBox(height: 12),
+
+          ElevatedButton.icon(
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            label: const Text("Force Check Livestream Status"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              minimumSize: const Size(double.infinity, 52),
+            ),
+            onPressed: () async {
+              Navigator.pop(context);
+              await _checkLivestreamStatus();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(_isLivestreamActive ? "Livestream is ACTIVE" : "Livestream is OFF"),
+                  backgroundColor: _isLivestreamActive ? Colors.red : Colors.grey,
+                ),
+              );
+            },
+          ),
+
+          const SizedBox(height: 8),
+
+          ElevatedButton.icon(
+            icon: Icon(_isLivestreamActive ? Icons.stop : Icons.play_arrow, color: Colors.white),
+            label: Text(_isLivestreamActive ? "Turn OFF Livestream" : "Turn ON Livestream"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _isLivestreamActive ? Colors.red : Colors.green,
+              minimumSize: const Size(double.infinity, 52),
+            ),
+            onPressed: () {
+              _toggleLivestream(!_isLivestreamActive);
+              Navigator.pop(context);
+            },
+          ),
+
+          const SizedBox(height: 20),
+          const Divider(color: Colors.white24),
+
+          // === Force UI Refresh ===
           ElevatedButton.icon(
             icon: const Icon(Icons.refresh, color: Colors.white),
             label: const Text("Force UI Refresh"),
@@ -3985,10 +4122,7 @@ void _showExpandedDebugPanel() {
               _globalUnlockTrigger.value++;
               print("🔄 Manual Force UI Refresh Triggered");
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("UI Refresh Forced"),
-                  backgroundColor: Colors.purple,
-                ),
+                const SnackBar(content: Text("UI Refresh Forced"), backgroundColor: Colors.purple),
               );
             },
           ),
@@ -4025,7 +4159,7 @@ void _showExpandedDebugPanel() {
           const SizedBox(height: 20),
           const Divider(color: Colors.white24),
 
-          // === Reset & Troubleshooting Buttons ===
+          // FULL LOCAL RESET
           ElevatedButton.icon(
             icon: const Icon(Icons.delete_forever, color: Colors.white),
             label: const Text("FULL LOCAL RESET (Everything)"),
@@ -4037,147 +4171,6 @@ void _showExpandedDebugPanel() {
             onPressed: () {
               Navigator.pop(context);
               _fullLocalReset();
-            },
-          ),
-
-          const SizedBox(height: 10),
-
-          ElevatedButton.icon(
-            icon: const Icon(Icons.restart_alt, color: Colors.white),
-            label: const Text("Restart App"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orangeAccent,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(double.infinity, 52),
-            ),
-            onPressed: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Restarting app..."), backgroundColor: Colors.orange),
-              );
-              Future.delayed(const Duration(milliseconds: 700), () => exit(0));
-            },
-          ),
-
-          const SizedBox(height: 10),
-
-          ElevatedButton.icon(
-            icon: const Icon(Icons.email_outlined, color: Colors.white),
-            label: const Text("Reset Email Login Only"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(double.infinity, 48),
-            ),
-            onPressed: () async {
-              Navigator.pop(context);
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setBool('email_confirmed', false);
-              _hasConfirmedEmail = false;
-              setState(() {});
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Email login state reset")),
-              );
-            },
-          ),
-
-          const SizedBox(height: 10),
-
-          ElevatedButton.icon(
-            icon: const Icon(Icons.refresh, color: Colors.white),
-            label: const Text("Refresh RevenueCat Status"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blueAccent,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(double.infinity, 48),
-            ),
-            onPressed: () async {
-              Navigator.pop(context);
-              try {
-                final customerInfo = await Purchases.getCustomerInfo();
-                print("✅ RevenueCat refreshed. Active entitlements: ${customerInfo.entitlements.active.keys}");
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text("RevenueCat refreshed (${customerInfo.entitlements.active.length} entitlements)"),
-                    backgroundColor: Colors.blue,
-                  ),
-                );
-              } catch (e) {
-                print("❌ RevenueCat refresh failed: $e");
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("Refresh failed: $e"), backgroundColor: Colors.red),
-                );
-              }
-            },
-          ),
-
-          const SizedBox(height: 10),
-
-          ElevatedButton.icon(
-            icon: const Icon(Icons.queue_music, color: Colors.white),
-            label: const Text("Clear Queue Only"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.purple,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(double.infinity, 48),
-            ),
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() => _queue.clear());
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Queue cleared")),
-              );
-            },
-          ),
-
-          const SizedBox(height: 10),
-
-          ElevatedButton.icon(
-            icon: const Icon(Icons.lock_open, color: Colors.white),
-            label: const Text("Grant Lifetime (SOLFULL)"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.greenAccent,
-              foregroundColor: Colors.black,
-              minimumSize: const Size(double.infinity, 48),
-            ),
-            onPressed: () {
-              Navigator.pop(context);
-              _redeemPromoCode("SOLFULL");
-            },
-          ),
-
-          const SizedBox(height: 10),
-
-          ElevatedButton.icon(
-            icon: const Icon(Icons.lock, color: Colors.white),
-            label: const Text("LOCKALL (Reset)"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(double.infinity, 48),
-            ),
-            onPressed: () {
-              Navigator.pop(context);
-              _redeemPromoCode("LOCKALL");
-            },
-          ),
-
-          const SizedBox(height: 10),
-
-          ElevatedButton.icon(
-            icon: const Icon(Icons.delete_forever, color: Colors.red),
-            label: const Text("CLEAR ALL UNLOCKS (Test)"),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-            onPressed: () async {
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.clear();
-              _unlockedAlbums.clear();
-              _hasOpenAccess = false;
-              setState(() {});
-              print("🗑️ ALL UNLOCKS CLEARED");
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("All unlocks cleared"), backgroundColor: Colors.red),
-              );
             },
           ),
 
@@ -4355,7 +4348,7 @@ void _showSongStory(String albumName, int startingSongIndex) {
   if (album == null) return;
 
   final songs = album['songs'] as List<dynamic>? ?? [];
-  if (songs.isEmpty) return;
+  if (songs.isEmpty || startingSongIndex < 0 || startingSongIndex >= songs.length) return;
 
   showModalBottomSheet(
     context: context,
@@ -4377,20 +4370,29 @@ void _showSongStory(String albumName, int startingSongIndex) {
         itemCount: songs.length,
         itemBuilder: (context, index) {
           final song = songs[index] as Map<String, dynamic>;
-          final title = song['title'] as String? ?? 'Unknown Song';
-          final story = song['story'] as String? ?? "Story coming soon for $title...";
+
+          // Robust title extraction (matches your song list)
+          final String title = song['Title'] as String? ??
+                             song['title'] as String? ??
+                             song['name'] as String? ??
+                             'Unknown Song';
+
+          final String story = song['story'] as String? ?? 
+                             song['Story'] as String? ?? 
+                             "Story coming soon for $title...";
+
+          final String songArtUrl = song['artUrl'] as String? ??
+                                  song['songArtUrl'] as String? ??
+                                  song['coverUrl'] as String? ??
+                                  album['artUrl'] as String? ?? '';
+
           final themeColor = _getAlbumThemeColor(albumName);
-          final songArtUrl = song['artUrl'] as String? ??
-                           song['songArtUrl'] as String? ??
-                           song['coverUrl'] as String? ??
-                           album['artUrl'] as String? ?? '';
 
           return SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: Column(
               children: [
                 const SizedBox(height: 12),
-                // Drag Handle
                 Center(
                   child: Container(
                     width: 50,
@@ -4421,7 +4423,7 @@ void _showSongStory(String albumName, int startingSongIndex) {
 
                 const SizedBox(height: 24),
 
-                // Song Title
+                // Song Title - Now using correct key
                 Text(
                   title,
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: themeColor),
@@ -4431,9 +4433,9 @@ void _showSongStory(String albumName, int startingSongIndex) {
                 const SizedBox(height: 28),
 
                 // Story Text
-                Expanded(
+                SizedBox(
+                  height: 280,
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
                     child: Text(
                       story,
                       style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
@@ -4442,10 +4444,70 @@ void _showSongStory(String albumName, int startingSongIndex) {
                   ),
                 ),
 
-                // === BUY THIS ALBUM BUTTON (Exactly as before) ===
+                const SizedBox(height: 30),
+
+                // === Play Now Button - Respects All Unlock Logic ===
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      final song = songs[index] as Map<String, dynamic>;
+                      final isFree = song['isFree'] as bool? ?? false;
+                      final emailUnlock = song['emailUnlock'] as bool? ?? false;
+                      final bool isUnlockedByEmail = emailUnlock && _hasConfirmedEmail;
+
+                      // === FREE SONG CHECK ===
+                      final bool isFreeSong = isFree || isUnlockedByEmail;
+
+                      if (isFreeSong) {
+                        print("✅ Play Now → Free song playing directly");
+                        await _playSong(
+                          albumName,
+                          index,
+                          fromQueue: false,
+                          respectUnlocks: true,
+                          directUrl: song['url'] as String?,
+                          titleToPlay: song['Title'] as String? ?? song['title'] as String?,
+                          artUrl: song['artUrl'] as String? ?? song['songArtUrl'] as String?,
+                        );
+                        return;
+                      }
+
+                      // === Check if user has access ===
+                      final bool actuallyUnlocked = await _isContentUnlocked(albumName);
+
+                      if (!actuallyUnlocked) {
+                        print("🔒 Play Now blocked - Album locked");
+                        Navigator.pop(context); // Close story
+                        _showPaywall(albumName); // Show paywall
+                      } else {
+                        print("✅ Play Now → Playing unlocked song");
+                        await _playSong(
+                          albumName,
+                          index,
+                          fromQueue: false,
+                          respectUnlocks: false,
+                          directUrl: song['url'] as String?,
+                          titleToPlay: song['Title'] as String? ?? song['title'] as String?,
+                          artUrl: song['artUrl'] as String? ?? song['songArtUrl'] as String?,
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.play_arrow, color: Colors.black),
+                    label: const Text("Play Now"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.greenAccent,
+                      foregroundColor: Colors.black87,
+                      minimumSize: const Size(double.infinity, 62),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                  ),
+                ),
+
+                // Buy Album Button
                 if (_albums[albumName]?['canPurchaseIndividually'] == true)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
+                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
                     child: ElevatedButton(
                       onPressed: () => _purchaseIndividualAlbum(albumName),
                       style: ElevatedButton.styleFrom(
@@ -4455,7 +4517,7 @@ void _showSongStory(String albumName, int startingSongIndex) {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                       ),
                       child: const Text(
-                        "Buy This Album — \$17",
+                        "Buy This Album — \$7",
                         style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                       ),
                     ),
@@ -5504,7 +5566,7 @@ Future<void> _purchasePackage(Package package) async {
     } else if (identifier.toLowerCase().contains("lifetime")) {
       return [_buildBullet("Catalog + ALL NEW FUTURE RELEASES")];
     } else {
-      return [_buildBullet("Opens All Current Albums and Songs on App")];
+      return [_buildBullet("Opens All Current Albums on App")];
     }
   }
 
