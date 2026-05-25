@@ -910,12 +910,11 @@ Future<void> _showMainAlbumTutorial() async {
     barrierDismissible: false,
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text("Welcome Heather"),
+      title: const Text("Albums"),
       content: const Text(
-        "This is your partner's music.\n\n"
-        "• Tap any title on spine to open an album of music\n"
-        "• Swipe left to go to queue page\n"
-        "• Long Press and nothing happens",
+        "• Tap any title to explore\n"
+        "• Swipe left = queue page\n"
+        "• Swipe right = internet",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
       actions: [
@@ -979,10 +978,9 @@ Future<void> _showQueueTutorial() async {
     barrierDismissible: false,
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text("Queue"),
       content: const Text(
         "This queue is awesome.\n\n"
-        "• Tap Free Songs to play Free Songs Playlist\n"
+        "• Tap Free Songs to play Free Songs\n"
         "• Long press songs for more options",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
@@ -1712,31 +1710,39 @@ void _refreshQueueUI() {
     }
   }
 
-    Future<bool> _isContentUnlocked(String? albumName) async {
-      if (albumName == null) return false;
+Future<bool> _isContentUnlocked(String? albumName) async {
+  if (albumName == null) return false;
 
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.reload();
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.reload();
 
-      if (prefs.getBool('hasLifetimeAccess') ?? false) {
-        print("✅ LIFETIME UNLOCK → $albumName");
-        return true;
-      }
+  // Priority 1: Global Open Access (Catalog or Lifetime)
+  if (_hasOpenAccess) {
+    print("✅ GLOBAL OPEN ACCESS → $albumName");
+    return true;
+  }
 
-      if (prefs.getBool('hasCatalogAccess') ?? false) {
-        print("✅ CATALOG UNLOCK → $albumName");
-        return true;
-      }
+  // Priority 2: Check prefs (Catalog or Lifetime)
+  final bool hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
+  final bool hasCatalog = prefs.getBool('hasCatalogAccess') ?? false;
 
-      final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
-      if (hasIndividual) {
-        print("✅ INDIVIDUAL UNLOCK → $albumName");
-        return true;
-      }
+  if (hasLifetime || hasCatalog) {
+    setState(() => _hasOpenAccess = true);
+    print("✅ GLOBAL UNLOCK from prefs → $albumName");
+    return true;
+  }
 
-      print("🔒 STILL LOCKED → $albumName");
-      return false;
-    }
+  // Priority 3: Individual unlock
+  final bool hasIndividual = prefs.getBool('unlocked_$albumName') ?? false;
+  if (hasIndividual) {
+    _unlockedAlbums.add(albumName);
+    print("✅ INDIVIDUAL UNLOCK → $albumName");
+    return true;
+  }
+
+  print("🔒 STILL LOCKED → $albumName");
+  return false;
+}
     
     Future<void> _initializeRevenueCat() async {
       try {
@@ -1749,42 +1755,45 @@ void _refreshQueueUI() {
         });
         print("✅ RevenueCat: Open Access = $_hasOpenAccess");
 
-        // Strong RevenueCat Listener
-Purchases.addCustomerInfoUpdateListener((CustomerInfo customerInfo) async {
-  final prefs = await SharedPreferences.getInstance();
+            // Strong RevenueCat Listener
+      Purchases.addCustomerInfoUpdateListener((CustomerInfo customerInfo) async {
+        final prefs = await SharedPreferences.getInstance();
 
-  final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
-  final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
+        final bool hasLifetime = customerInfo.entitlements.active.containsKey("lifetime_access");
+        final bool hasCatalog = customerInfo.entitlements.active.containsKey("catalog_access");
 
-  await prefs.setBool('hasLifetimeAccess', hasLifetime);
-  await prefs.setBool('hasCatalogAccess', hasCatalog);
+        await prefs.setBool('hasLifetimeAccess', hasLifetime);
+        await prefs.setBool('hasCatalogAccess', hasCatalog);
 
-  print("📡 Listener fired → Lifetime: $hasLifetime | Catalog: $hasCatalog");
+        print("📡 Listener fired → Lifetime: $hasLifetime | Catalog: $hasCatalog");
 
-  if (hasLifetime) {
-    print("✅ LIFETIME PURCHASE — Unlocking ALL albums");
-    for (var key in _albums.keys) {
-      await prefs.setBool('unlocked_$key', true);
-      _unlockedAlbums.add(key);
-    }
-  } else if (hasCatalog) {
-    print("✅ CATALOG PURCHASE — Applying snapshot");
-    int count = 0;
-    for (var key in _albums.keys) {
-      if (!['Base', 'Central', 'Track'].contains(key)) {
-        await prefs.setBool('unlocked_$key', true);
-        _unlockedAlbums.add(key);
-        count++;
-      }
-    }
-    print("✅ Snapshot applied to $count albums");
-  } else {
-    print("ℹ️ No global unlock — individual purchase only (listener ignored)");
-  }
+        // NEW: Only grant global access if it's truly a global purchase
+        final bool shouldGrantGlobal = hasLifetime || hasCatalog;
 
-  setState(() {});
-  _globalUnlockTrigger.value++;
-});
+        setState(() {
+          _hasOpenAccess = shouldGrantGlobal;
+        });
+
+        if (shouldGrantGlobal) {
+          print("✅ GLOBAL ACCESS GRANTED — Applying snapshot");
+          _unlockedAlbums.clear();
+          int count = 0;
+          for (var key in _albums.keys) {
+            if (!['Base', 'Central', 'Track'].contains(key)) {
+              await prefs.setBool('unlocked_$key', true);
+              _unlockedAlbums.add(key);
+              count++;
+            }
+          }
+          print("✅ Snapshot applied to $count albums");
+        } else {
+          print("ℹ️ Individual purchase — Global access denied");
+          // Do NOT clear individual unlocks here
+        }
+        setState(() {});
+        _globalUnlockTrigger.value++;
+        print("✅ Listener complete → _hasOpenAccess = $_hasOpenAccess");
+      });
       } catch (e) {
         print("❌ RevenueCat error: $e");
         setState(() {
@@ -2347,6 +2356,7 @@ Expanded(
         // Simplified - No _hasOpenAccess, use only _isContentUnlocked for decision
         final bool isUnlocked = isFree || 
                                isUnlockedByEmail || 
+                               _hasOpenAccess ||
                                _unlockedAlbums.contains(albumName);
 
         return ListTile(
@@ -3408,27 +3418,28 @@ Widget _buildSocialPage() {
 
   return Stack(
     children: [
-// Background Image from S3 / CloudFront
+      // Background Image
       Image.network(
-        "https://dhufx08tsdp2a.cloudfront.net/MelodicsolBioImage.png",  // ← Change this URL
+        "https://dhufx08tsdp2a.cloudfront.net/MelodicsolBioImage.png",
         width: double.infinity,
         height: screenHeight,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) {
-          return Image.asset('assets/spine.png', fit: BoxFit.cover); // Fallback
+          return Image.asset('assets/spine.png', fit: BoxFit.cover);
         },
       ),
 
-      // Dark overlay for text readability
+      // Dark overlay
       Container(color: Colors.black.withOpacity(0.65)),
 
-      // Main Content (everything else exactly the same as before)
+      // Main Content
       SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 60),
+
             // Logo
             Center(
               child: GestureDetector(
@@ -3437,43 +3448,16 @@ Widget _buildSocialPage() {
                 child: Image.asset('assets/logo.png', height: 120),
               ),
             ),
-            // Replace any existing debug button with this
-            if (kDebugMode)
-              Positioned(
-                right: 16,
-                bottom: 100,
-                child: FloatingActionButton(
-                  mini: true,
-                  backgroundColor: Colors.purple,
-                  child: const Icon(Icons.bug_report),
-                  onPressed: _showExpandedDebugPanel,
-                ),
-              ),
 
             const SizedBox(height: 40),
 
-            // Social Media Links - Enhanced with Native App Preference
+            // === SOCIAL MEDIA LINKS ===
             ..._socialLinks.entries.map((entry) {
               final data = entry.value;
               return Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: ElevatedButton.icon(
-                  onPressed: () async {
-                    final String urlString = data["url"] as String;
-                    final Uri url = Uri.parse(urlString);
-
-                    // Try to open in native app first
-                    if (await canLaunchUrl(url)) {
-                      await launchUrl(
-                        url,
-                        mode: LaunchMode.externalApplication, // Prefers native app when available
-                      );
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Could not open link")),
-                      );
-                    }
-                  },
+                  onPressed: () => _launchUrl(data["url"] as String),
                   icon: Icon(data["icon"] as IconData, color: data["color"] as Color),
                   label: Text(entry.key),
                   style: ElevatedButton.styleFrom(
@@ -3488,7 +3472,7 @@ Widget _buildSocialPage() {
 
             const SizedBox(height: 40),
 
-            // Music Videos
+            // === MUSIC VIDEOS ===
             const Text(
               "Music Videos",
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
@@ -3517,7 +3501,7 @@ Widget _buildSocialPage() {
             const Divider(color: Colors.white24),
             const SizedBox(height: 30),
 
-            // Livestream Control
+            // Livestream Control, Promo Code, etc. (unchanged)
             const Text(
               "Livestream Control (Private)",
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white70),
@@ -3547,7 +3531,7 @@ Widget _buildSocialPage() {
             const Divider(color: Colors.white24),
             const SizedBox(height: 30),
 
-            // Promo Code Section
+            // Promo Code Section (unchanged)
             const Text(
               "Promo Code",
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
@@ -3594,6 +3578,19 @@ Widget _buildSocialPage() {
           ],
         ),
       ),
+
+      // Debug Button - Fixed Position (MUST be inside Stack)
+      if (kDebugMode)
+        Positioned(
+          right: 16,
+          bottom: 100,
+          child: FloatingActionButton(
+            mini: true,
+            backgroundColor: Colors.purple,
+            child: const Icon(Icons.bug_report),
+            onPressed: _showExpandedDebugPanel,
+          ),
+        ),
     ],
   );
 }
@@ -3913,7 +3910,6 @@ void _showMelodicSolBio() {
 
 void _showExpandedDebugPanel() {
   if (!kDebugMode) return;
-
   showModalBottomSheet(
     context: context,
     backgroundColor: Colors.grey[900],
@@ -3937,9 +3933,9 @@ void _showExpandedDebugPanel() {
           const Divider(color: Colors.white24, height: 30),
 
           // Current Status
-          Text("hasOpenAccess: ${_hasOpenAccess ?? false}",
+          Text("hasOpenAccess: ${_hasOpenAccess}",
               style: const TextStyle(color: Colors.white70, fontSize: 16)),
-          
+
           FutureBuilder<CustomerInfo>(
             future: Purchases.getCustomerInfo(),
             builder: (context, snapshot) {
@@ -3951,11 +3947,34 @@ void _showExpandedDebugPanel() {
               return const Text("Loading RevenueCat...");
             },
           ),
-          
-     const SizedBox(height: 20),
+
+          const SizedBox(height: 20),
           const Divider(color: Colors.white24),
 
-          // New Debug Button
+          // === NEW FORCE REFRESH BUTTON ===
+          ElevatedButton.icon(
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            label: const Text("Force UI Refresh"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.purpleAccent,
+              minimumSize: const Size(double.infinity, 52),
+            ),
+            onPressed: () {
+              setState(() {});
+              _globalUnlockTrigger.value++;
+              print("🔄 Manual Force UI Refresh Triggered");
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("UI Refresh Forced"),
+                  backgroundColor: Colors.purple,
+                ),
+              );
+            },
+          ),
+
+          const SizedBox(height: 12),
+
+          // Print Current Unlock Status
           ElevatedButton.icon(
             icon: const Icon(Icons.info_outline, color: Colors.white),
             label: const Text("Print Current Unlock Status"),
@@ -3966,27 +3985,22 @@ void _showExpandedDebugPanel() {
             onPressed: () async {
               final prefs = await SharedPreferences.getInstance();
               await prefs.reload();
-
               print("=== CURRENT UNLOCK STATUS ===");
               print("hasLifetimeAccess: ${prefs.getBool('hasLifetimeAccess') ?? false}");
               print("hasCatalogAccess: ${prefs.getBool('hasCatalogAccess') ?? false}");
               print("hasOpenAccess: $_hasOpenAccess");
               print("hasConfirmedEmail: $_hasConfirmedEmail");
               print("unlockedAlbums: ${_unlockedAlbums.toList()}");
-
-              // Print individual album unlocks
               _albums.keys.forEach((key) {
                 final unlocked = prefs.getBool('unlocked_$key') ?? false;
                 if (unlocked) print("unlocked_$key: true");
               });
-
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text("Unlock status printed to console")),
               );
             },
-          ),     
-          
-          
+          ),
+
           const SizedBox(height: 20),
           const Divider(color: Colors.white24),
 
@@ -4004,9 +4018,9 @@ void _showExpandedDebugPanel() {
               _fullLocalReset();
             },
           ),
+
           const SizedBox(height: 10),
 
-          // Restart App Button (Simple & Reliable)
           ElevatedButton.icon(
             icon: const Icon(Icons.restart_alt, color: Colors.white),
             label: const Text("Restart App"),
@@ -4018,16 +4032,12 @@ void _showExpandedDebugPanel() {
             onPressed: () {
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Restarting app..."),
-                  backgroundColor: Colors.orange,
-                ),
+                const SnackBar(content: Text("Restarting app..."), backgroundColor: Colors.orange),
               );
-              Future.delayed(const Duration(milliseconds: 700), () {
-                exit(0);
-              });
+              Future.delayed(const Duration(milliseconds: 700), () => exit(0));
             },
           ),
+
           const SizedBox(height: 10),
 
           ElevatedButton.icon(
@@ -4049,6 +4059,7 @@ void _showExpandedDebugPanel() {
               );
             },
           ),
+
           const SizedBox(height: 10),
 
           ElevatedButton.icon(
@@ -4078,6 +4089,7 @@ void _showExpandedDebugPanel() {
               }
             },
           ),
+
           const SizedBox(height: 10),
 
           ElevatedButton.icon(
@@ -4096,6 +4108,7 @@ void _showExpandedDebugPanel() {
               );
             },
           ),
+
           const SizedBox(height: 10),
 
           ElevatedButton.icon(
@@ -4111,6 +4124,7 @@ void _showExpandedDebugPanel() {
               _redeemPromoCode("SOLFULL");
             },
           ),
+
           const SizedBox(height: 10),
 
           ElevatedButton.icon(
@@ -4126,14 +4140,18 @@ void _showExpandedDebugPanel() {
               _redeemPromoCode("LOCKALL");
             },
           ),
+
+          const SizedBox(height: 10),
+
           ElevatedButton.icon(
             icon: const Icon(Icons.delete_forever, color: Colors.red),
             label: const Text("CLEAR ALL UNLOCKS (Test)"),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () async {
               final prefs = await SharedPreferences.getInstance();
-              await prefs.clear();  // Clear everything
+              await prefs.clear();
               _unlockedAlbums.clear();
+              _hasOpenAccess = false;
               setState(() {});
               print("🗑️ ALL UNLOCKS CLEARED");
               ScaffoldMessenger.of(context).showSnackBar(
@@ -4141,6 +4159,7 @@ void _showExpandedDebugPanel() {
               );
             },
           ),
+
           const SizedBox(height: 30),
           const Divider(color: Colors.white24),
 
@@ -4265,13 +4284,20 @@ Future<void> _showPaywall([String? specificAlbum]) async {
       builder: (context) => PaywallScreen(
         specificAlbum: specificAlbum,
         onUnlockSuccess: () {
-          print("🔄 onUnlockSuccess called for ${specificAlbum ?? 'GLOBAL'}");
-          _globalUnlockTrigger.value++;
-          setState(() {});
+          // Strong refresh
+          setState(() {
+            _hasOpenAccess = false; // Reset in case
+          });
+          _globalUnlockTrigger.value++;   // This should trigger rebuilds
+          print("🔄 onUnlockSuccess - Full refresh triggered for ${specificAlbum ?? 'global'}");
         },
       ),
     ),
   );
+
+  // Extra force refresh after returning
+  setState(() {});
+  _globalUnlockTrigger.value++;
 }
     
     Future<void> _showLocalNotification(RemoteMessage message) async {
@@ -4416,12 +4442,22 @@ void _showSongStory(String albumName, int songIndex) {
   );
 }
 
-  Future<void> _launchUrl(String url) async {
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Could not open $url")));
+  Future<void> _launchUrl(String urlString) async {
+    final Uri url = Uri.parse(urlString);
+    try {
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url);
+        print("✅ Opened: $urlString");
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Could not open link")),
+        );
+      }
+    } catch (e) {
+      print("❌ Error: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Could not open link")),
+      );
     }
   }
 }
@@ -5258,7 +5294,7 @@ Future<void> _purchasePackage(Package package) async {
       print("✅ Saved CATALOG");
     } 
     else if (widget.specificAlbum != null) {
-      // INDIVIDUAL ONLY - No parent variables used
+      // INDIVIDUAL ONLY — Use prefs only
       await prefs.setBool('unlocked_${widget.specificAlbum}', true);
       await prefs.setBool('hasLifetimeAccess', false);
       await prefs.setBool('hasCatalogAccess', false);
