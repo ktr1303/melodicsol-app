@@ -132,7 +132,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   List<Map<String, dynamic>> _queue = [];
   int _selectedIndex = 0;           // Single source of truth
   int _currentSongIndex = 0;
-  String _currentSongTitle = "Play song or swipe left for queue";
+  String _currentSongTitle = "Play Free Songs";
   String? _currentSongArtUrl;
   String? _currentAlbum;
   List<Map<String, dynamic>>? _currentAlbumSongs;
@@ -944,10 +944,9 @@ Future<void> _showAlbumDetailTutorial() async {
     barrierDismissible: false,
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text("Your IN"),
       content: const Text(
-        "• Tap a song \n"
-        "• Long press a song to add it to queue or more options\n\n"
+        "• Tap songs for music \n"
+        "• Tap/Long press things (?:))\n\n"
         "",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
@@ -1101,7 +1100,16 @@ void _showQueueSongOptions(Map<String, dynamic> queueItem, int queueIndex) {
           title: const Text("View Song Story"),
           onTap: () {
             Navigator.pop(context);
-            _navigateToSongStory(normalizedSong, albumName);
+            
+            // Find the index of the current song
+            final songs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
+            final int songIndex = songs.indexWhere((song) => 
+              song['title'] == normalizedSong['title'] // or use another unique key
+            );
+
+            if (songIndex != -1) {
+              _showSongStory(albumName, songIndex);
+            }
           },
         ),
 
@@ -3628,19 +3636,10 @@ Future<void> _logout() async {
   }
 }
 
-void _showAlbumStory(String albumName) {
-  final album = _albums[albumName];
-  if (album == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Album data not found")),
-    );
-    return;
-  }
-  final story = _albumStories[albumName] ?? "Story coming soon for $albumName...";
-  final themeColor = _getAlbumThemeColor(albumName);
-  final artUrl = album['artUrl'] as String? ?? '';
-  final displayName = _getAlbumDisplayName(albumName);
-  final bool canPurchaseIndividually = album['canPurchaseIndividually'] == true;
+void _showAlbumStory(String startingAlbumName) {
+  final albumsList = _albums.keys.toList();
+  int initialIndex = albumsList.indexOf(startingAlbumName);
+  if (initialIndex == -1) initialIndex = 0;
 
   showModalBottomSheet(
     context: context,
@@ -3648,107 +3647,129 @@ void _showAlbumStory(String albumName) {
     backgroundColor: Colors.transparent,
     builder: (context) => Container(
       height: MediaQuery.of(context).size.height * 0.88,
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: Colors.black,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [themeColor.withOpacity(0.15), Colors.black],
-        ),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      child: Column(
-        children: [
-          const SizedBox(height: 12),
-          Container(
-            width: 50,
-            height: 5,
-            decoration: BoxDecoration(
-              color: Colors.grey[600],
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-          const SizedBox(height: 16),
-          // Clickable Album Art
-          GestureDetector(
-            onTap: () {
-              if (artUrl.isNotEmpty) {
-                _showFullScreenImage(artUrl, displayName);
-              }
-            },
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(24),
-              child: artUrl.isNotEmpty
-                  ? CachedNetworkImage(
-                      imageUrl: artUrl,
-                      width: 300,
-                      height: 300,
-                      fit: BoxFit.cover,
-                      placeholder: (_, __) => Container(
-                        width: 300,
-                        height: 300,
-                        color: Colors.grey[900],
-                        child: const Center(child: CircularProgressIndicator()),
+      child: PageView.builder(
+        controller: PageController(initialPage: initialIndex),
+        itemCount: albumsList.length,
+        itemBuilder: (context, index) {
+          final albumName = albumsList[index];
+          final album = _albums[albumName];
+          if (album == null) return const SizedBox();
+
+          final story = _albumStories[albumName] ?? "Story coming soon for $albumName...";
+          final themeColor = _getAlbumThemeColor(albumName);
+          final artUrl = album['artUrl'] as String? ?? '';
+          final displayName = _getAlbumDisplayName(albumName);
+          final bool canPurchaseIndividually = album['canPurchaseIndividually'] == true;
+
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 12),
+                // Drag Handle
+                Center(
+                  child: Container(
+                    width: 50,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[600],
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Clickable Album Art
+                GestureDetector(
+                  onTap: () {
+                    if (artUrl.isNotEmpty) {
+                      _showFullScreenImage(artUrl, displayName);
+                    }
+                  },
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
+                    child: artUrl.isNotEmpty
+                        ? CachedNetworkImage(
+                            imageUrl: artUrl,
+                            width: 300,
+                            height: 300,
+                            fit: BoxFit.cover,
+                            placeholder: (_, __) => Container(
+                              width: 300,
+                              height: 300,
+                              color: Colors.grey[900],
+                              child: const Center(child: CircularProgressIndicator()),
+                            ),
+                            errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 120, color: Colors.white38),
+                          )
+                        : const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
+                // Album Title
+                Text(
+                  displayName,
+                  style: _getAlbumFont(albumName).copyWith(fontSize: 28),
+                  textAlign: TextAlign.center,
+                ),
+
+                const SizedBox(height: 20),
+
+                // Story Text
+                Text(
+                  story,
+                  style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
+                  textAlign: TextAlign.center,
+                ),
+
+                const SizedBox(height: 40),
+
+                // === BUY THIS ALBUM BUTTON (Exactly as before) ===
+                if (canPurchaseIndividually)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context); // Close story first
+                        _showPaywall(albumName); // Reuse the exact same PaywallScreen
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.greenAccent,
+                        foregroundColor: Colors.black87,
+                        minimumSize: const Size(double.infinity, 62),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                       ),
-                      errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 120, color: Colors.white38),
-                    )
-                  : const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
-            ),
-          ),
-          const SizedBox(height: 20),
-          // Album Title
-          Text(
-            displayName,
-            style: _getAlbumFont(albumName).copyWith(fontSize: 28),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 20),
-          // Story Text
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Text(
-                story,
-                style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ),
-          // === BUY THIS ALBUM BUTTON - Now Fully Integrated ===
-          if (canPurchaseIndividually)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context); // Close story first
-                  _showPaywall(albumName); // Reuse the exact same PaywallScreen
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.greenAccent,
-                  foregroundColor: Colors.black87,
-                  minimumSize: const Size(double.infinity, 62),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      child: const Text(
+                        "Buy This Album — \$17",
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+
+                // Close Button
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: themeColor,
+                      minimumSize: const Size(double.infinity, 56),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                  ),
                 ),
-                child: const Text(
-                  "Buy This Album — \$17",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                ),
-              ),
+              ],
             ),
-          // Close Button
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
-            child: ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: themeColor,
-                minimumSize: const Size(double.infinity, 56),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              ),
-              child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
-            ),
-          ),
-        ],
+          );
+        },
       ),
     ),
   );
@@ -4283,19 +4304,27 @@ Future<void> _showPaywall([String? specificAlbum]) async {
     MaterialPageRoute(
       builder: (context) => PaywallScreen(
         specificAlbum: specificAlbum,
-        onUnlockSuccess: () {
-          // Strong refresh
-          setState(() {
-            _hasOpenAccess = false; // Reset in case
-          });
-          _globalUnlockTrigger.value++;   // This should trigger rebuilds
-          print("🔄 onUnlockSuccess - Full refresh triggered for ${specificAlbum ?? 'global'}");
+        onUnlockSuccess: () async {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.reload();
+
+          // Force refresh individual unlock
+          if (specificAlbum != null) {
+            _unlockedAlbums.add(specificAlbum);
+            print("✅ Added $specificAlbum to in-memory unlocked list");
+          }
+
+          // Strong UI refresh
+          setState(() {});
+          _globalUnlockTrigger.value += 2;   // Double trigger for reliability
+
+          print("🔄 Strong UI refresh triggered after purchase");
         },
       ),
     ),
   );
 
-  // Extra force refresh after returning
+  // Extra refresh after returning from paywall
   setState(() {});
   _globalUnlockTrigger.value++;
 }
@@ -4321,21 +4350,12 @@ Future<void> _showPaywall([String? specificAlbum]) async {
     );
   }
   
-void _showSongStory(String albumName, int songIndex) {
+void _showSongStory(String albumName, int startingSongIndex) {
   final album = _albums[albumName];
   if (album == null) return;
 
   final songs = album['songs'] as List<dynamic>? ?? [];
-  if (songIndex < 0 || songIndex >= songs.length) return;
-
-  final song = songs[songIndex] as Map<String, dynamic>;
-  final title = song['title'] as String? ?? 'Unknown Song';
-  final story = song['story'] as String? ?? "Story coming soon for $title...";
-  final themeColor = _getAlbumThemeColor(albumName);
-  final songArtUrl = song['artUrl'] as String? ??
-                     song['songArtUrl'] as String? ??
-                     song['coverUrl'] as String? ??
-                     album['artUrl'] as String? ?? '';
+  if (songs.isEmpty) return;
 
   showModalBottomSheet(
     context: context,
@@ -4349,94 +4369,115 @@ void _showSongStory(String albumName, int songIndex) {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [themeColor.withOpacity(0.15), Colors.black],
+          colors: [_getAlbumThemeColor(albumName).withOpacity(0.15), Colors.black],
         ),
       ),
-      child: Column(
-        children: [
-          const SizedBox(height: 12),
-          Container(
-            width: 50,
-            height: 5,
-            decoration: BoxDecoration(
-              color: Colors.grey[600],
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-          const SizedBox(height: 20),
+      child: PageView.builder(
+        controller: PageController(initialPage: startingSongIndex),
+        itemCount: songs.length,
+        itemBuilder: (context, index) {
+          final song = songs[index] as Map<String, dynamic>;
+          final title = song['title'] as String? ?? 'Unknown Song';
+          final story = song['story'] as String? ?? "Story coming soon for $title...";
+          final themeColor = _getAlbumThemeColor(albumName);
+          final songArtUrl = song['artUrl'] as String? ??
+                           song['songArtUrl'] as String? ??
+                           song['coverUrl'] as String? ??
+                           album['artUrl'] as String? ?? '';
 
-          // Song Art
-          if (songArtUrl.isNotEmpty)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: CachedNetworkImage(
-                imageUrl: songArtUrl,
-                width: 240,
-                height: 240,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => const CircularProgressIndicator(),
-                errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 100),
-              ),
-            )
-          else
-            const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
-
-          const SizedBox(height: 24),
-
-          // Song Title
-          Text(
-            title,
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: themeColor),
-            textAlign: TextAlign.center,
-          ),
-
-          const SizedBox(height: 28),
-
-          // Story Text
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Text(
-                story,
-                style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ),
-
-          // === UNLOCK ALBUM BUTTON (Only if album is available for individual sale) ===
-          if (_albums[albumName]?['canPurchaseIndividually'] == true)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
-              child: ElevatedButton(
-                onPressed: () => _purchaseIndividualAlbum(albumName),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.greenAccent,
-                  foregroundColor: Colors.black87,
-                  minimumSize: const Size(double.infinity, 62),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              children: [
+                const SizedBox(height: 12),
+                // Drag Handle
+                Center(
+                  child: Container(
+                    width: 50,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[600],
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
                 ),
-                child: const Text(
-                  "Buy This Album — \$17",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ),
+                const SizedBox(height: 20),
 
-          // Close Button
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
-            child: ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: themeColor,
-                minimumSize: const Size(double.infinity, 56),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              ),
-              child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                // Song Art
+                if (songArtUrl.isNotEmpty)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: CachedNetworkImage(
+                      imageUrl: songArtUrl,
+                      width: 240,
+                      height: 240,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => const CircularProgressIndicator(),
+                      errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 100),
+                    ),
+                  )
+                else
+                  const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
+
+                const SizedBox(height: 24),
+
+                // Song Title
+                Text(
+                  title,
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: themeColor),
+                  textAlign: TextAlign.center,
+                ),
+
+                const SizedBox(height: 28),
+
+                // Story Text
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Text(
+                      story,
+                      style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+
+                // === BUY THIS ALBUM BUTTON (Exactly as before) ===
+                if (_albums[albumName]?['canPurchaseIndividually'] == true)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
+                    child: ElevatedButton(
+                      onPressed: () => _purchaseIndividualAlbum(albumName),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.greenAccent,
+                        foregroundColor: Colors.black87,
+                        minimumSize: const Size(double.infinity, 62),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      ),
+                      child: const Text(
+                        "Buy This Album — \$17",
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+
+                // Close Button
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: themeColor,
+                      minimumSize: const Size(double.infinity, 56),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
+          );
+        },
       ),
     ),
   );
@@ -5363,7 +5404,7 @@ Future<void> _purchasePackage(Package package) async {
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 8),
                     child: Text(
-                      "all proceeds go directly to the artist",
+                      "A one-time purchase - all proceeds from app go directly to the artist",
                       textAlign: TextAlign.center,
                       style: TextStyle(fontSize: 14, color: Colors.greenAccent, height: 1.4),
                     ),
@@ -5461,7 +5502,7 @@ Future<void> _purchasePackage(Package package) async {
     if (isSpecificAlbum) {
       return [_buildBullet("Buy this album")];
     } else if (identifier.toLowerCase().contains("lifetime")) {
-      return [_buildBullet("Catalog + All new Future releases")];
+      return [_buildBullet("Catalog + ALL NEW FUTURE RELEASES")];
     } else {
       return [_buildBullet("Opens All Current Albums and Songs on App")];
     }
