@@ -184,8 +184,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _combineModes = false;
   String? _currentViewedAlbum;   // ← Add this  
   bool _isQueueTutorialShowing = false;
-   // Add this if missing
- Set<String> _unlockedAlbums = {}; // Global unlocked albums
+  Set<String> _unlockedAlbums = {}; // Global unlocked albums
 
   Future<bool> hasEntitlement(String entitlementId) async {
   try {
@@ -594,6 +593,36 @@ Future<void> _loadPlaylists() async {
     _playSong(firstSong["albumName"] as String, 0);
   }
 
+    Future<void> _logSongPlay({
+    required String songTitle,
+    required String albumName,
+    bool isFree = false,
+  }) async {
+    try {
+      await analytics.logEvent(
+        name: 'song_play',
+        parameters: {
+          'song_title': songTitle,
+          'album_name': albumName,
+          'is_free': isFree,
+        },
+      );
+
+      // Optional: Save detailed log to Firestore (good for custom reports)
+      await FirebaseFirestore.instance.collection('song_plays').add({
+        'song_title': songTitle,
+        'album_name': albumName,
+        'is_free': isFree,
+        'played_at': FieldValue.serverTimestamp(),
+        'user_id': FirebaseAuth.instance.currentUser?.uid ?? 'anonymous',
+      });
+
+      print("📊 Logged play → $songTitle ($albumName)");
+    } catch (e) {
+      print("❌ Failed to log song play: $e");
+    }
+  }
+
   Future<void> _loadSavedUnlocks() async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.reload();
@@ -715,11 +744,21 @@ Future<void> _playSong(
     await Future.delayed(const Duration(milliseconds: 80));
 
     if (fromQueue && _queue.isNotEmpty) {
+      // === IMPROVED QUEUE JUMP ===
       final startIdx = originalSongIndex.clamp(0, _queue.length - 1);
+      
       final sources = _queue.map((item) => _createHlsSource(item, albumName)).toList();
       final queueSource = ConcatenatingAudioSource(children: sources);
-      await _globalPlayer.setAudioSource(queueSource, initialIndex: startIdx, initialPosition: Duration.zero);
-      print('✅ Queue Jump → Playing index $startIdx');
+
+      await _globalPlayer.setAudioSource(
+        queueSource,
+        initialIndex: startIdx,
+        initialPosition: Duration.zero,
+      );
+
+      print('✅ Queue Jump → Playing index $startIdx (full queue preserved, size: ${_queue.length})');
+    
+
     } else {
       final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
       if (albumSongs.isEmpty) return;
@@ -757,8 +796,23 @@ Future<void> _playSong(
 
     await _globalPlayer.play();
 
+        // Log the song play for analytics
+    if (_queue.isNotEmpty) {
+      final currentSong = _queue[_currentSongIndex.clamp(0, _queue.length - 1)];
+      final title = (currentSong['title'] ?? currentSong['Title'] ?? "Unknown") as String;
+      final isFree = currentSong['isFree'] as bool? ?? false;
+
+      await _logSongPlay(
+        songTitle: title,
+        albumName: albumName,
+        isFree: isFree,
+      );
+    }
+
     final displayTitle = titleToPlay ??
-        (_queue.isNotEmpty ? (_queue.first['title'] ?? _queue.first['Title'] ?? "Unknown") : "Unknown");
+      (_queue.isNotEmpty && _currentSongIndex < _queue.length 
+        ? (_queue[_currentSongIndex]['title'] ?? _queue[_currentSongIndex]['Title'] ?? "Unknown") 
+        : "Unknown Song");
 
     _nowPlayingNotifier.value = NowPlayingInfo(
       title: displayTitle,
@@ -1578,36 +1632,34 @@ void _setupQueueAndTrackListener() {
   _sequenceSubscription?.cancel();
 
   _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((SequenceState? state) {
-    if (state == null || _queue.isEmpty) return;
+    if (state == null) return;
 
     final currentIndex = state.currentIndex ?? 0;
-    print("📊 Track Changed → Player Index: $currentIndex | Queue size: ${_queue.length}");
 
-    if (currentIndex >= _queue.length) return;
-
-    // Update display (title, art, etc.)
-    final currentSong = _queue[currentIndex];
-    final title = (currentSong['title'] ?? currentSong['Title'] ?? "Unknown") as String;
-    final artUrl = (currentSong['artUrl'] ?? currentSong['songArtUrl']) as String?;
-
-    _nowPlayingNotifier.value = NowPlayingInfo(title: title, artUrl: artUrl, index: currentIndex);
-
-    if (mounted) {
+    if (currentIndex >= _queue.length || _queue.isEmpty) {
+      print("🎵 Queue ended naturally → Stopping playback");
+      _globalPlayer.stop();
       setState(() {
-        _currentSongIndex = currentIndex;
-        _currentSongTitle = title;
-        _currentSongArtUrl = artUrl;
+        _currentSongTitle = "Queue Ended";
       });
-    }
-    // Inside sequenceStateStream listener – keep or add this:
-    if (_isQueueMode && currentIndex > 0) {
-  // Optional: only remove on natural advance, not manual taps
-  // Future.delayed(...) logic you had is fine – just don't remove aggressively
+      return;
     }
 
-    // REMOVED: The aggressive auto-removeRange that was causing the bug
-    // We no longer clear previous songs when you tap anywhere in the queue.
-    // Songs now stay in the list (exactly what the master goal asked for).
+    final song = _queue[currentIndex];
+    final displayTitle = (song['title'] ?? song['Title'] ?? "Unknown Song") as String;
+
+    print("📊 Track Changed → Player Index: $currentIndex | Title: $displayTitle");
+
+    setState(() {
+      _currentSongIndex = currentIndex;
+      _currentSongTitle = displayTitle;
+    });
+
+    _nowPlayingNotifier.value = NowPlayingInfo(
+      title: displayTitle,
+      artUrl: song['artUrl'] ?? song['songArtUrl'] ?? _currentSongArtUrl,
+      index: currentIndex,
+    );
   });
 }
 
@@ -1625,6 +1677,26 @@ void _setupCompletedListener() {
       _forceQueueRebuild();
     }
   });
+}
+
+Future<void> _skipToNext() async {
+  if (_queue.isEmpty) return;
+  final nextIndex = (_currentSongIndex + 1) % _queue.length;
+  await _playSong(
+    _currentAlbum ?? "Queue",
+    nextIndex,
+    fromQueue: true,
+  );
+}
+
+Future<void> _skipToPrevious() async {
+  if (_queue.isEmpty) return;
+  final prevIndex = (_currentSongIndex - 1 + _queue.length) % _queue.length;
+  await _playSong(
+    _currentAlbum ?? "Queue",
+    prevIndex,
+    fromQueue: true,
+  );
 }
 
 Future<void> _skipNext() async {
