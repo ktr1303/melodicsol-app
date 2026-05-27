@@ -347,7 +347,9 @@ void initState() {
     _fetchAlbums().then((_) {
     _createFreeSongsPlaylist();     // ← This will now read isFree correctly
     _showMainAlbumTutorial();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
     _loadPlaylists();
+    });
     _loadSavedUnlocks();
     _initializeRevenueCat();
     // Optional: Call it again after a short delay for reliability
@@ -461,26 +463,6 @@ Future<void> _handleDeepLink(Uri? uri) async {
     await _loadConfirmedStatus();
   });
 
-  // Start interactive showcase only the very first time
-  /*WidgetsBinding.instance.addPostFrameCallback((_) async {
-    final prefs = await SharedPreferences.getInstance();
-    final hasSeenShowcase = prefs.getBool('hasSeenInteractiveTutorial') ?? false;
-    if (!hasSeenShowcase) {
-      await Future.delayed(const Duration(milliseconds: 1200));
-      if (mounted) {
-        ShowCaseWidget.of(context).startShowCase([
-          _welcomeKey,
-          _albumKey,
-          _songsKey,
-          _playButtonKey,
-          _controlsKey,
-          _queueKey,
-        ]);
-      }
-      await prefs.setBool('hasSeenInteractiveTutorial', true);
-    }
-  });*/
-
   Timer.periodic(const Duration(seconds: 30), (timer) {
     _checkLivestreamStatus();
   });
@@ -512,7 +494,7 @@ Future<void> _handleDeepLink(Uri? uri) async {
     duration: const Duration(milliseconds: 800),
   )..repeat(reverse: true);
 
-  _loadPlaylists();
+
   _fetchAlbums();
   _setupProcessingListener();
 
@@ -566,7 +548,6 @@ void _onQueueReorder(int oldIndex, int newIndex) {
   _forceQueueRebuild();
   print("🔄 Queue reordered: $oldIndex → $newIndex");
 }
-
 
 // ====================== ROBUST PLAYLIST HELPERS ======================
 
@@ -628,10 +609,11 @@ Future<void> _playFreeSongsPlaylist() async {
   );
 }
 
-  Future<void> _savePlaylists() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('playlists', jsonEncode(_playlists));
-  }
+Future<void> _savePlaylists() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('playlists', jsonEncode(_playlists));
+  print("✅ Playlists saved (${_playlists.length} playlists)");
+}
 
 // Updated - Now properly async
 Future<void> _loadPlaylists() async {
@@ -667,16 +649,24 @@ Future<void> _loadPlaylists() async {
   }
 }
 
-  void _createNewPlaylist(String name) {
-    final newPlaylist = {
-      "id": DateTime.now().millisecondsSinceEpoch.toString(),
-      "name": name,
-      "songs": <Map<String, dynamic>>[],
-    };
-    setState(() => _playlists.add(newPlaylist));
-    _savePlaylists();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Playlist '$name' created")));
-  }
+void _createNewPlaylist(String name) async {
+  final newPlaylist = {
+    "id": DateTime.now().millisecondsSinceEpoch.toString(),
+    "name": name,
+    "songs": <Map<String, dynamic>>[],
+  };
+
+  setState(() => _playlists.add(newPlaylist));
+
+  // Await the save to ensure it completes
+  await _savePlaylists();
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text("Playlist '$name' created"))
+  );
+
+  print("✅ New playlist created and saved: $name");
+}
 
   void _addSongToPlaylist(String playlistId, Map<String, dynamic> song, String albumName) {
     final playlist = _playlists.firstWhere((p) => p["id"] == playlistId, orElse: () => {});
@@ -704,7 +694,10 @@ void _playPlaylist(String playlistId) {
     return;
   }
 
-  // Convert to clean, consistent queue format
+  // === STRONG RESET BEFORE LOADING NEW PLAYLIST ===
+  _resetQueueAndPlayer();
+
+  // Build clean queue
   final queueSongs = songs.map((s) {
     final song = Map<String, dynamic>.from(s as Map);
     return {
@@ -720,13 +713,13 @@ void _playPlaylist(String playlistId) {
     _queue = queueSongs;
     _currentPlaylistId = playlistId;
     _currentAlbum = playlist["name"] as String?;
-    _currentSongIndex = 0;
     _isQueueMode = true;
+    _currentSongIndex = 0;
   });
 
   _forceQueueRebuild();
 
-  // Play first song with proper queue mode
+  // Play first song
   if (_queue.isNotEmpty) {
     _playSong(
       playlist["name"] as String,
@@ -736,7 +729,10 @@ void _playPlaylist(String playlistId) {
   }
 
   ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text("🎵 Playing '${playlist["name"]}' • ${songs.length} songs"))
+    SnackBar(
+      content: Text("🎵 Playing '${playlist["name"]}' • ${songs.length} songs"),
+      backgroundColor: Colors.blue,
+    )
   );
 }
 
@@ -1795,22 +1791,40 @@ void _showLoadPlaylistDialog() {
             return const Center(child: CircularProgressIndicator());
           }
           final prefs = snapshot.data!;
-          final List<String> playlistNames = prefs.getStringList('playlist_names') ?? [];
+
+          // Load from the correct key used by _savePlaylists()
+          final String? jsonString = prefs.getString('playlists');
+          List<dynamic> loadedPlaylists = [];
+
+          if (jsonString != null && jsonString.isNotEmpty) {
+            try {
+              loadedPlaylists = jsonDecode(jsonString);
+            } catch (e) {
+              print("❌ Error decoding playlists: $e");
+            }
+          }
 
           return AlertDialog(
             backgroundColor: Colors.grey[900],
             title: const Text("Your Playlists", style: TextStyle(color: Colors.white)),
-            content: playlistNames.isEmpty
+            content: loadedPlaylists.isEmpty
                 ? const Text("No saved playlists yet.", style: TextStyle(color: Colors.white70))
                 : SizedBox(
                     width: double.maxFinite,
                     child: ListView.builder(
                       shrinkWrap: true,
-                      itemCount: playlistNames.length,
+                      itemCount: loadedPlaylists.length,
                       itemBuilder: (context, index) {
-                        final name = playlistNames[index];
+                        final playlist = Map<String, dynamic>.from(loadedPlaylists[index] as Map);
+                        final name = playlist["name"] ?? "Unnamed Playlist";
+                        final id = playlist["id"] as String?;
+
                         return ListTile(
                           title: Text(name, style: const TextStyle(color: Colors.white)),
+                          subtitle: Text(
+                            "${(playlist["songs"] as List? ?? []).length} songs",
+                            style: const TextStyle(color: Colors.white54),
+                          ),
                           trailing: IconButton(
                             icon: const Icon(Icons.delete, color: Colors.redAccent),
                             onPressed: () async {
@@ -1826,36 +1840,18 @@ void _showLoadPlaylistDialog() {
                                 ),
                               );
                               if (confirm == true) {
-                                final updated = List<String>.from(playlistNames);
-                                updated.remove(name);
-                                await prefs.setStringList('playlist_names', updated);
-                                await prefs.remove('playlist_$name');
+                                loadedPlaylists.removeAt(index);
+                                await prefs.setString('playlists', jsonEncode(loadedPlaylists));
                                 Navigator.pop(context);
                                 _showLoadPlaylistDialog(); // refresh
                               }
                             },
                           ),
-                          onTap: () async {
-                            Navigator.pop(context);
-                            final String json = prefs.getString('playlist_$name') ?? '[]';
-                            final List<dynamic> loadedSongs = jsonDecode(json);
-
-                            if (loadedSongs.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Playlist is empty")));
-                              return;
+                          onTap: () {
+                            if (id != null) {
+                              Navigator.pop(context);
+                              _playPlaylist(id);
                             }
-
-                            // Clear and rebuild queue with correct indexing
-                            setState(() {
-                              _queue.clear();
-                              _queue.addAll(loadedSongs.map((s) => Map<String, dynamic>.from(s as Map)).toList());
-                            });
-
-                            _forceQueueRebuild();
-
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text("Loaded '$name'"), backgroundColor: Colors.green),
-                            );
                           },
                         );
                       },
@@ -3336,11 +3332,33 @@ Widget _buildPlaylistsPage() {
 
 void _resetQueueState() {
   setState(() {
+    _queue.clear();
     _currentAlbum = null;
     _currentPlaylistId = null;
     _currentSongIndex = 0;
     _isQueueMode = false;
   });
+  _forceQueueRebuild();
+}
+
+void _resetQueueAndPlayer() {
+  setState(() {
+    _queue.clear();
+    _currentAlbum = null;
+    _currentPlaylistId = null;
+    _currentSongIndex = 0;
+    _isQueueMode = false;
+  });
+
+  try {
+    _globalPlayer.stop();
+    _globalPlayer.seek(Duration.zero);
+  } catch (e) {
+    print("Player reset error: $e");
+  }
+
+  _forceQueueRebuild();
+  print("🔄 Queue & Player fully reset");
 }
 
 /// Persistent Full Player - Used on BOTH Album Detail and Queue pages
