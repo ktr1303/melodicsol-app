@@ -549,18 +549,22 @@ TextStyle _getAlbumFont(String albumKey) {
   );
 }
 
-// Enhanced Reorder Method - Preserves full metadata
 void _onQueueReorder(int oldIndex, int newIndex) {
   if (oldIndex < newIndex) newIndex -= 1;
 
   setState(() {
-    final item = _queue.removeAt(oldIndex);
-    _queue.insert(newIndex, item);
+    final movedItem = _queue.removeAt(oldIndex);
+    _queue.insert(newIndex, movedItem);
   });
 
-  _forceQueueRebuild();
+  try {
+    _globalPlayer.moveAudioSource(oldIndex, newIndex);
+  } catch (e) {
+    print("Player move failed: $e");
+  }
 
-  print("🔄 Queue reordered: ${oldIndex} → ${newIndex} | New size: ${_queue.length}");
+  _forceQueueRebuild();
+  print("🔄 Queue reordered: $oldIndex → $newIndex");
 }
 
 
@@ -629,6 +633,40 @@ Future<void> _playFreeSongsPlaylist() async {
     await prefs.setString('playlists', jsonEncode(_playlists));
   }
 
+// Updated - Now properly async
+Future<void> _loadPlaylists() async {
+  final prefs = await SharedPreferences.getInstance();
+  final String? jsonString = prefs.getString('playlists');
+
+  if (jsonString != null && jsonString.isNotEmpty) {
+    try {
+      final List<dynamic> decoded = jsonDecode(jsonString);
+      setState(() {
+        _playlists = decoded.map((item) {
+          final playlist = Map<String, dynamic>.from(item as Map);
+          // Ensure songs have consistent structure
+          if (playlist['songs'] != null) {
+            playlist['songs'] = (playlist['songs'] as List).map((song) {
+              final s = Map<String, dynamic>.from(song as Map);
+              s['title'] = s['title'] ?? s['Title'] ?? 'Unknown Song';
+              s['albumName'] = s['albumName'] ?? s['Album'] ?? 'Unknown Album';
+              return s;
+            }).toList();
+          }
+          return playlist;
+        }).toList();
+      });
+      print("✅ Loaded ${_playlists.length} playlists from storage");
+    } catch (e) {
+      print("❌ Error loading playlists: $e");
+      _playlists = [];
+    }
+  } else {
+    _playlists = [];
+    print("📂 No saved playlists found");
+  }
+}
+
   void _createNewPlaylist(String name) {
     final newPlaylist = {
       "id": DateTime.now().millisecondsSinceEpoch.toString(),
@@ -651,23 +689,55 @@ Future<void> _playFreeSongsPlaylist() async {
     }
   }
 
-  void _playPlaylist(String playlistId) {
-    final playlist = _playlists.firstWhere((p) => p["id"] == playlistId);
-    if (playlist["songs"].isEmpty) return;
-
-    _currentPlaylistId = playlistId;
-    _currentAlbum = null;
-    _currentSongIndex = 0;
-
-    final firstSong = playlist["songs"][0] as Map<String, dynamic>;
-    _playSong(firstSong["albumName"] as String, 0);
+void _playPlaylist(String playlistId) {
+  final playlistIndex = _playlists.indexWhere((p) => p["id"] == playlistId);
+  if (playlistIndex == -1) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Playlist not found")));
+    return;
   }
 
-  // Improved Load Playlists - Ensures metadata is correct on load
-void _loadPlaylists() {
-  // This is usually called in initState
-  // We'll keep it simple but robust
-  print("📂 Playlists loaded from storage (${_playlists.length} playlists)");
+  final playlist = _playlists[playlistIndex];
+  final songs = playlist["songs"] as List<dynamic>;
+
+  if (songs.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Playlist is empty")));
+    return;
+  }
+
+  // Convert to clean, consistent queue format
+  final queueSongs = songs.map((s) {
+    final song = Map<String, dynamic>.from(s as Map);
+    return {
+      'title': song['title'] ?? song['Title'] ?? 'Unknown Song',
+      'albumName': song['albumName'] ?? song['Album'] ?? 'Unknown Album',
+      'artUrl': song['artUrl'] ?? song['songArtUrl'] ?? '',
+      'url': song['url'] ?? song['URL'] ?? '',
+      'isFree': song['isFree'] ?? false,
+    };
+  }).toList();
+
+  setState(() {
+    _queue = queueSongs;
+    _currentPlaylistId = playlistId;
+    _currentAlbum = playlist["name"] as String?;
+    _currentSongIndex = 0;
+    _isQueueMode = true;
+  });
+
+  _forceQueueRebuild();
+
+  // Play first song with proper queue mode
+  if (_queue.isNotEmpty) {
+    _playSong(
+      playlist["name"] as String,
+      0,
+      fromQueue: true,
+    );
+  }
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text("🎵 Playing '${playlist["name"]}' • ${songs.length} songs"))
+  );
 }
 
 Future<void> _logSongPlay({
@@ -2927,23 +2997,7 @@ Widget _buildPlaylistsPage() {
                       padding: const EdgeInsets.only(bottom: 160),
                       key: ValueKey('queue_list_${_queue.length}'),
                       itemCount: _queue.length,
-                      onReorder: (int oldIndex, int newIndex) {
-                        if (oldIndex < newIndex) newIndex -= 1;
-
-                        setState(() {
-                          final movedItem = _queue.removeAt(oldIndex);
-                          _queue.insert(newIndex, movedItem);
-                        });
-
-                        // Best effort sync with player
-                        try {
-                          _globalPlayer.moveAudioSource(oldIndex, newIndex);
-                        } catch (e) {
-                          print("Player reorder sync failed, continuing: $e");
-                        }
-
-                        print("🔄 Queue reordered: $oldIndex → $newIndex");
-                      },
+                      onReorder: _onQueueReorder,
                       itemBuilder: (context, index) {
                         final song = _queue[index] as Map<String, dynamic>;
                         final title = (song['title'] as String?) ?? (song['Title'] as String?) ?? "Unknown Song";
@@ -3278,6 +3332,15 @@ Widget _buildPlaylistsPage() {
       ],
     ),
   );
+}
+
+void _resetQueueState() {
+  setState(() {
+    _currentAlbum = null;
+    _currentPlaylistId = null;
+    _currentSongIndex = 0;
+    _isQueueMode = false;
+  });
 }
 
 /// Persistent Full Player - Used on BOTH Album Detail and Queue pages
