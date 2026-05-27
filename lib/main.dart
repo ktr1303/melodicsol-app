@@ -190,6 +190,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   String? _currentViewedAlbum;   // ← Add this  
   bool _isQueueTutorialShowing = false;
   Set<String> _unlockedAlbums = {}; // Global unlocked albums
+  bool get _shouldShowPlayer => _selectedIndex == 2 && _queue.isNotEmpty;
 
   Future<bool> hasEntitlement(String entitlementId) async {
   try {
@@ -864,9 +865,13 @@ Future<void> _playSong(
 }) async {
   print("🔥 _playSong → Album: '$albumName' | OriginalIndex: $originalSongIndex | fromQueue: $fromQueue | respectUnlocks: $respectUnlocks");
 
-  // === 1. SPECIAL FREE SONG CHECK - Must come FIRST (bypass everything) ===
+// === SPECIAL FREE SONG CHECK (Works for both normal and fromQueue) ===
   bool songIsFree = false;
-  if (!fromQueue) {
+
+  if (fromQueue && _queue.isNotEmpty) {
+    final song = _queue[originalSongIndex.clamp(0, _queue.length - 1)];
+    songIsFree = song['isFree'] as bool? ?? false;
+  } else if (!fromQueue) {
     final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
     if (originalSongIndex < albumSongs.length) {
       final songData = albumSongs[originalSongIndex] as Map<String, dynamic>;
@@ -878,7 +883,7 @@ Future<void> _playSong(
   if (songIsFree) {
     print("✅ Free song detected → Bypassing all unlock checks");
   } else {
-    // === 2. NORMAL UNLOCK CHECK for paid songs ===
+    // Normal paid content check
     final bool isUnlocked = await _isContentUnlocked(albumName);
     if (!isUnlocked) {
       print("🔒 Paid content locked → Showing Paywall for $albumName");
@@ -2156,7 +2161,8 @@ Widget build(BuildContext context) {
         // Persistent Player ONLY on:
         //   - Actual Album Detail (song list) → when _currentAlbum != null
         //   - Queue page
-        if ((_selectedIndex == 1 && _currentAlbum != null) || _selectedIndex == 2)
+// === PLAYER ONLY VISIBLE ON QUEUE PAGE (Index 2) ===
+        if (_shouldShowPlayer)
           Positioned(
             left: 0,
             right: 0,
@@ -2929,11 +2935,11 @@ Widget _buildPlaylistsPage() {
                           _queue.insert(newIndex, movedItem);
                         });
 
-                        // Sync with audio player when possible
+                        // Best effort sync with player
                         try {
                           _globalPlayer.moveAudioSource(oldIndex, newIndex);
                         } catch (e) {
-                          print("Player move failed, will rebuild on next play: $e");
+                          print("Player reorder sync failed, continuing: $e");
                         }
 
                         print("🔄 Queue reordered: $oldIndex → $newIndex");
@@ -3530,44 +3536,53 @@ Widget _buildFreeSongsPlaylistTile() {
   );
 }
 
+// ====================== IMPROVED FREE SONGS PLAYLIST ======================
 Future<void> _createFreeSongsPlaylist() async {
-  final prefs = await SharedPreferences.getInstance();
-  
-  // Only create once
-  if (prefs.getBool('hasCreatedFreePlaylist') ?? false) return;
-
   List<Map<String, dynamic>> freeSongs = [];
 
-  // Go through all loaded albums and collect free songs
+  // Scan all albums for songs marked as isFree = true
   _albums.forEach((albumName, albumData) {
     final songs = albumData['songs'] as List<dynamic>? ?? [];
-    
+
     for (var song in songs) {
-      final songMap = song as Map<String, dynamic>;
-      
-      // Check isFree flag from DynamoDB data
-      final bool isFree = songMap['isFree'] as bool? ?? false;
-      
+      final songMap = Map<String, dynamic>.from(song as Map);
+
+      final bool isFree = 
+          (songMap['isFree'] as bool? ?? false) ||
+          (songMap['emailUnlock'] as bool? ?? false && (_hasConfirmedEmail ?? false));
+
       if (isFree) {
         freeSongs.add({
-          ...songMap,
+          'title': songMap['title'] ?? songMap['Title'] ?? 'Unknown Song',
           'albumName': albumName,
-          'source': 'free_playlist',
+          'artUrl': songMap['artUrl'] ?? songMap['songArtUrl'] ?? '',
+          'url': songMap['url'] ?? songMap['URL'] ?? '',
+          'isFree': true,
         });
       }
     }
   });
 
   if (freeSongs.isEmpty) {
-    print("⚠️ No free songs found in DynamoDB data");
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("No free songs found in catalog")),
+    );
     return;
   }
 
-  // Save the playlist
+  // Save with preserved order
+  final prefs = await SharedPreferences.getInstance();
   await prefs.setString('free_songs_playlist', jsonEncode(freeSongs));
   await prefs.setBool('hasCreatedFreePlaylist', true);
 
-  print("✅ Free Songs Playlist created successfully (${freeSongs.length} songs from DynamoDB)");
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text("✅ Free Songs playlist created • ${freeSongs.length} tracks"),
+      backgroundColor: Colors.green,
+    ),
+  );
+
+  print("✅ Free Songs playlist saved with ${freeSongs.length} tracks");
 }
 
 void _showCreatePlaylistDialog() {
