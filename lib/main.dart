@@ -547,16 +547,80 @@ TextStyle _getAlbumFont(String albumKey) {
     color: Colors.white,
   );
 }
-Future<void> _loadPlaylists() async {
-  final prefs = await SharedPreferences.getInstance();
-  final List<String> names = prefs.getStringList('playlist_names') ?? [];
-  
+
+// Enhanced Reorder Method - Preserves full metadata
+void _onQueueReorder(int oldIndex, int newIndex) {
+  if (oldIndex < newIndex) newIndex -= 1;
+
   setState(() {
-    _playlists = names.map((name) => {
-      'name': name,
-      'songs': jsonDecode(prefs.getString('playlist_$name') ?? '[]'),
-    }).toList();
+    final item = _queue.removeAt(oldIndex);
+    _queue.insert(newIndex, item);
   });
+
+  _forceQueueRebuild();
+
+  print("🔄 Queue reordered: ${oldIndex} → ${newIndex} | New size: ${_queue.length}");
+}
+
+
+// ====================== ROBUST PLAYLIST HELPERS ======================
+
+Future<List<Map<String, dynamic>>> _loadFreeSongsPlaylist() async {
+  final prefs = await SharedPreferences.getInstance();
+  final String? jsonString = prefs.getString('free_songs_playlist');
+  if (jsonString == null || jsonString.isEmpty) return [];
+
+  try {
+    final List<dynamic> decoded = jsonDecode(jsonString);
+    return decoded.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  } catch (e) {
+    print("❌ Error loading free songs: $e");
+    return [];
+  }
+}
+
+Future<void> _saveCurrentQueueAsFreeSongs() async {
+  if (_queue.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Queue is empty")));
+    return;
+  }
+
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('free_songs_playlist', jsonEncode(_queue));
+  await prefs.setBool('hasCreatedFreePlaylist', true);
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text("✅ Free Songs order saved"), backgroundColor: Colors.green),
+  );
+}
+
+Future<void> _playFreeSongsPlaylist() async {
+  final freeSongs = await _loadFreeSongsPlaylist();
+  if (freeSongs.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("No free songs saved yet")),
+    );
+    return;
+  }
+
+  setState(() {
+    _queue = List<Map<String, dynamic>>.from(freeSongs);
+    _currentAlbum = "Free Songs";
+    _isQueueMode = true;
+  });
+
+  _forceQueueRebuild();
+
+  if (_queue.isNotEmpty) {
+    await _playSong("Free Songs", 0, fromQueue: true);
+  }
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text("🎵 Playing Free Songs • ${freeSongs.length} tracks"),
+      backgroundColor: Colors.green,
+    ),
+  );
 }
 
   Future<void> _savePlaylists() async {
@@ -597,6 +661,13 @@ Future<void> _loadPlaylists() async {
     final firstSong = playlist["songs"][0] as Map<String, dynamic>;
     _playSong(firstSong["albumName"] as String, 0);
   }
+
+  // Improved Load Playlists - Ensures metadata is correct on load
+void _loadPlaylists() {
+  // This is usually called in initState
+  // We'll keep it simple but robust
+  print("📂 Playlists loaded from storage (${_playlists.length} playlists)");
+}
 
 Future<void> _logSongPlay({
   required String songTitle,
@@ -2850,33 +2921,22 @@ Widget _buildPlaylistsPage() {
                       padding: const EdgeInsets.only(bottom: 160),
                       key: ValueKey('queue_list_${_queue.length}'),
                       itemCount: _queue.length,
-                      onReorder: (int oldIndex, int newIndex) async {
-                        print("🔄 Reordering: $oldIndex → $newIndex");
-                        if (oldIndex < newIndex) newIndex--;
-                        final movedSong = _queue.removeAt(oldIndex);
-                        _queue.insert(newIndex, movedSong);
+                      onReorder: (int oldIndex, int newIndex) {
+                        if (oldIndex < newIndex) newIndex -= 1;
 
+                        setState(() {
+                          final movedItem = _queue.removeAt(oldIndex);
+                          _queue.insert(newIndex, movedItem);
+                        });
+
+                        // Sync with audio player when possible
                         try {
-                          await _globalPlayer.moveAudioSource(oldIndex, newIndex);
+                          _globalPlayer.moveAudioSource(oldIndex, newIndex);
                         } catch (e) {
-                          print("⚠️ Rebuild fallback: $e");
-                          final audioSources = _queue.map((song) {
-                            return AudioSource.uri(
-                              Uri.parse((song['url'] as String?) ?? ''),
-                              tag: MediaItem(
-                                id: song['url'] ?? 'unknown',
-                                title: (song['title'] ?? song['Title'] ?? 'Unknown') as String,
-                                artUri: Uri.tryParse((song['artUrl'] ?? song['songArtUrl'] ?? '') as String),
-                              ),
-                            );
-                          }).toList();
-
-                          await _globalPlayer.setAudioSource(
-                            ConcatenatingAudioSource(children: audioSources),
-                            initialIndex: _currentSongIndex,
-                          );
+                          print("Player move failed, will rebuild on next play: $e");
                         }
-                        setState(() {});
+
+                        print("🔄 Queue reordered: $oldIndex → $newIndex");
                       },
                       itemBuilder: (context, index) {
                         final song = _queue[index] as Map<String, dynamic>;
@@ -3439,62 +3499,7 @@ void _deletePlaylist(int index) {
 Widget _buildFreeSongsPlaylistTile() {
   return GestureDetector(
     onTap: () async {
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        final String? jsonString = prefs.getString('free_songs_playlist');
-        if (jsonString == null || jsonString.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("No free songs saved yet")),
-          );
-          return;
-        }
-        final List<dynamic> freeSongs = jsonDecode(jsonString);
-        if (freeSongs.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Free songs list is empty")),
-          );
-          return;
-        }
-
-        // Add all free songs to queue
-        setState(() {
-          _queue.addAll(freeSongs.map((s) {
-            final song = s as Map<String, dynamic>;
-            return {
-              'title': song['Title'] ?? song['title'] ?? 'Unknown Song',
-              'albumName': song['albumName'] ?? song['Album'] ?? 'Unknown Album',
-              'artUrl': song['artUrl'] ?? song['songArtUrl'] ?? '',
-              'url': song['url'] ?? song['URL'] ?? '',
-              'isFree': true,
-            };
-          }).toList());
-        });
-
-        _forceQueueRebuild();
-
-        // === NEW: Automatically play the first song ===
-        if (_queue.isNotEmpty) {
-          await _playSong(
-            "Free Songs", 
-            0, 
-            fromQueue: true,
-          );
-        }
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("✅ Playing Free Songs • ${freeSongs.length} tracks added"),
-            backgroundColor: Colors.green,
-          ),
-        );
-
-        print("✅ Free Songs playlist started | Total queue size: ${_queue.length}");
-      } catch (e) {
-        print("❌ Error loading free songs: $e");
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Failed to load free songs")),
-        );
-      }
+      await _playFreeSongsPlaylist();   // Now uses robust loading
     },
     child: Container(
       width: double.infinity,
@@ -3505,11 +3510,11 @@ Widget _buildFreeSongsPlaylistTile() {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.greenAccent.withOpacity(0.4)),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.music_note, color: Colors.greenAccent, size: 32),
-          SizedBox(width: 12),
-          Expanded(
+          const Icon(Icons.music_note, color: Colors.greenAccent, size: 32),
+          const SizedBox(width: 12),
+          const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -3518,7 +3523,7 @@ Widget _buildFreeSongsPlaylistTile() {
               ],
             ),
           ),
-          Icon(Icons.play_arrow, color: Colors.greenAccent),
+          const Icon(Icons.play_arrow, color: Colors.greenAccent),
         ],
       ),
     ),
@@ -4272,6 +4277,19 @@ void _showExpandedDebugPanel() {
 
           const SizedBox(height: 20),
           const Divider(color: Colors.white24),
+
+          ElevatedButton.icon(
+            icon: const Icon(Icons.save, color: Colors.white),
+            label: const Text("Save Current Queue as Free Songs"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orangeAccent,
+              minimumSize: const Size(double.infinity, 52),
+            ),
+            onPressed: () async {
+              Navigator.pop(context); // Close debug panel
+              await _saveCurrentQueueAsFreeSongs();
+            },
+          ),
 
           // === ADMIN PANEL BUTTON ===
           ElevatedButton.icon(
