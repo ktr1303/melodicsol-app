@@ -21,9 +21,11 @@ import 'package:shared_preferences/shared_preferences.dart';         // For Plat
 import 'package:app_links/app_links.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_dynamic_links/firebase_dynamic_links.dart';
 import 'email_verification_screen.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
+
 
 // ==================== BACKGROUND HANDLER (MUST BE TOP-LEVEL) ====================
 @pragma('vm:entry-point')
@@ -112,6 +114,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
+  final FirebaseAnalytics analytics = FirebaseAnalytics.instance;  // ← Add this line
+  final FirebaseFirestore firestore = FirebaseFirestore.instance;
+  final FirebaseAuth auth = FirebaseAuth.instance;
   final AudioPlayer _globalPlayer = AudioPlayer();
   final TextEditingController _promoCodeController = TextEditingController();
   // Albums that can be purchased individually ($7 each)
@@ -203,16 +208,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   final Map<String, AnimationController> _albumGlowControllers = {};
 
   final Map<String, String> _albumStories = {
-    "Base": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Track": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "609": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Roger": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Gemini": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Asraya": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Central": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Live": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Sol": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
-    "Melodic": "This was our very first raw recording session in the basement. Late nights, cheap mics, and pure passion.",
+    "Base": "Back where it all began. Cheap radio shack mic plugged into a realistic stereo with a tape deck recording.",
+    "Track": "Very first 8 track recordings. Just beginning to learn how to record and what this world even is.",
+    "609": "Studio 609. An audio recording facility. Here's a few tracks recorded for your listening pleasure. And maybe technoman will stop by and recording some vocal tracks. He really gets down on those vocal tracks. You wouldn't believe it.",
+    "Roger": "Got a drum set. Learning how to record and play multiple instruments.",
+    "Gemini": "Dedicated to Eric Laue",
+    "Asraya": "First original band. Learning to record full bands, write songs, play together",
+    "Central": "Recording, songwriting, instrumental development. First Melodicsol transitions captured here ",
+    "Live": "This album is recorded live as proof of concept.",
+    "Sol": "First Album",
+    "Melodic": "New Album",
   };
 
   final Map<String, dynamic> _melodicSolBio = {
@@ -593,35 +598,114 @@ Future<void> _loadPlaylists() async {
     _playSong(firstSong["albumName"] as String, 0);
   }
 
-    Future<void> _logSongPlay({
-    required String songTitle,
-    required String albumName,
-    bool isFree = false,
-  }) async {
-    try {
-      await analytics.logEvent(
-        name: 'song_play',
-        parameters: {
-          'song_title': songTitle,
-          'album_name': albumName,
-          'is_free': isFree,
-        },
-      );
+Future<void> _logSongPlay({
+  required String songTitle,
+  required String albumName,
+  bool isFree = false,
+  double completionPercentage = 0.0,   // 0.0 to 1.0
+}) async {
+  try {
+    final bool isFullPlay = completionPercentage >= 0.85; // Consider 85%+ as full play
 
-      // Optional: Save detailed log to Firestore (good for custom reports)
-      await FirebaseFirestore.instance.collection('song_plays').add({
+    await analytics.logEvent(
+      name: 'song_play',
+      parameters: {
         'song_title': songTitle,
         'album_name': albumName,
         'is_free': isFree,
-        'played_at': FieldValue.serverTimestamp(),
-        'user_id': FirebaseAuth.instance.currentUser?.uid ?? 'anonymous',
-      });
+        'completion_percentage': completionPercentage,
+        'is_full_play': isFullPlay,
+      },
+    );
 
-      print("📊 Logged play → $songTitle ($albumName)");
-    } catch (e) {
-      print("❌ Failed to log song play: $e");
-    }
+    // Save detailed record to Firestore
+    await FirebaseFirestore.instance.collection('song_plays').add({
+      'song_title': songTitle,
+      'album_name': albumName,
+      'is_free': isFree,
+      'completion_percentage': completionPercentage,
+      'is_full_play': isFullPlay,
+      'played_at': FieldValue.serverTimestamp(),
+      'user_id': FirebaseAuth.instance.currentUser?.uid ?? 'anonymous',
+    });
+
+    print("📊 Logged play → $songTitle ($albumName) | ${isFullPlay ? 'FULL' : 'PARTIAL'}");
+  } catch (e) {
+    print("❌ Failed to log song play: $e");
   }
+}
+
+Future<Map<String, dynamic>> _getPlayStats() async {
+  try {
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+
+    final snapshot = await FirebaseFirestore.instance
+        .collection('song_plays')
+        .orderBy('played_at', descending: true)
+        .limit(1000) // Increased for better stats
+        .get();
+
+    final plays = snapshot.docs;
+
+    int todayPlays = 0;
+    int todayFullPlays = 0;
+    int allTimeFullPlays = 0;
+
+    final songCountAllTime = <String, int>{};
+    final albumCountAllTime = <String, int>{};
+    final recentPlays = <Map<String, dynamic>>[];
+
+    for (var doc in plays) {
+      final data = doc.data();
+      final timestamp = (data['played_at'] as Timestamp?)?.toDate() ?? DateTime.now();
+      final isFull = data['is_full_play'] as bool? ?? false;
+      final song = data['song_title'] as String? ?? 'Unknown';
+      final album = data['album_name'] as String? ?? 'Unknown';
+
+      // All-time counts
+      songCountAllTime[song] = (songCountAllTime[song] ?? 0) + 1;
+      albumCountAllTime[album] = (albumCountAllTime[album] ?? 0) + 1;
+      if (isFull) allTimeFullPlays++;
+
+      // Today's plays
+      if (timestamp.isAfter(todayStart)) {
+        todayPlays++;
+        if (isFull) todayFullPlays++;
+      }
+
+      // Keep last 15 plays with timestamps
+      if (recentPlays.length < 15) {
+        recentPlays.add({
+          'song': song,
+          'album': album,
+          'time': timestamp,
+          'isFull': isFull,
+        });
+      }
+    }
+
+    // Top 5
+    final topSongs = songCountAllTime.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    final topAlbums = albumCountAllTime.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    return {
+      'todayPlays': todayPlays,
+      'todayFullPlays': todayFullPlays,
+      'allTimePlays': plays.length,
+      'allTimeFullPlays': allTimeFullPlays,
+      'topSongs': topSongs.take(5).toList(),
+      'topAlbums': topAlbums.take(5).toList(),
+      'recentPlays': recentPlays,
+    };
+  } catch (e) {
+    print("❌ Failed to fetch stats: $e");
+    return {};
+  }
+}
 
   Future<void> _loadSavedUnlocks() async {
   final prefs = await SharedPreferences.getInstance();
@@ -965,11 +1049,11 @@ Future<void> _showMainAlbumTutorial() async {
     barrierDismissible: false,
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text("Albums"),
       content: const Text(
-        "• Tap any title to explore\n"
-        "• Swipe left = queue page\n"
-        "• Swipe right = internet",
+        "Tap any Album Title\n"
+        "\n"
+        "Swipe left = queue page\n"
+        "Swipe right = internet",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
       actions: [
@@ -979,7 +1063,7 @@ Future<void> _showMainAlbumTutorial() async {
             Navigator.pop(context);
             _isTutorialShowing = false;
           },
-          child: const Text("Got it", style: TextStyle(fontSize: 16)),
+          child: const Text("Yes", style: TextStyle(fontSize: 16)),
         ),
       ],
     ),
@@ -1000,8 +1084,16 @@ Future<void> _showAlbumDetailTutorial() async {
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       content: const Text(
-        "• Tap songs for music \n"
-        "• Tap/Long press things (?:))\n\n"
+        "Song Options\n"
+        "• Tap songs to play music\n"
+        "• Tap rotating art for stories\n"
+        "• Tap Title for Album\n"        
+        "\n"
+        "Long Press Options\n"
+        "• View Song Story\n"
+        "• Play next\n"
+        "• Add to queue\n"
+        "• Add to playlist\n"
         "",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
@@ -1012,7 +1104,7 @@ Future<void> _showAlbumDetailTutorial() async {
             Navigator.pop(context);
             _isTutorialShowing = false;
           },
-          child: const Text("Got it", style: TextStyle(fontSize: 16)),
+          child: const Text("Yes", style: TextStyle(fontSize: 16)),
         ),
       ],
     ),
@@ -1032,12 +1124,17 @@ Future<void> _showQueueTutorial() async {
     barrierDismissible: false,
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      content: const Text(
-        "This queue is awesome.\n\n"
-        "• Tap Free Songs to play Free Songs\n"
-        "• Long press songs for more options",
-        style: TextStyle(fontSize: 16, height: 1.4),
-      ),
+        content: const Text(
+          "This Queue Is Awesome.\n\n"
+          "INSTANT MUSIC\n"
+          "• Play Free Songs!!!\n\n"
+          "Long Press options:\n"
+          "• View Song Story\n"
+          "• Go To Album\n"
+          "• Remove from Queue\n"
+          "• Add to Playlist",
+          style: TextStyle(fontSize: 16, height: 1.4),
+        ),
       actions: [
         TextButton(
           onPressed: () {
@@ -3345,16 +3442,13 @@ Widget _buildFreeSongsPlaylistTile() {
       try {
         final prefs = await SharedPreferences.getInstance();
         final String? jsonString = prefs.getString('free_songs_playlist');
-
         if (jsonString == null || jsonString.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("No free songs saved yet")),
           );
           return;
         }
-
         final List<dynamic> freeSongs = jsonDecode(jsonString);
-
         if (freeSongs.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("Free songs list is empty")),
@@ -3362,12 +3456,12 @@ Widget _buildFreeSongsPlaylistTile() {
           return;
         }
 
+        // Add all free songs to queue
         setState(() {
           _queue.addAll(freeSongs.map((s) {
             final song = s as Map<String, dynamic>;
             return {
               'title': song['Title'] ?? song['title'] ?? 'Unknown Song',
-              // FIXED: Preserve the real album name
               'albumName': song['albumName'] ?? song['Album'] ?? 'Unknown Album',
               'artUrl': song['artUrl'] ?? song['songArtUrl'] ?? '',
               'url': song['url'] ?? song['URL'] ?? '',
@@ -3378,14 +3472,23 @@ Widget _buildFreeSongsPlaylistTile() {
 
         _forceQueueRebuild();
 
+        // === NEW: Automatically play the first song ===
+        if (_queue.isNotEmpty) {
+          await _playSong(
+            "Free Songs", 
+            0, 
+            fromQueue: true,
+          );
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("✅ Added ${freeSongs.length} Free Songs to queue"),
+            content: Text("✅ Playing Free Songs • ${freeSongs.length} tracks added"),
             backgroundColor: Colors.green,
           ),
         );
 
-        print("✅ Free Songs added successfully | Total queue size: ${_queue.length}");
+        print("✅ Free Songs playlist started | Total queue size: ${_queue.length}");
       } catch (e) {
         print("❌ Error loading free songs: $e");
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3662,37 +3765,7 @@ Widget _buildSocialPage() {
                   ),
                 ),
               );
-            }).toList(),
-
-            const SizedBox(height: 40),
-            const Divider(color: Colors.white24),
-            const SizedBox(height: 30),
-
-            // Livestream Control, Promo Code, etc. (unchanged)
-            const Text(
-              "Livestream Control (Private)",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white70),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                const Text("Livestream Active", style: TextStyle(color: Colors.white70)),
-                const Spacer(),
-                Switch(
-                  value: _isLivestreamActive,
-                  activeColor: Colors.red,
-                  onChanged: (value) {
-                    setState(() => _isLivestreamActive = value);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(value ? "Livestream mode ON" : "Livestream mode OFF"),
-                        backgroundColor: value ? Colors.red : Colors.green,
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ),
+            }).toList(), 
 
             const SizedBox(height: 40),
             const Divider(color: Colors.white24),
@@ -3795,6 +3868,26 @@ Future<void> _logout() async {
   }
 }
 
+// Replace your existing _albumStories with this getter
+String _getAlbumStory(String albumName) {
+  if (albumName.isEmpty) return "Story coming soon...";
+
+  final albumData = _albums[albumName];
+  
+  // Primary source: Data from backend
+  if (albumData != null) {
+    final story = albumData['story'] as String? ?? 
+                  albumData['description'] as String? ?? 
+                  albumData['bio'] as String?;
+    if (story != null && story.isNotEmpty) {
+      return story;
+    }
+  }
+
+  // Fallback (only if backend doesn't have it)
+  return "This album represents a unique chapter in Melodicsol's journey. More story content coming soon.";
+}
+
 void _showAlbumStory(String startingAlbumName) {
   final albumsList = _albums.keys.toList();
   int initialIndex = albumsList.indexOf(startingAlbumName);
@@ -3818,7 +3911,7 @@ void _showAlbumStory(String startingAlbumName) {
           final album = _albums[albumName];
           if (album == null) return const SizedBox();
 
-          final story = _albumStories[albumName] ?? "Story coming soon for $albumName...";
+          final story = _getAlbumStory(albumName);
           final themeColor = _getAlbumThemeColor(albumName);
           final artUrl = album['artUrl'] as String? ?? '';
           final displayName = _getAlbumDisplayName(albumName);
@@ -3841,6 +3934,23 @@ void _showAlbumStory(String startingAlbumName) {
                     ),
                   ),
                 ),
+
+                const SizedBox(height: 8),
+
+                // Back to Songlist Button
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    icon: const Icon(Icons.arrow_back_ios, size: 18),
+                    label: const Text("Back to Songlist"),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white70,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ),
+
                 const SizedBox(height: 16),
 
                 // Clickable Album Art
@@ -3869,7 +3979,6 @@ void _showAlbumStory(String startingAlbumName) {
                         : const Icon(Icons.image_not_supported, size: 140, color: Colors.white38),
                   ),
                 ),
-
                 const SizedBox(height: 20),
 
                 // Album Title
@@ -3878,7 +3987,6 @@ void _showAlbumStory(String startingAlbumName) {
                   style: _getAlbumFont(albumName).copyWith(fontSize: 28),
                   textAlign: TextAlign.center,
                 ),
-
                 const SizedBox(height: 20),
 
                 // Story Text
@@ -3887,21 +3995,20 @@ void _showAlbumStory(String startingAlbumName) {
                   style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
                   textAlign: TextAlign.center,
                 ),
-
                 const SizedBox(height: 40),
 
-                // === BUY THIS ALBUM BUTTON (Exactly as before) ===
+                // === BUY THIS ALBUM BUTTON (Now uses album theme color) ===
                 if (canPurchaseIndividually)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
                     child: ElevatedButton(
                       onPressed: () {
-                        Navigator.pop(context); // Close story first
-                        _showPaywall(albumName); // Reuse the exact same PaywallScreen
+                        Navigator.pop(context);
+                        _showPaywall(albumName);
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.greenAccent,
-                        foregroundColor: Colors.black87,
+                        backgroundColor: themeColor,           // ← Now uses album theme color
+                        foregroundColor: Colors.white,
                         minimumSize: const Size(double.infinity, 62),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                       ),
@@ -3911,20 +4018,6 @@ void _showAlbumStory(String startingAlbumName) {
                       ),
                     ),
                   ),
-
-                // Close Button
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: themeColor,
-                      minimumSize: const Size(double.infinity, 56),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    ),
-                    child: const Text("Close", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
-                  ),
-                ),
               ],
             ),
           );
@@ -3956,7 +4049,6 @@ void _showFullScreenImage(String imageUrl, String albumName) {
               ),
             ),
           ),
-
           // Close button only
           Positioned(
             top: 40,
@@ -4181,6 +4273,23 @@ void _showExpandedDebugPanel() {
           const SizedBox(height: 20),
           const Divider(color: Colors.white24),
 
+          // === ADMIN PANEL BUTTON ===
+          ElevatedButton.icon(
+            icon: const Icon(Icons.admin_panel_settings, color: Colors.white),
+            label: const Text("Open Admin Panel"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.deepPurpleAccent,
+              minimumSize: const Size(double.infinity, 52),
+            ),
+            onPressed: () {
+              Navigator.pop(context); // Close debug panel
+              _showAdminPanel();
+            },
+          ),
+
+          const SizedBox(height: 20),
+          const Divider(color: Colors.white24),
+
           // === Force UI Refresh ===
           ElevatedButton.icon(
             icon: const Icon(Icons.refresh, color: Colors.white),
@@ -4259,6 +4368,111 @@ void _showExpandedDebugPanel() {
             onPressed: () => Navigator.pop(context),
           ),
         ],
+      ),
+    ),
+  );
+}
+
+void _showAdminPanel() {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.grey[850],
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (context) => DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.6,
+      maxChildSize: 0.95,
+      builder: (context, scrollController) => FutureBuilder<Map<String, dynamic>>(
+        future: _getPlayStats(),
+        builder: (context, snapshot) {
+          final stats = snapshot.data ?? {};
+
+          return ListView(
+            controller: scrollController,
+            padding: const EdgeInsets.all(20),
+            children: [
+              const Text("🔐 Admin Panel",
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
+              const SizedBox(height: 8),
+              const Text("Real-time stats & livestream control",
+                  style: TextStyle(color: Colors.white54)),
+
+              const Divider(color: Colors.white24, height: 30),
+
+              // Refresh Stats Button
+              ElevatedButton.icon(
+                icon: const Icon(Icons.refresh, color: Colors.white),
+                label: const Text("Refresh Stats"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueAccent,
+                  minimumSize: const Size(double.infinity, 52),
+                ),
+                onPressed: () {
+                  // This forces the FutureBuilder to re-run
+                  setState(() {});
+                },
+              ),
+
+
+              const SizedBox(height: 30),
+              const Divider(color: Colors.white24),
+
+              // Statistics
+              const Text("📊 Play Statistics", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+
+              if (snapshot.connectionState == ConnectionState.waiting)
+                const Center(child: CircularProgressIndicator())
+              else ...[
+                const SizedBox(height: 12),
+                Text("Today: ${stats['todayPlays'] ?? 0} plays (${stats['todayFullPlays'] ?? 0} full)",
+                    style: const TextStyle(fontSize: 16, color: Colors.greenAccent)),
+                Text("All-Time: ${stats['allTimePlays'] ?? 0} plays (${stats['allTimeFullPlays'] ?? 0} full)",
+                    style: const TextStyle(fontSize: 16, color: Colors.white70)),
+
+                const SizedBox(height: 20),
+
+                const Text("Top Songs (All-Time)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.greenAccent)),
+                ...((stats['topSongs'] as List?) ?? []).map((e) => 
+                  Text("• ${e.key} (${e.value} plays)", style: const TextStyle(color: Colors.white70))
+                ),
+
+                const SizedBox(height: 16),
+
+                const Text("Top Albums (All-Time)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.greenAccent)),
+                ...((stats['topAlbums'] as List?) ?? []).map((e) => 
+                  Text("• ${e.key} (${e.value} plays)", style: const TextStyle(color: Colors.white70))
+                ),
+
+                const SizedBox(height: 20),
+                const Text("Recent Plays", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                ...((stats['recentPlays'] as List?) ?? []).map((play) {
+                  final time = (play['time'] as DateTime).toLocal();
+                  final timeStr = "${time.hour}:${time.minute.toString().padLeft(2, '0')}";
+                  return Text(
+                    "• $timeStr - ${play['song']} (${play['album']}) ${play['isFull'] ? '✅' : '⏸️'}",
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
+                  );
+                }),
+              ],
+
+              const SizedBox(height: 30),
+              const Divider(color: Colors.white24),
+
+              ElevatedButton.icon(
+                icon: const Icon(Icons.close),
+                label: const Text("Close Admin Panel"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.grey[700],
+                  minimumSize: const Size(double.infinity, 50),
+                ),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          );
+        },
       ),
     ),
   );
