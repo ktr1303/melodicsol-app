@@ -921,28 +921,44 @@ Future<void> _playSong(
   String? titleToPlay,
   String? artUrl,
 }) async {
-  print("🔥 _playSong → Album: '$albumName' | OriginalIndex: $originalSongIndex | fromQueue: $fromQueue | respectUnlocks: $respectUnlocks");
+  print("🔥 _playSong → Passed Album: '$albumName' | OriginalIndex: $originalSongIndex | fromQueue: $fromQueue");
 
   if (originalSongIndex < 0 || originalSongIndex >= _queue.length) return;
 
   final song = _queue[originalSongIndex];
 
-  // === IMPROVED ALBUM NAME DETECTION ===
+  // === BEST ALBUM NAME RESOLUTION ===
   String finalAlbumName = albumName;
 
-  if (finalAlbumName == "Unknown Album" || finalAlbumName.isEmpty || finalAlbumName == "Free Songs") {
-    finalAlbumName = (song['albumName'] ?? 
-                      song['album'] ?? 
-                      song['Album'] ?? 
-                      _selectedAlbum ?? 
-                      _currentAlbum ?? 
-                      "Unknown Album") as String;
+  if (finalAlbumName == "Free Songs" || finalAlbumName == "Unknown Album" || finalAlbumName.isEmpty) {
+    // Priority 1: Check if song carries its own album name
+    finalAlbumName = (song['albumName'] ?? song['album'] ?? song['Album'] ?? "") as String;
+
+    // Priority 2: Use current state
+    if (finalAlbumName.isEmpty) {
+      finalAlbumName = _currentAlbum ?? _selectedAlbum ?? "Unknown Album";
+    }
+
+    // Priority 3: Last resort - search in _albums
+    if (finalAlbumName == "Unknown Album") {
+      for (var entry in _albums.entries) {
+        final albumSongs = entry.value['songs'] as List<dynamic>? ?? [];
+        if (albumSongs.any((s) {
+          final sTitle = (s['title'] ?? s['Title'] ?? "") as String;
+          final songTitle = (song['title'] ?? song['Title'] ?? "") as String;
+          return sTitle == songTitle;
+        })) {
+          finalAlbumName = entry.key;
+          break;
+        }
+      }
+    }
   }
 
   final displayTitle = titleToPlay ?? 
       (song['title'] ?? song['Title'] ?? "Unknown Song") as String;
 
-  print("▶️ Playing: $displayTitle | Final Album: $finalAlbumName");
+  print("▶️ FINAL Playing → $displayTitle | Album: $finalAlbumName");
 
   // === SPECIAL FREE SONG CHECK (Works for both normal and fromQueue) ===
   bool songIsFree = false;
@@ -1881,6 +1897,8 @@ void _showLoadPlaylistDialog() {
 void _setupQueueAndTrackListener() {
   _sequenceSubscription?.cancel();
 
+  String? _lastLoggedSongTitle;   // ← Prevent duplicate logs
+
   _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((SequenceState? state) async {
     if (state == null) return;
 
@@ -1889,37 +1907,38 @@ void _setupQueueAndTrackListener() {
     if (currentIndex >= _queue.length || _queue.isEmpty) {
       print("🎵 Queue ended naturally → Stopping playback");
       _globalPlayer.stop();
-      setState(() {
-        _currentSongTitle = "Queue Ended";
-      });
+      setState(() => _currentSongTitle = "Queue Ended");
       return;
     }
 
     final song = _queue[currentIndex];
     final displayTitle = (song['title'] ?? song['Title'] ?? "Unknown Song") as String;
 
-    // === BEST ALBUM DETECTION ===
     String albumName = _currentAlbum ?? _selectedAlbum ?? "Unknown Album";
 
-    if (albumName == "Unknown Album" || albumName.isEmpty) {
+    if (albumName == "Free Songs" || albumName == "Unknown Album" || albumName.isEmpty) {
       albumName = (song['albumName'] ?? song['album'] ?? song['Album'] ?? "Unknown Album") as String;
     }
 
-    print("📊 Track Changed → Index: $currentIndex | Title: $displayTitle | Album: $albumName");
+    // === ONLY LOG ONCE PER SONG ===
+    if (displayTitle != _lastLoggedSongTitle) {
+      _lastLoggedSongTitle = displayTitle;
 
-    setState(() {
-      _currentSongIndex = currentIndex;
-      _currentSongTitle = displayTitle;
-    });
+      print("📊 Track Changed → Index: $currentIndex | Title: $displayTitle | Album: $albumName");
 
-    _nowPlayingNotifier.value = NowPlayingInfo(
-      title: displayTitle,
-      artUrl: song['artUrl'] ?? song['songArtUrl'] ?? _currentSongArtUrl,
-      index: currentIndex,
-    );
+      setState(() {
+        _currentSongIndex = currentIndex;
+        _currentSongTitle = displayTitle;
+      });
 
-    // Log with best possible album name
-    await _logSongPlay(song, albumName);
+      _nowPlayingNotifier.value = NowPlayingInfo(
+        title: displayTitle,
+        artUrl: song['artUrl'] ?? song['songArtUrl'] ?? _currentSongArtUrl,
+        index: currentIndex,
+      );
+
+      await _logSongPlay(song, albumName);
+    }
   });
 }
 
@@ -2755,55 +2774,69 @@ Expanded(
               : (emailUnlock
                   ? const Icon(Icons.email_outlined, color: Colors.blueAccent, size: 22)
                   : const Icon(Icons.lock, color: Color.fromARGB(137, 9, 204, 133), size: 20)),              
-          onTap: () async {
-            print("🔥 ALBUM DETAIL TAP → Album: $albumName | Index: $index");
+            onTap: () async {
+              print("🔥 ALBUM DETAIL TAP → Album: $albumName | Index: $index");
 
-            // === FREE SONG CHECK - MUST COME FIRST ===
-            final bool isFreeSong = isFree || 
-                                  (emailUnlock && _hasConfirmedEmail);
+              // === ALWAYS REBUILD QUEUE FIRST (Critical Fix) ===
+              final List<dynamic> albumSongs = songs;
+              setState(() {
+                _queue = albumSongs.map((s) {
+                  final songMap = Map<String, dynamic>.from(s as Map);
+                  songMap['albumName'] = albumName;        // Important for correct analytics
+                  return songMap;
+                }).toList();
+                _currentAlbum = albumName;
+                _selectedAlbum = albumName;
+                _isQueueMode = false;
+                _currentSongIndex = index;
+              });
 
-            if (isFreeSong) {
-              print("✅ Free song detected → Playing directly");
               final songData = songs[index] as Map<String, dynamic>;
-              await _playSong(
-                albumName,
-                index,
-                fromQueue: false,
-                respectUnlocks: true,
-                directUrl: songData['url'] as String?,
-                titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
-                artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
-              );
-              return;
-            }
 
-            // === Regular paid song flow ===
-            final bool actuallyUnlocked = await _isContentUnlocked(albumName);
+              // === FREE SONG CHECK - MUST COME FIRST ===
+              final bool isFreeSong = isFree ||
+                                    (emailUnlock && (_hasConfirmedEmail ?? false));
 
-            if (!actuallyUnlocked && emailUnlock) {
-              showDialog(
-                context: context,
-                barrierColor: Colors.transparent,
-                builder: (context) => UserInfoScreen(
-                  pendingAlbumName: albumName,
-                  pendingSongIndex: index,
-                ),
-              );
-            } else if (!actuallyUnlocked) {
-              _showPaywall(albumName);
-            } else {
-              final songData = songs[index] as Map<String, dynamic>;
-              await _playSong(
-                albumName,
-                index,
-                fromQueue: false,
-                respectUnlocks: false,
-                directUrl: songData['url'] as String?,
-                titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
-                artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
-              );
-            }
-          },
+              if (isFreeSong) {
+                print("✅ Free song detected → Playing directly");
+                await _playSong(
+                  albumName,
+                  index,
+                  fromQueue: false,
+                  respectUnlocks: true,
+                  directUrl: songData['url'] as String?,
+                  titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
+                  artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
+                );
+                return;
+              }
+
+              // === Regular paid song flow ===
+              final bool actuallyUnlocked = await _isContentUnlocked(albumName);
+
+              if (!actuallyUnlocked && emailUnlock) {
+                showDialog(
+                  context: context,
+                  barrierColor: Colors.transparent,
+                  builder: (context) => UserInfoScreen(
+                    pendingAlbumName: albumName,
+                    pendingSongIndex: index,
+                  ),
+                );
+              } else if (!actuallyUnlocked) {
+                _showPaywall(albumName);
+              } else {
+                await _playSong(
+                  albumName,
+                  index,
+                  fromQueue: false,
+                  respectUnlocks: false,
+                  directUrl: songData['url'] as String?,
+                  titleToPlay: songData['Title'] as String? ?? songData['title'] as String?,
+                  artUrl: songData['artUrl'] as String? ?? songData['songArtUrl'] as String?,
+                );
+              }
+            },
           onLongPress: () => _showSongOptions(song, albumName, index),
         );
       },
