@@ -4070,7 +4070,7 @@ void _showAlbumStory(String startingAlbumName) {
           return SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,   // Changed to center
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 const SizedBox(height: 12),
                 // Drag Handle
@@ -4129,35 +4129,52 @@ void _showAlbumStory(String startingAlbumName) {
                 ),
                 const SizedBox(height: 20),
 
-                // === CLICKABLE CENTERED ALBUM TITLE ===
+                // === CLICKABLE ALBUM TITLE → Opens Album Selector ===
                 GestureDetector(
-                  onTap: () {
-                    Navigator.pop(context); // Close story modal
-
-                    setState(() {
-                      _selectedAlbum = albumName;
-                      _currentAlbumSongs = (_albums[albumName]?['songs'] as List<dynamic>? ?? [])
-                          .map((s) => Map<String, dynamic>.from(s as Map))
-                          .toList();
-                    });
-
-                    // Navigate to Page 1 (Album Detail Page)
-                    _pageController.jumpToPage(1);
-
-                    // Extra safety rebuild
-                    Future.delayed(const Duration(milliseconds: 200), () {
-                      if (mounted) setState(() {});
-                    });
-
-                    print("✅ Navigated to album detail page (Page 1): $albumName");
-                  },
+                  onTap: () => _showAlbumSelector(),
                   child: Text(
                     displayName,
                     style: _getAlbumFont(albumName).copyWith(fontSize: 28),
                     textAlign: TextAlign.center,
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 24),
+
+                // === NEW ACTION BUTTONS ===
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Add Album to Queue
+                    ElevatedButton.icon(
+                      onPressed: () => _addAlbumToQueue(albumName),
+                      icon: const Icon(Icons.playlist_add),
+                      label: const Text("Add to Queue"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.grey[800],
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // See Songs
+                    // === See Songs Button ===
+                    // See Songs Button
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context); // Close story modal
+                        _showFirstSongStory(albumName);
+                      },
+                      icon: const Icon(Icons.music_note),
+                      label: const Text("See Songs"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: themeColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 32),
 
                 // Story Text
                 Text(
@@ -4167,7 +4184,7 @@ void _showAlbumStory(String startingAlbumName) {
                 ),
                 const SizedBox(height: 40),
 
-                // === BUY THIS ALBUM BUTTON ===
+                // Buy Button
                 if (canPurchaseIndividually)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
@@ -4195,6 +4212,149 @@ void _showAlbumStory(String startingAlbumName) {
       ),
     ),
   );
+}
+
+void _showFirstSongStory(String albumName) {
+  final album = _albums[albumName];
+  if (album == null) return;
+
+  final songs = album['songs'] as List<dynamic>? ?? [];
+  if (songs.isEmpty) return;
+
+  // Find the first song index (usually 0)
+  final firstSongIndex = 0;
+
+  setState(() {
+    _selectedAlbum = albumName;
+    _currentAlbum = albumName;
+    _currentAlbumSongs = songs.map((s) => Map<String, dynamic>.from(s as Map)).toList();
+  });
+
+  // Navigate to Album Detail Page first
+  _pageController.jumpToPage(1);
+
+  // Then open the first song's story
+  Future.delayed(const Duration(milliseconds: 400), () {
+    if (mounted) {
+      _showSongStory(albumName, firstSongIndex);   // ← Now passing int index
+    }
+  });
+}
+
+void _showAlbumSelector() {
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: Colors.grey[900],
+      title: const Text("Select Album", style: TextStyle(color: Colors.white)),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 560,                    // Increased height for safety
+        child: GridView.builder(
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            childAspectRatio: 0.72,      // Better aspect ratio
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 16,
+          ),
+          itemCount: _albums.length,
+          itemBuilder: (context, index) {
+            final albumName = _albums.keys.elementAt(index);
+            final album = _albums[albumName]!;
+            final artUrl = album['artUrl'] as String? ?? '';
+            final displayName = _getAlbumDisplayName(albumName);
+
+            return GestureDetector(
+              onTap: () {
+                Navigator.pop(context); // Close selector
+                Navigator.pop(context); // Close current story
+                Future.delayed(const Duration(milliseconds: 150), () {
+                  _showAlbumStory(albumName);
+                });
+              },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // Album Art
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: SizedBox(
+                      height: 132,
+                      width: double.infinity,
+                      child: artUrl.isNotEmpty
+                          ? CachedNetworkImage(
+                              imageUrl: artUrl,
+                              fit: BoxFit.cover,
+                              placeholder: (_, __) => Container(
+                                color: Colors.grey[800],
+                                child: const Center(child: CircularProgressIndicator()),
+                              ),
+                              errorWidget: (_, __, ___) => Container(
+                                color: Colors.grey[800],
+                                child: const Icon(Icons.broken_image, size: 50, color: Colors.white38),
+                              ),
+                            )
+                          : Container(
+                              color: Colors.grey[800],
+                              child: const Icon(Icons.album, size: 55, color: Colors.white38),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Album Title with Google Font
+                  Text(
+                    displayName,
+                    style: _getAlbumFont(albumName).copyWith(fontSize: 14.5),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Close")),
+      ],
+    ),
+  );
+}
+
+// 2. Add entire album to queue
+void _addAlbumToQueue(String albumName) {
+  final album = _albums[albumName];
+  if (album == null) return;
+
+  final albumSongs = (album['songs'] as List<dynamic>? ?? []).map((s) {
+    final songMap = Map<String, dynamic>.from(s as Map);
+    songMap['albumName'] = albumName;
+    return songMap;
+  }).toList();
+
+  setState(() {
+    _queue.addAll(albumSongs);
+  });
+
+  Navigator.pop(context); // Close story
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text("Added $albumName to queue (${albumSongs.length} songs)")),
+  );
+}
+
+// 3. Navigate to album detail page
+void _navigateToAlbumDetail(String albumName) {
+  setState(() {
+    _selectedAlbum = albumName;
+    _currentAlbum = albumName;
+    _currentAlbumSongs = (_albums[albumName]?['songs'] as List<dynamic>? ?? [])
+        .map((s) => Map<String, dynamic>.from(s as Map))
+        .toList();
+  });
+
+  _pageController.jumpToPage(1); // Album Detail Page
 }
 
 void _showFullScreenImage(String imageUrl, String albumName) {
@@ -4836,14 +4996,13 @@ void _showSongStory(String albumName, int startingSongIndex) {
         itemBuilder: (context, index) {
           final song = songs[index] as Map<String, dynamic>;
 
-          // Robust title extraction (matches your song list)
           final String title = song['Title'] as String? ??
                              song['title'] as String? ??
                              song['name'] as String? ??
                              'Unknown Song';
 
-          final String story = song['story'] as String? ?? 
-                             song['Story'] as String? ?? 
+          final String story = song['story'] as String? ??
+                             song['Story'] as String? ??
                              "Story coming soon for $title...";
 
           final String songArtUrl = song['artUrl'] as String? ??
@@ -4888,18 +5047,17 @@ void _showSongStory(String albumName, int startingSongIndex) {
 
                 const SizedBox(height: 24),
 
-                // Song Title - Now using correct key
+                // Song Title
                 Text(
                   title,
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: themeColor),
                   textAlign: TextAlign.center,
                 ),
-
                 const SizedBox(height: 28),
 
                 // Story Text
                 SizedBox(
-                  height: 280,
+                  height: 260,
                   child: SingleChildScrollView(
                     child: Text(
                       story,
@@ -4908,68 +5066,106 @@ void _showSongStory(String albumName, int startingSongIndex) {
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 30),
 
-                // === Play Now Button - Respects All Unlock Logic ===
+                // === ACTION BUTTONS ===
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
-                  child: ElevatedButton.icon(
-                    onPressed: () async {
-                      final song = songs[index] as Map<String, dynamic>;
-                      final isFree = song['isFree'] as bool? ?? false;
-                      final emailUnlock = song['emailUnlock'] as bool? ?? false;
-                      final bool isUnlockedByEmail = emailUnlock && _hasConfirmedEmail;
+                  child: Row(
+                    children: [
+                      // Play Now Button
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () async { /* Your existing Play Now logic */ 
+                            final song = songs[index] as Map<String, dynamic>;
+                            final isFree = song['isFree'] as bool? ?? false;
+                            final emailUnlock = song['emailUnlock'] as bool? ?? false;
+                            final bool isUnlockedByEmail = emailUnlock && _hasConfirmedEmail;
+                            final bool isFreeSong = isFree || isUnlockedByEmail;
 
-                      // === FREE SONG CHECK ===
-                      final bool isFreeSong = isFree || isUnlockedByEmail;
+                            if (isFreeSong) {
+                              print("✅ Play Now → Free song playing directly");
+                              await _playSong(
+                                albumName, index, fromQueue: false, respectUnlocks: true,
+                                directUrl: song['url'] as String?,
+                                titleToPlay: song['Title'] as String? ?? song['title'] as String?,
+                                artUrl: song['artUrl'] as String? ?? song['songArtUrl'] as String?,
+                              );
+                              return;
+                            }
 
-                      if (isFreeSong) {
-                        print("✅ Play Now → Free song playing directly");
-                        await _playSong(
-                          albumName,
-                          index,
-                          fromQueue: false,
-                          respectUnlocks: true,
-                          directUrl: song['url'] as String?,
-                          titleToPlay: song['Title'] as String? ?? song['title'] as String?,
-                          artUrl: song['artUrl'] as String? ?? song['songArtUrl'] as String?,
-                        );
-                        return;
-                      }
+                            final bool actuallyUnlocked = await _isContentUnlocked(albumName);
+                            if (!actuallyUnlocked) {
+                              Navigator.pop(context);
+                              _showPaywall(albumName);
+                            } else {
+                              await _playSong(
+                                albumName, index, fromQueue: false, respectUnlocks: false,
+                                directUrl: song['url'] as String?,
+                                titleToPlay: song['Title'] as String? ?? song['title'] as String?,
+                                artUrl: song['artUrl'] as String? ?? song['songArtUrl'] as String?,
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.play_arrow, color: Colors.black),
+                          label: const Text("Play Now"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.greenAccent,
+                            foregroundColor: Colors.black87,
+                            minimumSize: const Size(double.infinity, 62),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
 
-                      // === Check if user has access ===
-                      final bool actuallyUnlocked = await _isContentUnlocked(albumName);
+                      // === NEW: Add Song to Queue Button ===
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            final currentSong = songs[index] as Map<String, dynamic>;
+                            final songMap = Map<String, dynamic>.from(currentSong);
+                            songMap['albumName'] = albumName;
 
-                      if (!actuallyUnlocked) {
-                        print("🔒 Play Now blocked - Album locked");
-                        Navigator.pop(context); // Close story
-                        _showPaywall(albumName); // Show paywall
-                      } else {
-                        print("✅ Play Now → Playing unlocked song");
-                        await _playSong(
-                          albumName,
-                          index,
-                          fromQueue: false,
-                          respectUnlocks: false,
-                          directUrl: song['url'] as String?,
-                          titleToPlay: song['Title'] as String? ?? song['title'] as String?,
-                          artUrl: song['artUrl'] as String? ?? song['songArtUrl'] as String?,
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.play_arrow, color: Colors.black),
-                    label: const Text("Play Now"),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.greenAccent,
-                      foregroundColor: Colors.black87,
-                      minimumSize: const Size(double.infinity, 62),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    ),
+                            final bool wasEmpty = _queue.isEmpty;
+
+                            setState(() {
+                              _queue.add(songMap);
+                            });
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text("Added '$title' to queue"),
+                                backgroundColor: Colors.blueAccent,
+                              ),
+                            );
+
+                            // === AUTO PLAY IF QUEUE WAS EMPTY ===
+                            if (wasEmpty) {
+                              Future.delayed(const Duration(milliseconds: 300), () {
+                                _playSong(
+                                  albumName,
+                                  _queue.length - 1,   // Play the song we just added
+                                  fromQueue: true,
+                                );
+                              });
+                            }
+                          },
+                          icon: const Icon(Icons.playlist_add),
+                          label: const Text("Add to Queue"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.grey[800],
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(double.infinity, 62),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
 
-                // Buy Album Button
+                // Buy Album Button (kept unchanged)
                 if (_albums[albumName]?['canPurchaseIndividually'] == true)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
