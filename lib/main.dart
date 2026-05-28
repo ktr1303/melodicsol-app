@@ -656,16 +656,17 @@ void _createNewPlaylist(String name) async {
     "songs": <Map<String, dynamic>>[],
   };
 
-  setState(() => _playlists.add(newPlaylist));
+  setState(() {
+    _playlists.add(newPlaylist);
+  });
 
-  // Await the save to ensure it completes
-  await _savePlaylists();
+  await _savePlaylists();  // ← Critical: await
 
   ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text("Playlist '$name' created"))
+    SnackBar(content: Text("Playlist '$name' created")),
   );
 
-  print("✅ New playlist created and saved: $name");
+  print("✅ Playlist '$name' created and saved (${_playlists.length} total)");
 }
 
   void _addSongToPlaylist(String playlistId, Map<String, dynamic> song, String albumName) {
@@ -736,40 +737,31 @@ void _playPlaylist(String playlistId) {
   );
 }
 
-Future<void> _logSongPlay({
-  required String songTitle,
-  required String albumName,
-  bool isFree = false,
-  double completionPercentage = 0.0,   // 0.0 to 1.0
-}) async {
+Future<void> _logSongPlay(Map<String, dynamic> song, String albumName) async {
   try {
-    final bool isFullPlay = completionPercentage >= 0.85; // Consider 85%+ as full play
+    final String title = (song['title'] ?? song['Title'] ?? 'Unknown Song') as String;
+    final bool isFree = song['isFree'] as bool? ?? false;
+    final bool isEmailUnlock = song['emailUnlock'] as bool? ?? false;
 
-    await analytics.logEvent(
+    final parameters = {
+      'song_title': title,
+      'album_name': albumName,
+      'is_free': isFree ? 'true' : 'false',
+      'is_email_unlock': isEmailUnlock ? 'true' : 'false',
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    };
+
+    print("🔥 ATTEMPTING TO LOG: $title from $albumName");   // ← Extra debug
+
+    await FirebaseAnalytics.instance.logEvent(
       name: 'song_play',
-      parameters: {
-        'song_title': songTitle,
-        'album_name': albumName,
-        'is_free': isFree,
-        'completion_percentage': completionPercentage,
-        'is_full_play': isFullPlay,
-      },
+      parameters: parameters,
     );
 
-    // Save detailed record to Firestore
-    await FirebaseFirestore.instance.collection('song_plays').add({
-      'song_title': songTitle,
-      'album_name': albumName,
-      'is_free': isFree,
-      'completion_percentage': completionPercentage,
-      'is_full_play': isFullPlay,
-      'played_at': FieldValue.serverTimestamp(),
-      'user_id': FirebaseAuth.instance.currentUser?.uid ?? 'anonymous',
-    });
-
-    print("📊 Logged play → $songTitle ($albumName) | ${isFullPlay ? 'FULL' : 'PARTIAL'}");
-  } catch (e) {
-    print("❌ Failed to log song play: $e");
+    print("✅ SUCCESS: Logged song_play → $title ($albumName)");
+  } catch (e, stack) {
+    print("❌ FAILED to log song_play: $e");
+    print(stack);
   }
 }
 
@@ -1022,29 +1014,27 @@ Future<void> _playSong(
 
     await _globalPlayer.play();
 
-        // Log the song play for analytics
+        final displayTitle = titleToPlay ??
+      (_queue.isNotEmpty && _currentSongIndex < _queue.length 
+        ? (_queue[_currentSongIndex]['title'] ?? _queue[_currentSongIndex]['Title'] ?? "Unknown") 
+        : "Unknown Song");
+
+                // Log the song play for analytics
     if (_queue.isNotEmpty) {
       final currentSong = _queue[_currentSongIndex.clamp(0, _queue.length - 1)];
       final title = (currentSong['title'] ?? currentSong['Title'] ?? "Unknown") as String;
       final isFree = currentSong['isFree'] as bool? ?? false;
 
-      await _logSongPlay(
-        songTitle: title,
-        albumName: albumName,
-        isFree: isFree,
-      );
-    }
 
-    final displayTitle = titleToPlay ??
-      (_queue.isNotEmpty && _currentSongIndex < _queue.length 
-        ? (_queue[_currentSongIndex]['title'] ?? _queue[_currentSongIndex]['Title'] ?? "Unknown") 
-        : "Unknown Song");
-
-    _nowPlayingNotifier.value = NowPlayingInfo(
+          _nowPlayingNotifier.value = NowPlayingInfo(
       title: displayTitle,
       artUrl: artUrl,
       index: fromQueue ? originalSongIndex : 0,
-    );
+    );  
+  }
+
+
+
 
     setState(() {
       _currentAlbum = albumName;
@@ -1192,7 +1182,7 @@ Future<void> _showMainAlbumTutorial() async {
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       content: const Text(
-        "Tap any Album Title\n"
+        "Tap Albums = Explore\n"
         "\n"
         "Swipe left = queue page\n"
         "Swipe right = internet",
@@ -1226,16 +1216,13 @@ Future<void> _showAlbumDetailTutorial() async {
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       content: const Text(
-        "Song Options\n"
-        "• Tap songs to play music\n"
-        "• Tap rotating art for stories\n"
-        "• Tap Title for Album\n"        
+        "Tap\n"
+        "•songs = music\n"
+        "•art = stories\n"
+        "•Title = Albums\n"        
         "\n"
-        "Long Press Options\n"
-        "• View Song Story\n"
-        "• Play next\n"
-        "• Add to queue\n"
-        "• Add to playlist\n"
+        "Long Press\n"
+        "• Plynxt,queue,stories,etc..\n"
         "",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
@@ -1790,18 +1777,20 @@ void _showLoadPlaylistDialog() {
           if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
+
           final prefs = snapshot.data!;
-
-          // Load from the correct key used by _savePlaylists()
           final String? jsonString = prefs.getString('playlists');
-          List<dynamic> loadedPlaylists = [];
 
+          List<dynamic> loadedPlaylists = [];
           if (jsonString != null && jsonString.isNotEmpty) {
             try {
               loadedPlaylists = jsonDecode(jsonString);
+              print("📂 Loaded ${loadedPlaylists.length} playlists for dialog");
             } catch (e) {
               print("❌ Error decoding playlists: $e");
             }
+          } else {
+            print("📂 No saved playlists found in storage");
           }
 
           return AlertDialog(
@@ -1821,29 +1810,28 @@ void _showLoadPlaylistDialog() {
 
                         return ListTile(
                           title: Text(name, style: const TextStyle(color: Colors.white)),
-                          subtitle: Text(
-                            "${(playlist["songs"] as List? ?? []).length} songs",
-                            style: const TextStyle(color: Colors.white54),
-                          ),
+                          subtitle: Text("${(playlist["songs"] as List? ?? []).length} songs",
+                              style: const TextStyle(color: Colors.white54)),
                           trailing: IconButton(
                             icon: const Icon(Icons.delete, color: Colors.redAccent),
                             onPressed: () async {
                               final confirm = await showDialog<bool>(
                                 context: context,
                                 builder: (c) => AlertDialog(
-                                  backgroundColor: Colors.grey[900],
-                                  title: Text("Delete '$name'?"),
+                                  title: const Text("Delete Playlist?"),
                                   actions: [
                                     TextButton(onPressed: () => Navigator.pop(c, false), child: const Text("Cancel")),
                                     TextButton(onPressed: () => Navigator.pop(c, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
                                   ],
                                 ),
                               );
-                              if (confirm == true) {
-                                loadedPlaylists.removeAt(index);
-                                await prefs.setString('playlists', jsonEncode(loadedPlaylists));
+
+                              if (confirm == true && id != null) {
+                                final updated = List<dynamic>.from(loadedPlaylists);
+                                updated.removeAt(index);
+                                await prefs.setString('playlists', jsonEncode(updated));
                                 Navigator.pop(context);
-                                _showLoadPlaylistDialog(); // refresh
+                                _showLoadPlaylistDialog(); // Refresh dialog
                               }
                             },
                           ),
@@ -1870,7 +1858,7 @@ void _showLoadPlaylistDialog() {
 void _setupQueueAndTrackListener() {
   _sequenceSubscription?.cancel();
 
-  _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((SequenceState? state) {
+  _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((SequenceState? state) async {  // ← Added 'async'
     if (state == null) return;
 
     final currentIndex = state.currentIndex ?? 0;
@@ -1886,6 +1874,7 @@ void _setupQueueAndTrackListener() {
 
     final song = _queue[currentIndex];
     final displayTitle = (song['title'] ?? song['Title'] ?? "Unknown Song") as String;
+    final albumName = _selectedAlbum ?? "Unknown Album";
 
     print("📊 Track Changed → Player Index: $currentIndex | Title: $displayTitle");
 
@@ -1899,6 +1888,9 @@ void _setupQueueAndTrackListener() {
       artUrl: song['artUrl'] ?? song['songArtUrl'] ?? _currentSongArtUrl,
       index: currentIndex,
     );
+
+    // === LOG SONG PLAY TO ANALYTICS ===
+    await _logSongPlay(song, albumName);
   });
 }
 
@@ -2882,21 +2874,25 @@ void _saveQueueAsPlaylist() {
         ElevatedButton(
           onPressed: () async {
             final name = controller.text.trim();
-            if (name.isEmpty) return;
-
-            final prefs = await SharedPreferences.getInstance();
-            List<String> names = prefs.getStringList('playlist_names') ?? [];
-
-            if (names.contains(name)) {
+            if (name.isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Playlist name already exists")),
+                const SnackBar(content: Text("Please enter a name")),
               );
               return;
             }
 
-            names.add(name);
-            await prefs.setStringList('playlist_names', names);
-            await prefs.setString('playlist_$name', jsonEncode(_queue));
+            // Create consistent playlist object
+            final newPlaylist = {
+              "id": DateTime.now().millisecondsSinceEpoch.toString(),
+              "name": name,
+              "songs": _queue.map((song) => Map<String, dynamic>.from(song)).toList(),
+            };
+
+            setState(() {
+              _playlists.add(newPlaylist);
+            });
+
+            await _savePlaylists();  // Use the unified save method
 
             Navigator.pop(context);
 
@@ -2906,6 +2902,8 @@ void _saveQueueAsPlaylist() {
                 backgroundColor: Colors.green,
               ),
             );
+
+            print("✅ Queue saved as playlist: $name");
           },
           child: const Text("Save"),
         ),
@@ -3295,7 +3293,7 @@ Widget _buildPlaylistsPage() {
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.add, size: 20),
                       label: const Text("New Playlist"),
-                      onPressed: _showCreatePlaylistDialog,
+                      onPressed: () => _showCreatePlaylistDialog(),   // Keep the dialog for name input
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.white.withOpacity(0.12),
                         foregroundColor: Colors.white,
@@ -3673,7 +3671,7 @@ void _showCreatePlaylistDialog() {
     context: context,
     builder: (context) => AlertDialog(
       backgroundColor: Colors.grey[900],
-      title: const Text("Create New Playlist", style: TextStyle(color: Colors.white)),
+      title: const Text("New Playlist", style: TextStyle(color: Colors.white)),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -3685,53 +3683,32 @@ void _showCreatePlaylistDialog() {
               hintStyle: TextStyle(color: Colors.white54),
             ),
           ),
-          const SizedBox(height: 20),
-
-          // Option to save current queue
-          if (_queue.isNotEmpty)
-            ListTile(
-              leading: const Icon(Icons.queue_music, color: Colors.orangeAccent),
-              title: const Text("Save Queue", 
-                style: TextStyle(color: Colors.white)),
-              subtitle: Text("${_queue.length} songs", style: const TextStyle(color: Colors.white70)),
-              onTap: () async {
-                final name = controller.text.trim();
-                if (name.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Please enter a playlist name")),
-                  );
-                  return;
-                }
-
-                final prefs = await SharedPreferences.getInstance();
-                List<String> names = prefs.getStringList('playlist_names') ?? [];
-
-                if (names.contains(name)) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Name already exists")),
-                  );
-                  return;
-                }
-
-                names.add(name);
-                await prefs.setStringList('playlist_names', names);
-                await prefs.setString('playlist_$name', jsonEncode(_queue));
-
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("Queue saved as '$name'"), backgroundColor: Colors.green),
-                );
-              },
-            ),
+          const SizedBox(height: 16),
+          const Text(
+            "What would you like to do?",
+            style: TextStyle(color: Colors.white70),
+          ),
         ],
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text("Cancel", style: TextStyle(color: Colors.white70)),
+          child: const Text("Cancel"),
         ),
+        // Option 1: Create Empty Playlist
+        TextButton(
+          onPressed: () {
+            final name = controller.text.trim();
+            if (name.isNotEmpty) {
+              _createNewPlaylist(name);
+              Navigator.pop(context);
+            }
+          },
+          child: const Text("Create Empty"),
+        ),
+        // Option 2: Save Current Queue as Playlist
         ElevatedButton(
-          onPressed: () async {
+          onPressed: () {
             final name = controller.text.trim();
             if (name.isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -3740,26 +3717,36 @@ void _showCreatePlaylistDialog() {
               return;
             }
 
-            final prefs = await SharedPreferences.getInstance();
-            List<String> names = prefs.getStringList('playlist_names') ?? [];
-
-            if (names.contains(name)) {
+            if (_queue.isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Name already exists")),
+                const SnackBar(content: Text("Queue is empty")),
               );
               return;
             }
 
-            names.add(name);
-            await prefs.setStringList('playlist_names', names);
-            await prefs.setString('playlist_$name', jsonEncode([])); // empty playlist
+            // Save current queue as new playlist
+            final newPlaylist = {
+              "id": DateTime.now().millisecondsSinceEpoch.toString(),
+              "name": name,
+              "songs": _queue.map((song) => Map<String, dynamic>.from(song)).toList(),
+            };
+
+            setState(() {
+              _playlists.add(newPlaylist);
+            });
+
+            _savePlaylists();
 
             Navigator.pop(context);
+
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Playlist '$name' created"), backgroundColor: Colors.green),
+              SnackBar(
+                content: Text("Queue saved as '$name'"),
+                backgroundColor: Colors.green,
+              ),
             );
           },
-          child: const Text("Create Empty"),
+          child: const Text("Save Current Queue"),
         ),
       ],
     ),
@@ -4021,7 +4008,7 @@ void _showAlbumStory(String startingAlbumName) {
           return SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,   // Changed to center
               children: [
                 const SizedBox(height: 12),
                 // Drag Handle
@@ -4035,7 +4022,6 @@ void _showAlbumStory(String startingAlbumName) {
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 8),
 
                 // Back to Songlist Button
@@ -4051,7 +4037,6 @@ void _showAlbumStory(String startingAlbumName) {
                     onPressed: () => Navigator.pop(context),
                   ),
                 ),
-
                 const SizedBox(height: 16),
 
                 // Clickable Album Art
@@ -4082,11 +4067,33 @@ void _showAlbumStory(String startingAlbumName) {
                 ),
                 const SizedBox(height: 20),
 
-                // Album Title
-                Text(
-                  displayName,
-                  style: _getAlbumFont(albumName).copyWith(fontSize: 28),
-                  textAlign: TextAlign.center,
+                // === CLICKABLE CENTERED ALBUM TITLE ===
+                GestureDetector(
+                  onTap: () {
+                    Navigator.pop(context); // Close story modal
+
+                    setState(() {
+                      _selectedAlbum = albumName;
+                      _currentAlbumSongs = (_albums[albumName]?['songs'] as List<dynamic>? ?? [])
+                          .map((s) => Map<String, dynamic>.from(s as Map))
+                          .toList();
+                    });
+
+                    // Navigate to Page 1 (Album Detail Page)
+                    _pageController.jumpToPage(1);
+
+                    // Extra safety rebuild
+                    Future.delayed(const Duration(milliseconds: 200), () {
+                      if (mounted) setState(() {});
+                    });
+
+                    print("✅ Navigated to album detail page (Page 1): $albumName");
+                  },
+                  child: Text(
+                    displayName,
+                    style: _getAlbumFont(albumName).copyWith(fontSize: 28),
+                    textAlign: TextAlign.center,
+                  ),
                 ),
                 const SizedBox(height: 20),
 
@@ -4098,7 +4105,7 @@ void _showAlbumStory(String startingAlbumName) {
                 ),
                 const SizedBox(height: 40),
 
-                // === BUY THIS ALBUM BUTTON (Now uses album theme color) ===
+                // === BUY THIS ALBUM BUTTON ===
                 if (canPurchaseIndividually)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
@@ -4108,7 +4115,7 @@ void _showAlbumStory(String startingAlbumName) {
                         _showPaywall(albumName);
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: themeColor,           // ← Now uses album theme color
+                        backgroundColor: themeColor,
                         foregroundColor: Colors.white,
                         minimumSize: const Size(double.infinity, 62),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -4487,107 +4494,103 @@ void _showExpandedDebugPanel() {
   );
 }
 
-void _showAdminPanel() {
-  showModalBottomSheet(
+Future<void> _showAdminPanel() async {
+  showDialog(
     context: context,
-    backgroundColor: Colors.grey[850],
-    isScrollControlled: true,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-    ),
-    builder: (context) => DraggableScrollableSheet(
-      initialChildSize: 0.85,
-      minChildSize: 0.6,
-      maxChildSize: 0.95,
-      builder: (context, scrollController) => FutureBuilder<Map<String, dynamic>>(
-        future: _getPlayStats(),
-        builder: (context, snapshot) {
-          final stats = snapshot.data ?? {};
+    builder: (context) => AlertDialog(
+      backgroundColor: Colors.grey[900],
+      title: const Text("Admin Panel - Song Stats", 
+          style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 420,
+        child: FutureBuilder<Map<String, dynamic>>(
+          future: _getPlayStats(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator(color: Colors.greenAccent));
+            }
 
-          return ListView(
-            controller: scrollController,
-            padding: const EdgeInsets.all(20),
-            children: [
-              const Text("🔐 Admin Panel",
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
-              const SizedBox(height: 8),
-              const Text("Real-time stats & livestream control",
-                  style: TextStyle(color: Colors.white54)),
-
-              const Divider(color: Colors.white24, height: 30),
-
-              // Refresh Stats Button
-              ElevatedButton.icon(
-                icon: const Icon(Icons.refresh, color: Colors.white),
-                label: const Text("Refresh Stats"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blueAccent,
-                  minimumSize: const Size(double.infinity, 52),
+            if (!snapshot.hasData || snapshot.data!.isEmpty) {
+              return const Center(
+                child: Text(
+                  "No song plays recorded yet.\n\nPlay some songs to see stats here.",
+                  style: TextStyle(color: Colors.white70, fontSize: 16),
+                  textAlign: TextAlign.center,
                 ),
-                onPressed: () {
-                  // This forces the FutureBuilder to re-run
-                  setState(() {});
-                },
+              );
+            }
+
+            final stats = snapshot.data!;
+
+            return SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Today's Summary
+                  Text("📅 Today's Plays: ${stats['todayPlays'] ?? 0}", 
+                       style: const TextStyle(color: Colors.greenAccent, fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Text("🎯 Full Plays Today: ${stats['todayFullPlays'] ?? 0}", 
+                       style: const TextStyle(color: Colors.white70, fontSize: 16)),
+
+                  const SizedBox(height: 20),
+                  const Divider(color: Colors.white24),
+
+                  // Top Songs
+                  const Text("🔥 Top Songs (All Time)", 
+                       style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  ...(stats['topSongs'] as List<dynamic>? ?? []).take(8).map((entry) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(child: Text(entry['title'] ?? 'Unknown', style: const TextStyle(color: Colors.white70))),
+                          Text("${entry['count']} plays", style: const TextStyle(color: Colors.white)),
+                        ],
+                      ),
+                    );
+                  }),
+
+                  const SizedBox(height: 20),
+                  const Divider(color: Colors.white24),
+
+                  // Recent Plays
+                  const Text("🕒 Recent Plays", 
+                       style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  ...(stats['recentPlays'] as List<dynamic>? ?? []).map((play) {
+                    final time = DateTime.fromMillisecondsSinceEpoch((play['timestamp'] as num).toInt());
+                    return ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(play['song_title'] ?? 'Unknown', style: const TextStyle(color: Colors.white, fontSize: 15)),
+                      subtitle: Text(play['album_name'] ?? '', style: const TextStyle(color: Colors.white54, fontSize: 13)),
+                      trailing: Text("${time.hour}:${time.minute.toString().padLeft(2, '0')}", 
+                                   style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                    );
+                  }),
+                ],
               ),
-
-
-              const SizedBox(height: 30),
-              const Divider(color: Colors.white24),
-
-              // Statistics
-              const Text("📊 Play Statistics", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-
-              if (snapshot.connectionState == ConnectionState.waiting)
-                const Center(child: CircularProgressIndicator())
-              else ...[
-                const SizedBox(height: 12),
-                Text("Today: ${stats['todayPlays'] ?? 0} plays (${stats['todayFullPlays'] ?? 0} full)",
-                    style: const TextStyle(fontSize: 16, color: Colors.greenAccent)),
-                Text("All-Time: ${stats['allTimePlays'] ?? 0} plays (${stats['allTimeFullPlays'] ?? 0} full)",
-                    style: const TextStyle(fontSize: 16, color: Colors.white70)),
-
-                const SizedBox(height: 20),
-
-                const Text("Top Songs (All-Time)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.greenAccent)),
-                ...((stats['topSongs'] as List?) ?? []).map((e) => 
-                  Text("• ${e.key} (${e.value} plays)", style: const TextStyle(color: Colors.white70))
-                ),
-
-                const SizedBox(height: 16),
-
-                const Text("Top Albums (All-Time)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.greenAccent)),
-                ...((stats['topAlbums'] as List?) ?? []).map((e) => 
-                  Text("• ${e.key} (${e.value} plays)", style: const TextStyle(color: Colors.white70))
-                ),
-
-                const SizedBox(height: 20),
-                const Text("Recent Plays", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                ...((stats['recentPlays'] as List?) ?? []).map((play) {
-                  final time = (play['time'] as DateTime).toLocal();
-                  final timeStr = "${time.hour}:${time.minute.toString().padLeft(2, '0')}";
-                  return Text(
-                    "• $timeStr - ${play['song']} (${play['album']}) ${play['isFull'] ? '✅' : '⏸️'}",
-                    style: const TextStyle(color: Colors.white70, fontSize: 14),
-                  );
-                }),
-              ],
-
-              const SizedBox(height: 30),
-              const Divider(color: Colors.white24),
-
-              ElevatedButton.icon(
-                icon: const Icon(Icons.close),
-                label: const Text("Close Admin Panel"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.grey[700],
-                  minimumSize: const Size(double.infinity, 50),
-                ),
-                onPressed: () => Navigator.pop(context),
-              ),
-            ],
-          );
-        },
+            );
+          },
+        ),
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text("Close"),
+        ),
+        TextButton(
+          onPressed: () {
+            Navigator.pop(context);
+            _showAdminPanel(); // Refresh
+          },
+          child: const Text("Refresh"),
+        ),
+      ],
     ),
   );
 }
