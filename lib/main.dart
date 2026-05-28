@@ -923,12 +923,32 @@ Future<void> _playSong(
 }) async {
   print("🔥 _playSong → Album: '$albumName' | OriginalIndex: $originalSongIndex | fromQueue: $fromQueue | respectUnlocks: $respectUnlocks");
 
-// === SPECIAL FREE SONG CHECK (Works for both normal and fromQueue) ===
-  bool songIsFree = false;
+  if (originalSongIndex < 0 || originalSongIndex >= _queue.length) return;
 
+  final song = _queue[originalSongIndex];
+
+  // === IMPROVED ALBUM NAME DETECTION ===
+  String finalAlbumName = albumName;
+
+  if (finalAlbumName == "Unknown Album" || finalAlbumName.isEmpty || finalAlbumName == "Free Songs") {
+    finalAlbumName = (song['albumName'] ?? 
+                      song['album'] ?? 
+                      song['Album'] ?? 
+                      _selectedAlbum ?? 
+                      _currentAlbum ?? 
+                      "Unknown Album") as String;
+  }
+
+  final displayTitle = titleToPlay ?? 
+      (song['title'] ?? song['Title'] ?? "Unknown Song") as String;
+
+  print("▶️ Playing: $displayTitle | Final Album: $finalAlbumName");
+
+  // === SPECIAL FREE SONG CHECK (Works for both normal and fromQueue) ===
+  bool songIsFree = false;
   if (fromQueue && _queue.isNotEmpty) {
-    final song = _queue[originalSongIndex.clamp(0, _queue.length - 1)];
-    songIsFree = song['isFree'] as bool? ?? false;
+    final songData = _queue[originalSongIndex.clamp(0, _queue.length - 1)];
+    songIsFree = songData['isFree'] as bool? ?? false;
   } else if (!fromQueue) {
     final albumSongs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
     if (originalSongIndex < albumSongs.length) {
@@ -949,6 +969,9 @@ Future<void> _playSong(
       return;
     }
   }
+
+  // === Continue with the rest of your original _playSong code ===
+  // (Keep everything from here downward unchanged)
 
   // === Playback Logic (Everything below stays exactly as you had it) ===
   _isPlayingNewSong = false;
@@ -1858,7 +1881,7 @@ void _showLoadPlaylistDialog() {
 void _setupQueueAndTrackListener() {
   _sequenceSubscription?.cancel();
 
-  _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((SequenceState? state) async {  // ← Added 'async'
+  _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((SequenceState? state) async {
     if (state == null) return;
 
     final currentIndex = state.currentIndex ?? 0;
@@ -1874,9 +1897,15 @@ void _setupQueueAndTrackListener() {
 
     final song = _queue[currentIndex];
     final displayTitle = (song['title'] ?? song['Title'] ?? "Unknown Song") as String;
-    final albumName = _selectedAlbum ?? "Unknown Album";
 
-    print("📊 Track Changed → Player Index: $currentIndex | Title: $displayTitle");
+    // === BEST ALBUM DETECTION ===
+    String albumName = _currentAlbum ?? _selectedAlbum ?? "Unknown Album";
+
+    if (albumName == "Unknown Album" || albumName.isEmpty) {
+      albumName = (song['albumName'] ?? song['album'] ?? song['Album'] ?? "Unknown Album") as String;
+    }
+
+    print("📊 Track Changed → Index: $currentIndex | Title: $displayTitle | Album: $albumName");
 
     setState(() {
       _currentSongIndex = currentIndex;
@@ -1889,7 +1918,7 @@ void _setupQueueAndTrackListener() {
       index: currentIndex,
     );
 
-    // === LOG SONG PLAY TO ANALYTICS ===
+    // Log with best possible album name
     await _logSongPlay(song, albumName);
   });
 }
