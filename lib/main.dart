@@ -1646,90 +1646,114 @@ Future<void> _playNext(Map<String, dynamic> song, String albumName) async {
 void _showAddToPlaylistDialog(Map<String, dynamic> song) {
   showDialog(
     context: context,
-    builder: (context) {
-      return FutureBuilder<SharedPreferences>(
-        future: SharedPreferences.getInstance(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
+    builder: (context) => AlertDialog(
+      backgroundColor: Colors.grey[900],
+      title: const Text("Add to Playlist", style: TextStyle(color: Colors.white)),
+      content: _playlists.isEmpty
+          ? const Text(
+              "No playlists yet.\nCreate one using the 'New Playlist' button.",
+              style: TextStyle(color: Colors.white70),
+              textAlign: TextAlign.center,
+            )
+          : SizedBox(
+              width: double.maxFinite,
+              height: 400,
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _playlists.length,
+                itemBuilder: (context, index) {
+                  final playlist = _playlists[index];
+                  final playlistName = playlist['name'] as String? ?? 'Unnamed';
+                  final playlistId = playlist['id'] as String?;
 
-          final prefs = snapshot.data!;
-          final List<String> allPlaylists = prefs.getStringList('playlist_names') ?? [];
-
-          return AlertDialog(
-            backgroundColor: Colors.grey[900],
-            title: const Text("Add to Playlist", style: TextStyle(color: Colors.white)),
-            content: allPlaylists.isEmpty
-                ? const Text(
-                    "No playlists yet.\nCreate one using the 'New Playlist' button.",
-                    style: TextStyle(color: Colors.white70),
-                  )
-                : SizedBox(
-                    width: double.maxFinite,
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: allPlaylists.length,
-                      itemBuilder: (context, index) {
-                        final playlistName = allPlaylists[index];
-                        return ListTile(
-                          title: Text(playlistName, style: const TextStyle(color: Colors.white)),
-                          onTap: () async {
-                            Navigator.pop(context);
-
-                            final String currentJson = prefs.getString('playlist_$playlistName') ?? '[]';
-                            List<dynamic> currentSongs = jsonDecode(currentJson);
-
-                            currentSongs.add(song);
-
-                            await prefs.setString('playlist_$playlistName', jsonEncode(currentSongs));
-
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text("Added to '$playlistName'"),
-                                backgroundColor: Colors.green,
-                              ),
-                            );
-                          },
-                        );
-                      },
+                  return ListTile(
+                    title: Text(playlistName, style: const TextStyle(color: Colors.white)),
+                    subtitle: Text(
+                      "${(playlist['songs'] as List? ?? []).length} songs",
+                      style: const TextStyle(color: Colors.white54),
                     ),
-                  ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text("Cancel", style: TextStyle(color: Colors.white70)),
+                    onTap: () {
+                      if (playlistId != null) {
+                        _addSongToPlaylist(playlistId, song, _selectedAlbum ?? "Unknown Album");
+                        Navigator.pop(context);
+                      }
+                    },
+                  );
+                },
               ),
-            ],
-          );
-        },
-      );
-    },
+            ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text("Cancel", style: TextStyle(color: Colors.white70)),
+        ),
+      ],
+    ),
   );
 }
 
 void _addToQueue(Map<String, dynamic> song, String albumName) {
+  // Deep copy the song
+  final songWithAlbum = Map<String, dynamic>.from(song)
+    ..['albumName'] = albumName;
+
+  final bool wasEmpty = _queue.isEmpty;
+  final int newIndex = _queue.length;
+
   setState(() {
-    // Deep copy to avoid reference issues
-    final songWithAlbum = Map<String, dynamic>.from(song)
-      ..['albumName'] = albumName;
     _queue.add(songWithAlbum);
   });
 
   final title = (song['title'] as String?) ?? (song['Title'] as String?) ?? "Unknown Song";
   print('✅ Added to queue: $title | Total songs: ${_queue.length}');
 
-  // Auto-play first song if nothing is playing
-  if (!_globalPlayer.playing && _queue.length == 1) {
-    final firstSong = _queue[0];
+  // === REBUILD PLAYER QUEUE IF NEEDED ===
+  if (_globalPlayer.sequenceState?.sequence.isEmpty ?? true || wasEmpty) {
+    // If nothing was playing, start playing the new song
     _playSong(
       albumName,
-      0,
-      directUrl: firstSong['url'] as String?,
-      titleToPlay: (firstSong['title'] as String?) ?? (firstSong['Title'] as String?),
-      artUrl: firstSong['artUrl'] as String? ?? firstSong['songArtUrl'] as String?,
+      newIndex,
       fromQueue: true,
+      directUrl: songWithAlbum['url'] as String?,
+      titleToPlay: songWithAlbum['title'] as String? ?? songWithAlbum['Title'] as String?,
+      artUrl: songWithAlbum['artUrl'] as String? ?? songWithAlbum['songArtUrl'] as String?,
     );
+  } else {
+    // Queue already had songs → just notify the player to refresh (important for skip)
+    _rebuildPlayerQueue();
+  }
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text("Added '$title' to queue"),
+      backgroundColor: Colors.blueAccent,
+    ),
+  );
+}
+
+Future<void> _rebuildPlayerQueue() async {
+  if (_queue.isEmpty) return;
+
+  try {
+    final sources = _queue.map((song) {
+      return AudioSource.uri(
+        Uri.parse(song['url'] as String),
+        tag: MediaItem(
+          id: song['url'] as String? ?? '',
+          title: song['title'] as String? ?? song['Title'] as String? ?? 'Unknown',
+          album: song['albumName'] as String?,
+          artUri: Uri.tryParse(song['artUrl'] as String? ?? ''),
+        ),
+      );
+    }).toList();
+
+    await _globalPlayer.setAudioSource(
+      ConcatenatingAudioSource(children: sources),
+      initialIndex: _currentSongIndex,
+      initialPosition: Duration.zero,
+    );
+  } catch (e) {
+    print("❌ Failed to rebuild player queue: $e");
   }
 }
 
@@ -5073,39 +5097,35 @@ void _showSongStory(String albumName, int startingSongIndex) {
                   padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
                   child: Row(
                     children: [
-                      // Play Now Button
+                      // Play Now Button - Now behaves like Add to Queue + Play
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: () async { /* Your existing Play Now logic */ 
-                            final song = songs[index] as Map<String, dynamic>;
-                            final isFree = song['isFree'] as bool? ?? false;
-                            final emailUnlock = song['emailUnlock'] as bool? ?? false;
-                            final bool isUnlockedByEmail = emailUnlock && _hasConfirmedEmail;
-                            final bool isFreeSong = isFree || isUnlockedByEmail;
+                          onPressed: () async {
+                            final currentSong = songs[index] as Map<String, dynamic>;
+                            final songMap = Map<String, dynamic>.from(currentSong);
+                            songMap['albumName'] = albumName;
 
-                            if (isFreeSong) {
-                              print("✅ Play Now → Free song playing directly");
-                              await _playSong(
-                                albumName, index, fromQueue: false, respectUnlocks: true,
-                                directUrl: song['url'] as String?,
-                                titleToPlay: song['Title'] as String? ?? song['title'] as String?,
-                                artUrl: song['artUrl'] as String? ?? song['songArtUrl'] as String?,
-                              );
-                              return;
-                            }
+                            final bool wasEmpty = _queue.isEmpty;
 
-                            final bool actuallyUnlocked = await _isContentUnlocked(albumName);
-                            if (!actuallyUnlocked) {
-                              Navigator.pop(context);
-                              _showPaywall(albumName);
-                            } else {
-                              await _playSong(
-                                albumName, index, fromQueue: false, respectUnlocks: false,
-                                directUrl: song['url'] as String?,
-                                titleToPlay: song['Title'] as String? ?? song['title'] as String?,
-                                artUrl: song['artUrl'] as String? ?? song['songArtUrl'] as String?,
-                              );
-                            }
+                            setState(() {
+                              _queue.add(songMap);   // Add only this song
+                            });
+
+                            Navigator.pop(context); // Close story
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text("Playing '$title'"),
+                                backgroundColor: Colors.greenAccent,
+                              ),
+                            );
+
+                            // Play the song we just added
+                            await _playSong(
+                              albumName,
+                              _queue.length - 1,
+                              fromQueue: true,
+                            );
                           },
                           icon: const Icon(Icons.play_arrow, color: Colors.black),
                           label: const Text("Play Now"),
@@ -5119,7 +5139,7 @@ void _showSongStory(String albumName, int startingSongIndex) {
                       ),
                       const SizedBox(width: 12),
 
-                      // === NEW: Add Song to Queue Button ===
+                      // Add to Queue Button (unchanged)
                       Expanded(
                         child: ElevatedButton.icon(
                           onPressed: () {
@@ -5128,7 +5148,6 @@ void _showSongStory(String albumName, int startingSongIndex) {
                             songMap['albumName'] = albumName;
 
                             final bool wasEmpty = _queue.isEmpty;
-
                             setState(() {
                               _queue.add(songMap);
                             });
@@ -5140,14 +5159,9 @@ void _showSongStory(String albumName, int startingSongIndex) {
                               ),
                             );
 
-                            // === AUTO PLAY IF QUEUE WAS EMPTY ===
                             if (wasEmpty) {
                               Future.delayed(const Duration(milliseconds: 300), () {
-                                _playSong(
-                                  albumName,
-                                  _queue.length - 1,   // Play the song we just added
-                                  fromQueue: true,
-                                );
+                                _playSong(albumName, _queue.length - 1, fromQueue: true);
                               });
                             }
                           },
@@ -5165,7 +5179,7 @@ void _showSongStory(String albumName, int startingSongIndex) {
                   ),
                 ),
 
-                // Buy Album Button (kept unchanged)
+                // Buy Album Button
                 if (_albums[albumName]?['canPurchaseIndividually'] == true)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
