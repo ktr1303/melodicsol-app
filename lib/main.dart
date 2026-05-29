@@ -1594,7 +1594,7 @@ void _showSongOptions(Map<String, dynamic> song, String albumName, int index) {
             title: const Text("Add to Queue"),
             onTap: () {
               Navigator.pop(context);
-              _addToQueue(song, albumName);
+              _addToQueue(song, albumName);   // ← Uses clean version below
             },
           ),
           ListTile(
@@ -1693,7 +1693,6 @@ void _showAddToPlaylistDialog(Map<String, dynamic> song) {
 }
 
 void _addToQueue(Map<String, dynamic> song, String albumName) {
-  // Deep copy the song
   final songWithAlbum = Map<String, dynamic>.from(song)
     ..['albumName'] = albumName;
 
@@ -1705,23 +1704,6 @@ void _addToQueue(Map<String, dynamic> song, String albumName) {
   });
 
   final title = (song['title'] as String?) ?? (song['Title'] as String?) ?? "Unknown Song";
-  print('✅ Added to queue: $title | Total songs: ${_queue.length}');
-
-  // === REBUILD PLAYER QUEUE IF NEEDED ===
-  if (_globalPlayer.sequenceState?.sequence.isEmpty ?? true || wasEmpty) {
-    // If nothing was playing, start playing the new song
-    _playSong(
-      albumName,
-      newIndex,
-      fromQueue: true,
-      directUrl: songWithAlbum['url'] as String?,
-      titleToPlay: songWithAlbum['title'] as String? ?? songWithAlbum['Title'] as String?,
-      artUrl: songWithAlbum['artUrl'] as String? ?? songWithAlbum['songArtUrl'] as String?,
-    );
-  } else {
-    // Queue already had songs → just notify the player to refresh (important for skip)
-    _rebuildPlayerQueue();
-  }
 
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
@@ -1729,6 +1711,20 @@ void _addToQueue(Map<String, dynamic> song, String albumName) {
       backgroundColor: Colors.blueAccent,
     ),
   );
+
+  print('✅ Added to queue: $title | Position: ${newIndex + 1} | Total: ${_queue.length}');
+
+  // Only auto-play if the queue was completely empty before adding
+  if (wasEmpty && _queue.isNotEmpty) {
+    Future.delayed(const Duration(milliseconds: 300), () {
+      _playSong(
+        albumName,
+        newIndex,
+        fromQueue: true,
+      );
+    });
+  }
+  // Do NOT restart playback if a song is already playing
 }
 
 Future<void> _rebuildPlayerQueue() async {
