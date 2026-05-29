@@ -25,6 +25,8 @@ import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_dynamic_links/firebase_dynamic_links.dart';
 import 'email_verification_screen.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
+
 
 
 // ==================== BACKGROUND HANDLER (MUST BE TOP-LEVEL) ====================
@@ -1511,14 +1513,7 @@ void _showQueueSongOptions(Map<String, dynamic> queueItem, int queueIndex) {
           title: const Text("Remove from Queue"),
           onTap: () {
             Navigator.pop(context);
-            setState(() {
-              if (queueIndex >= 0 && queueIndex < _queue.length) {
-                _queue.removeAt(queueIndex);
-              }
-            });
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Song removed from queue")),
-            );
+            _removeFromQueue(queueIndex);   // ← Use the centralized method
           },
         ),
         // Add to Playlist
@@ -1538,6 +1533,36 @@ void _showQueueSongOptions(Map<String, dynamic> queueItem, int queueIndex) {
         ),
       ],
     ),
+  );
+}
+
+void _removeFromQueue(int index) {
+  if (index < 0 || index >= _queue.length) return;
+
+  final bool isRemovingCurrent = (index == _currentSongIndex);
+
+  setState(() {
+    _queue.removeAt(index);
+
+    if (_currentSongIndex >= _queue.length) {
+      _currentSongIndex = _queue.length - 1;
+    } else if (index < _currentSongIndex) {
+      _currentSongIndex--;
+    }
+  });
+
+  if (_queue.isEmpty) {
+    _globalPlayer.stop();
+    setState(() {
+      _currentSongIndex = 0;
+      _currentSongTitle = "";
+    });
+  } else {
+    _rebuildPlayerQueue();
+  }
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text("Song removed from queue")),
   );
 }
 
@@ -1706,37 +1731,30 @@ void _addToQueue(Map<String, dynamic> song, String albumName) {
   final title = (song['title'] as String?) ?? (song['Title'] as String?) ?? "Unknown Song";
 
   ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text("Added '$title' to queue"),
-      backgroundColor: Colors.blueAccent,
-    ),
+    SnackBar(content: Text("Added '$title' to queue"), backgroundColor: Colors.blueAccent),
   );
 
-  print('✅ Added to queue: $title | Position: ${newIndex + 1} | Total: ${_queue.length}');
-
-  // Only auto-play if the queue was completely empty before adding
   if (wasEmpty && _queue.isNotEmpty) {
-    Future.delayed(const Duration(milliseconds: 300), () {
-      _playSong(
-        albumName,
-        newIndex,
-        fromQueue: true,
-      );
+    Future.delayed(const Duration(milliseconds: 250), () {
+      _playSong(albumName, newIndex, fromQueue: true);
     });
+  } else {
+    _rebuildPlayerQueue();   // ← Important: Update player when adding to existing queue
   }
-  // Do NOT restart playback if a song is already playing
 }
-
 Future<void> _rebuildPlayerQueue() async {
-  if (_queue.isEmpty) return;
+  if (_queue.isEmpty) {
+    await _globalPlayer.stop();
+    return;
+  }
 
   try {
     final sources = _queue.map((song) {
       return AudioSource.uri(
         Uri.parse(song['url'] as String),
         tag: MediaItem(
-          id: song['url'] as String? ?? '',
-          title: song['title'] as String? ?? song['Title'] as String? ?? 'Unknown',
+          id: song['url'] as String? ?? DateTime.now().toString(),
+          title: (song['title'] as String?) ?? (song['Title'] as String?) ?? 'Unknown',
           album: song['albumName'] as String?,
           artUri: Uri.tryParse(song['artUrl'] as String? ?? ''),
         ),
@@ -1745,9 +1763,11 @@ Future<void> _rebuildPlayerQueue() async {
 
     await _globalPlayer.setAudioSource(
       ConcatenatingAudioSource(children: sources),
-      initialIndex: _currentSongIndex,
+      initialIndex: _currentSongIndex.clamp(0, _queue.length - 1),
       initialPosition: Duration.zero,
     );
+
+    print("✅ Player queue rebuilt with ${_queue.length} songs");
   } catch (e) {
     print("❌ Failed to rebuild player queue: $e");
   }
@@ -3131,7 +3151,7 @@ Widget _buildPlaylistsPage() {
                                   onPressed: () async {
                                     final bool isRemovingCurrent = (index == _currentSongIndex);
 
-                                    setState(() => _queue.removeAt(index));
+                                    _removeFromQueue(index);
 
                                     if (_queue.isEmpty) {
                                       await _globalPlayer.stop();
@@ -3593,19 +3613,34 @@ void _clearQueue() {
   showDialog(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text("Clear Queue?"),
+      backgroundColor: Colors.grey[900],
+      title: const Text("Clear Queue?", style: TextStyle(color: Colors.white)),
       content: const Text("This will remove all songs from the current queue."),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
         TextButton(
-          onPressed: () {
+          onPressed: () => Navigator.pop(context),
+          child: const Text("Cancel"),
+        ),
+        TextButton(
+          onPressed: () async {
+            Navigator.pop(context);
+
             setState(() {
               _queue.clear();
+              _currentSongIndex = 0;
+              _currentSongTitle = "";
             });
 
-            _syncCurrentIndexToAlbum();   // Keep this from earlier fix
+            try {
+              await _globalPlayer.stop();
+              await _globalPlayer.setAudioSource(
+                ConcatenatingAudioSource(children: []), // Empty source
+              );
+              print("✅ Queue cleared and player source reset");
+            } catch (e) {
+              print("❌ Error clearing player: $e");
+            }
 
-            Navigator.pop(context);
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text("Queue cleared")),
             );
@@ -5076,17 +5111,23 @@ void _showSongStory(String albumName, int startingSongIndex) {
                 const SizedBox(height: 28),
 
                 // Story Text
-                SizedBox(
-                  height: 260,
-                  child: SingleChildScrollView(
-                    child: Text(
-                      story,
-                      style: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
-                      textAlign: TextAlign.center,
+                  // Story Text with Markdown Support
+                  SizedBox(
+                    height: 260,
+                    child: SingleChildScrollView(
+                      child: MarkdownBody(
+                        data: story,
+                        styleSheet: MarkdownStyleSheet(
+                          p: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
+                          strong: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                          h1: const TextStyle(fontSize: 22, color: Colors.white, fontWeight: FontWeight.bold),
+                          h2: const TextStyle(fontSize: 19, color: Colors.white70, fontWeight: FontWeight.w600),
+                          blockquote: const TextStyle(fontSize: 15.5, color: Colors.white60, fontStyle: FontStyle.italic),
+                        ),
+                        textAlign: WrapAlignment.center,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 30),
 
                 // === ACTION BUTTONS ===
                 Padding(
