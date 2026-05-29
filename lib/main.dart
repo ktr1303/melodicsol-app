@@ -5110,24 +5110,41 @@ void _showSongStory(String albumName, int startingSongIndex) {
                 ),
                 const SizedBox(height: 28),
 
-                // Story Text
-                  // Story Text with Markdown Support
-                  SizedBox(
-                    height: 260,
-                    child: SingleChildScrollView(
-                      child: MarkdownBody(
-                        data: story,
-                        styleSheet: MarkdownStyleSheet(
-                          p: const TextStyle(fontSize: 16.5, height: 1.8, color: Colors.white70),
-                          strong: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
-                          h1: const TextStyle(fontSize: 22, color: Colors.white, fontWeight: FontWeight.bold),
-                          h2: const TextStyle(fontSize: 19, color: Colors.white70, fontWeight: FontWeight.w600),
-                          blockquote: const TextStyle(fontSize: 15.5, color: Colors.white60, fontStyle: FontStyle.italic),
+                // Story Text with Markdown Support
+                SizedBox(
+                  height: 260,
+                  child: SingleChildScrollView(
+                    child: MarkdownBody(
+                      data: story,
+                      styleSheet: MarkdownStyleSheet(
+                        p: const TextStyle(
+                          fontSize: 16.5,
+                          height: 1.85,
+                          color: Colors.white70,
                         ),
-                        textAlign: WrapAlignment.center,
+                        strong: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                        h1: const TextStyle(
+                          fontSize: 22,
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        h2: const TextStyle(
+                          fontSize: 19,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        blockquote: const TextStyle(
+                          fontSize: 15.5,
+                          color: Colors.white60,
+                          fontStyle: FontStyle.italic,
+                        ),
                       ),
                     ),
                   ),
+                ),
 
                 // === ACTION BUTTONS ===
                 Padding(
