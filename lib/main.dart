@@ -750,14 +750,14 @@ Future<void> _logSongPlay(Map<String, dynamic> song, String albumName) async {
       'album_name': albumName,
       'is_free': isFree ? 'true' : 'false',
       'is_email_unlock': isEmailUnlock ? 'true' : 'false',
-      'timestamp': DateTime.now().millisecondsSinceEpoch,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,   // ← Consistent key
       'user_id': 'anonymous',
     };
 
-    // Log to Firestore (for Admin Panel)
+    // Save to Firestore (for Admin Panel)
     await FirebaseFirestore.instance.collection('song_plays').add(playData);
 
-    // Log to Analytics
+    // Also log to Analytics
     await FirebaseAnalytics.instance.logEvent(
       name: 'song_play',
       parameters: playData,
@@ -4782,12 +4782,12 @@ Future<void> _showAdminPanel() async {
           style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
       content: SizedBox(
         width: double.maxFinite,
-        height: 480,
+        height: 500,
         child: FutureBuilder<QuerySnapshot>(
           future: FirebaseFirestore.instance
               .collection('song_plays')
               .orderBy('timestamp', descending: true)
-              .limit(100)
+              .limit(200)
               .get(),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
@@ -4797,7 +4797,7 @@ Future<void> _showAdminPanel() async {
             if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
               return const Center(
                 child: Text(
-                  "No song plays recorded yet.\n\nPlay some songs to see stats here.",
+                  "No song plays recorded yet.\n\nPlay some songs and check back.",
                   style: TextStyle(color: Colors.white70, fontSize: 16),
                   textAlign: TextAlign.center,
                 ),
@@ -4830,13 +4830,16 @@ Future<void> _showAdminPanel() async {
                 children: [
                   Text("📅 Today's Plays: $todayPlays",
                        style: const TextStyle(color: Colors.greenAccent, fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 16),
+                  Text("Total Plays: ${plays.length}",
+                       style: const TextStyle(color: Colors.white70, fontSize: 16)),
+                  const SizedBox(height: 20),
+                  const Divider(color: Colors.white24),
 
                   const Text("🔥 Top Songs (All Time)",
                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 12),
 
-                  ...topSongs.take(12).map((entry) => Padding(
+                  ...topSongs.take(15).map((entry) => Padding(
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -4854,7 +4857,7 @@ Future<void> _showAdminPanel() async {
                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
 
-                  ...plays.take(10).map((doc) {
+                  ...plays.take(12).map((doc) {
                     final data = doc.data() as Map<String, dynamic>;
                     final time = DateTime.fromMillisecondsSinceEpoch((data['timestamp'] as num).toInt());
                     return ListTile(
@@ -4877,7 +4880,7 @@ Future<void> _showAdminPanel() async {
         TextButton(
           onPressed: () {
             Navigator.pop(context);
-            _showAdminPanel(); // Refresh
+            _showAdminPanel();
           },
           child: const Text("Refresh"),
         ),
