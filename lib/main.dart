@@ -745,25 +745,27 @@ Future<void> _logSongPlay(Map<String, dynamic> song, String albumName) async {
     final bool isFree = song['isFree'] as bool? ?? false;
     final bool isEmailUnlock = song['emailUnlock'] as bool? ?? false;
 
-    final parameters = {
+    final playData = {
       'song_title': title,
       'album_name': albumName,
       'is_free': isFree ? 'true' : 'false',
       'is_email_unlock': isEmailUnlock ? 'true' : 'false',
       'timestamp': DateTime.now().millisecondsSinceEpoch,
+      'user_id': 'anonymous',
     };
 
-    print("🔥 ATTEMPTING TO LOG: $title from $albumName");   // ← Extra debug
+    // Log to Firestore (for Admin Panel)
+    await FirebaseFirestore.instance.collection('song_plays').add(playData);
 
+    // Log to Analytics
     await FirebaseAnalytics.instance.logEvent(
       name: 'song_play',
-      parameters: parameters,
+      parameters: playData,
     );
 
-    print("✅ SUCCESS: Logged song_play → $title ($albumName)");
-  } catch (e, stack) {
-    print("❌ FAILED to log song_play: $e");
-    print(stack);
+    print("📊 Logged song play → $title ($albumName)");
+  } catch (e) {
+    print("❌ Failed to log song play: $e");
   }
 }
 
@@ -4776,19 +4778,23 @@ Future<void> _showAdminPanel() async {
     context: context,
     builder: (context) => AlertDialog(
       backgroundColor: Colors.grey[900],
-      title: const Text("Admin Panel - Song Stats", 
+      title: const Text("Admin Panel - Song Stats",
           style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
       content: SizedBox(
         width: double.maxFinite,
-        height: 420,
-        child: FutureBuilder<Map<String, dynamic>>(
-          future: _getPlayStats(),
+        height: 480,
+        child: FutureBuilder<QuerySnapshot>(
+          future: FirebaseFirestore.instance
+              .collection('song_plays')
+              .orderBy('timestamp', descending: true)
+              .limit(100)
+              .get(),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator(color: Colors.greenAccent));
             }
 
-            if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
               return const Center(
                 child: Text(
                   "No song plays recorded yet.\n\nPlay some songs to see stats here.",
@@ -4798,53 +4804,64 @@ Future<void> _showAdminPanel() async {
               );
             }
 
-            final stats = snapshot.data!;
+            final plays = snapshot.data!.docs;
+
+            // Today's Plays
+            final now = DateTime.now();
+            final todayStart = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+            final todayPlays = plays.where((doc) {
+              final ts = (doc['timestamp'] as num?)?.toInt() ?? 0;
+              return ts >= todayStart;
+            }).length;
+
+            // Top Songs
+            final Map<String, int> songCount = {};
+            for (var doc in plays) {
+              final title = doc['song_title'] as String? ?? 'Unknown';
+              songCount[title] = (songCount[title] ?? 0) + 1;
+            }
+
+            final topSongs = songCount.entries.toList()
+              ..sort((a, b) => b.value.compareTo(a.value));
 
             return SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Today's Summary
-                  Text("📅 Today's Plays: ${stats['todayPlays'] ?? 0}", 
+                  Text("📅 Today's Plays: $todayPlays",
                        style: const TextStyle(color: Colors.greenAccent, fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Text("🎯 Full Plays Today: ${stats['todayFullPlays'] ?? 0}", 
-                       style: const TextStyle(color: Colors.white70, fontSize: 16)),
+                  const SizedBox(height: 16),
 
-                  const SizedBox(height: 20),
-                  const Divider(color: Colors.white24),
-
-                  // Top Songs
-                  const Text("🔥 Top Songs (All Time)", 
+                  const Text("🔥 Top Songs (All Time)",
                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 12),
-                  ...(stats['topSongs'] as List<dynamic>? ?? []).take(8).map((entry) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(child: Text(entry['title'] ?? 'Unknown', style: const TextStyle(color: Colors.white70))),
-                          Text("${entry['count']} plays", style: const TextStyle(color: Colors.white)),
-                        ],
-                      ),
-                    );
-                  }),
+
+                  ...topSongs.take(12).map((entry) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(child: Text(entry.key, style: const TextStyle(color: Colors.white70))),
+                        Text("${entry.value} plays", style: const TextStyle(color: Colors.white)),
+                      ],
+                    ),
+                  )),
 
                   const SizedBox(height: 20),
                   const Divider(color: Colors.white24),
 
-                  // Recent Plays
-                  const Text("🕒 Recent Plays", 
+                  const Text("🕒 Recent Plays",
                        style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
-                  ...(stats['recentPlays'] as List<dynamic>? ?? []).map((play) {
-                    final time = DateTime.fromMillisecondsSinceEpoch((play['timestamp'] as num).toInt());
+
+                  ...plays.take(10).map((doc) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    final time = DateTime.fromMillisecondsSinceEpoch((data['timestamp'] as num).toInt());
                     return ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
-                      title: Text(play['song_title'] ?? 'Unknown', style: const TextStyle(color: Colors.white, fontSize: 15)),
-                      subtitle: Text(play['album_name'] ?? '', style: const TextStyle(color: Colors.white54, fontSize: 13)),
+                      title: Text(data['song_title'] ?? 'Unknown', style: const TextStyle(color: Colors.white, fontSize: 15)),
+                      subtitle: Text(data['album_name'] ?? '', style: const TextStyle(color: Colors.white54, fontSize: 13)),
                       trailing: Text("${time.hour}:${time.minute.toString().padLeft(2, '0')}", 
                                    style: const TextStyle(color: Colors.white54, fontSize: 12)),
                     );
@@ -4856,10 +4873,7 @@ Future<void> _showAdminPanel() async {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text("Close"),
-        ),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Close")),
         TextButton(
           onPressed: () {
             Navigator.pop(context);
@@ -5110,38 +5124,21 @@ void _showSongStory(String albumName, int startingSongIndex) {
                 ),
                 const SizedBox(height: 28),
 
-                // Story Text with Markdown Support
+                // Story Text
                 SizedBox(
                   height: 260,
                   child: SingleChildScrollView(
-                    child: MarkdownBody(
-                      data: story,
-                      styleSheet: MarkdownStyleSheet(
-                        p: const TextStyle(
-                          fontSize: 16.5,
-                          height: 1.85,
-                          color: Colors.white70,
-                        ),
-                        strong: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                        h1: const TextStyle(
-                          fontSize: 22,
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        h2: const TextStyle(
-                          fontSize: 19,
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        blockquote: const TextStyle(
-                          fontSize: 15.5,
-                          color: Colors.white60,
-                          fontStyle: FontStyle.italic,
-                        ),
+                    child: Text(
+                      story
+                          .replaceAll('\\n', '\n')
+                          .replaceAll('\r\n', '\n')
+                          .replaceAll('\r', '\n'),
+                      style: const TextStyle(
+                        fontSize: 16.5,
+                        height: 1.85,
+                        color: Colors.white70,
                       ),
+                      textAlign: TextAlign.center,
                     ),
                   ),
                 ),
