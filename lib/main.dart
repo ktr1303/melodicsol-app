@@ -210,19 +210,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   // Independent glow controllers per album
   final Map<String, AnimationController> _albumGlowControllers = {};
 
-  final Map<String, String> _albumStories = {
-    "Base": "Back where it all began. Cheap radio shack mic plugged into a realistic stereo with a tape deck recording.",
-    "Track": "Very first 8 track recordings. Just beginning to learn how to record and what this world even is.",
-    "609": "Studio 609. An audio recording facility. Here's a few tracks recorded for your listening pleasure. And maybe technoman will stop by and recording some vocal tracks. He really gets down on those vocal tracks. You wouldn't believe it.",
-    "Roger": "Got a drum set. Learning how to record and play multiple instruments.",
-    "Gemini": "Dedicated to Eric Laue",
-    "Asraya": "First original band. Learning to record full bands, write songs, play together",
-    "Central": "Recording, songwriting, instrumental development. First Melodicsol transitions captured here ",
-    "Live": "This album is recorded live as proof of concept.",
-    "Sol": "First Album",
-    "Melodic": "New Album",
-  };
-
   final Map<String, dynamic> _melodicSolBio = {
     "title": " ",
     "imageUrl": "https://dhufx08tsdp2a.cloudfront.net/MelodicsolBioImage.png",        // Change to a full bio image if you prefer
@@ -232,52 +219,42 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   final Map<String, TextStyle> _albumFonts = {
     "Base": GoogleFonts.playwriteArGuides(
-      fontSize: 22,
+      fontSize: 26,
       fontWeight: FontWeight.w900,
       color: const Color.fromARGB(255, 5, 135, 221),
     ),
-    "Track": GoogleFonts.bungeeInline(
+    "Track": GoogleFonts.bungeeTint(
       fontSize: 22,
       fontWeight: FontWeight.w700,
       color: Colors.white,
     ),
-    "609": GoogleFonts.kalniaGlaze(
-      fontSize: 28,
+    "609": GoogleFonts.syncopate(
+      fontSize: 32,
       fontWeight: FontWeight.w700,
-      color: const Color.fromARGB(255, 219, 4, 4),
+      color: const Color.fromARGB(255, 0, 0, 0),
     ),
-    "Roger": GoogleFonts.boldonse(
-      fontSize: 20,
+    "Asraya": GoogleFonts.jollyLodger(
+      fontSize: 36,
       fontWeight: FontWeight.w700,
-      color: const Color.fromARGB(255, 163, 10, 183),
+      color: const Color.fromARGB(255, 35, 0, 234),
     ),
-    "Gemini": GoogleFonts.danfo(
-      fontSize: 28,
+    "CENTRAL": GoogleFonts.honk(
+      fontSize: 32,
       fontWeight: FontWeight.w700,
-      color: const Color.fromARGB(255, 255, 0, 38),
+      color: const Color.fromARGB(255, 178, 172, 172),
     ),
-    "Asraya": GoogleFonts.foldit(
-      fontSize: 40,
+    "Live": GoogleFonts.knewave(
+      fontSize: 34,
       fontWeight: FontWeight.w700,
-      color: const Color.fromARGB(255, 212, 158, 21),
+      color: const Color.fromARGB(255, 255, 0, 0),
     ),
-    "Central": GoogleFonts.nabla(
-      fontSize: 20,
+    "Sol": GoogleFonts.rubikBurned(
+      fontSize: 36,
       fontWeight: FontWeight.w700,
-      color: Colors.white,
+      color: const Color.fromARGB(255, 255, 255, 255),
     ),
-    "Live": GoogleFonts.nabla(
-      fontSize: 28,
-      fontWeight: FontWeight.w700,
-      color: Colors.white,
-    ),
-    "Sol": GoogleFonts.fruktur(
-      fontSize: 40,
-      fontWeight: FontWeight.w700,
-      color: Colors.white,
-    ),
-    "Melodic": GoogleFonts.oi(
-      fontSize: 20,
+    "Melodic": GoogleFonts.bungeeSpice(
+      fontSize: 24,
       fontWeight: FontWeight.w700,
       color: const Color.fromARGB(255, 191, 219, 13),
     ),
@@ -288,10 +265,8 @@ final Map<String, String> _albumDisplayNames = {
   "melodic": "Melodic",
   "sol": "Sol",
   "live": "Live",
-  "central": "Central",
+  "central": "CENTRAL",
   "asraya": "Asraya",
-  "gemini": "Gemini",
-  "roger": "Roger",
   "609": "609",
   "track": "Track",
   "base": "Base",
@@ -299,16 +274,14 @@ final Map<String, String> _albumDisplayNames = {
 
 // Individual horizontal offset for each album (positive = right, negative = left)
 final Map<String, double> _albumHorizontalOffset = {
-  "Melodic": -22.0,
-  "Sol": 1.0,
-  "live": 20.0,
-  "Central": 35.0,
-  "Aṣraya": 43.0,
-  "Gemini": 20.0,
-  "Roger": -12.0,
+  "Melodic": -6.0,
+  "Sol": 20.0,
+  "live": 43.0,
+  "Central": 30.0,
+  "Aṣraya": -6.0,
   "609": -25.0,
-  "Track": 10.0,
-  "Base": 55,
+  "Track": -10.0,
+  "Base": 30,
   // Add or adjust any album here
 };
 
@@ -329,6 +302,25 @@ final Map<String, double> _albumHorizontalOffset = {
   bool _hasOpenAccess = false;           // renamed from premium to "Open"
   bool _isCheckingSubscription = true;
   String? _revenueCatError;
+
+Future<void> _loadGlobalUnlockStatus() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final bool hasOpenAccess = prefs.getBool('hasOpenAccess') ?? false;
+    
+    setState(() {
+      _hasOpenAccess = hasOpenAccess;
+    });
+
+    if (hasOpenAccess) {
+      print("✅ GLOBAL UNLOCK loaded from prefs on startup → All content unlocked");
+    } else {
+      print("🔒 No global unlock found on startup");
+    }
+  } catch (e) {
+    print("❌ Error loading global unlock: $e");
+  }
+}
 
 @override
 void initState() {
@@ -352,6 +344,11 @@ void initState() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
     _loadPlaylists();
     });
+ WidgetsBinding.instance.addPostFrameCallback((_) async {
+    await _loadGlobalUnlockStatus();     // ← Add this
+    await _loadPlaylists();
+    // ... other loading calls you already have
+  });   
     _loadSavedUnlocks();
     _initializeRevenueCat();
     // Optional: Call it again after a short delay for reliability
@@ -739,7 +736,12 @@ void _playPlaylist(String playlistId) {
   );
 }
 
-Future<void> _logSongPlay(Map<String, dynamic> song, String albumName) async {
+Future<void> _logSongPlay(
+  Map<String, dynamic> song, 
+  String albumName, 
+  {Duration? durationPlayed, 
+   bool isCompleted = false}
+) async {
   try {
     final String title = (song['title'] ?? song['Title'] ?? 'Unknown Song') as String;
     final bool isFree = song['isFree'] as bool? ?? false;
@@ -750,22 +752,24 @@ Future<void> _logSongPlay(Map<String, dynamic> song, String albumName) async {
       'album_name': albumName,
       'is_free': isFree ? 'true' : 'false',
       'is_email_unlock': isEmailUnlock ? 'true' : 'false',
-      'timestamp': DateTime.now().millisecondsSinceEpoch,   // ← Consistent key
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+      'duration_played_ms': durationPlayed?.inMilliseconds ?? 0,
+      'is_completed': isCompleted,
       'user_id': 'anonymous',
     };
 
-    // Save to Firestore (for Admin Panel)
+    // Firestore for Admin Panel
     await FirebaseFirestore.instance.collection('song_plays').add(playData);
 
-    // Also log to Analytics
+    // Firebase Analytics for global insights
     await FirebaseAnalytics.instance.logEvent(
       name: 'song_play',
       parameters: playData,
     );
 
-    print("📊 Logged song play → $title ($albumName)");
+    print("📊 Logged: $title | ${durationPlayed?.inSeconds ?? 0}s | Completed: $isCompleted");
   } catch (e) {
-    print("❌ Failed to log song play: $e");
+    print("❌ Log failed: $e");
   }
 }
 
@@ -1062,22 +1066,19 @@ Future<void> _playSong(
         ? (_queue[_currentSongIndex]['title'] ?? _queue[_currentSongIndex]['Title'] ?? "Unknown") 
         : "Unknown Song");
 
-                // Log the song play for analytics
+    // === LOG THE SONG PLAY FOR ANALYTICS ===
     if (_queue.isNotEmpty) {
       final currentSong = _queue[_currentSongIndex.clamp(0, _queue.length - 1)];
-      final title = (currentSong['title'] ?? currentSong['Title'] ?? "Unknown") as String;
-      final isFree = currentSong['isFree'] as bool? ?? false;
+      final albumName = _selectedAlbum ?? _currentAlbum ?? "Unknown Album";
+      
+      await _logSongPlay(currentSong, albumName);
+    }
 
-
-          _nowPlayingNotifier.value = NowPlayingInfo(
+    _nowPlayingNotifier.value = NowPlayingInfo(
       title: displayTitle,
       artUrl: artUrl,
       index: fromQueue ? originalSongIndex : 0,
     );  
-  }
-
-
-
 
     setState(() {
       _currentAlbum = albumName;
@@ -1260,9 +1261,9 @@ Future<void> _showAlbumDetailTutorial() async {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       content: const Text(
         "Tap\n"
-        "•songs = music\n"
-        "•art = stories\n"
-        "•Title = Albums\n"        
+        " songs = 🤘\n"
+        " art = stories\n"
+        " title = Albums\n"        
         "\n"
         "Long Press\n"
         "• Plynxt,queue,stories,etc..\n"
@@ -1276,7 +1277,7 @@ Future<void> _showAlbumDetailTutorial() async {
             Navigator.pop(context);
             _isTutorialShowing = false;
           },
-          child: const Text("Yes", style: TextStyle(fontSize: 16)),
+          child: const Text("Play 🤘", style: TextStyle(fontSize: 16)),
         ),
       ],
     ),
@@ -1300,11 +1301,8 @@ Future<void> _showQueueTutorial() async {
           "This Queue Is Awesome.\n\n"
           "INSTANT MUSIC\n"
           "• Play Free Songs!!!\n\n"
-          "Long Press options:\n"
-          "• View Song Story\n"
-          "• Go To Album\n"
-          "• Remove from Queue\n"
-          "• Add to Playlist",
+          "Long Press:\n"
+          "• View Song Story etc...\n",
           style: TextStyle(fontSize: 16, height: 1.4),
         ),
       actions: [
@@ -1314,7 +1312,7 @@ Future<void> _showQueueTutorial() async {
             Navigator.pop(context);
             _isTutorialShowing = false;
           },
-          child: const Text("Got it", style: TextStyle(fontSize: 16)),
+          child: const Text("Music 🤘", style: TextStyle(fontSize: 16)),
         ),
       ],
     ),
@@ -1400,28 +1398,6 @@ void handleDeepLink(Uri uri) {
     }
   }
 }
-
-  // NEW: Navigate to Song Story
-  void _navigateToSongStory(Map<String, dynamic> song, String albumName) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => SongStoryPage(
-          song: song,
-          albumName: albumName,
-          onPlayNow: () async {
-            final songs = _albums[albumName]?['songs'] as List<dynamic>? ?? [];
-            final index = songs.indexWhere((s) =>
-                (s as Map<String, dynamic>)['Title'] == song['Title'] &&
-                (s as Map<String, dynamic>)['url'] == song['url']);
-            if (index != -1) {
-              await _playSong(albumName, index);
-            }
-          },
-        ),
-      ),
-    );
-  }
 
 void _showQueueSongOptions(Map<String, dynamic> queueItem, int queueIndex) {
   // Normalize queue song data to match what SongStoryPage expects
@@ -1566,27 +1542,6 @@ void _removeFromQueue(int index) {
   ScaffoldMessenger.of(context).showSnackBar(
     const SnackBar(content: Text("Song removed from queue")),
   );
-}
-
-void _refreshAfterPurchase() {
-  setState(() {
-    // Force rebuild of album page, song list, lock icons, etc.
-    print("🔄 Refreshing UI after purchase");
-  });
-}
-
-void _forceFullUnlockRefresh({String? specificAlbum}) {
-  setState(() {});
-
-  if (specificAlbum != null) {
-    _unlockedAlbums.add(specificAlbum);
-  }
-
-  _globalUnlockTrigger.value++;
-
-  print(specificAlbum != null 
-      ? "🔄 Local refresh for album: $specificAlbum" 
-      : "🔄 Global refresh triggered");
 }
 
 void _showSongOptions(Map<String, dynamic> song, String albumName, int index) {
@@ -1939,7 +1894,7 @@ void _showLoadPlaylistDialog() {
 void _setupQueueAndTrackListener() {
   _sequenceSubscription?.cancel();
 
-  String? _lastLoggedSongTitle;   // ← Prevent duplicate logs
+  String? _lastLoggedSongTitle;   // Prevents duplicate logs
 
   _sequenceSubscription = _globalPlayer.sequenceStateStream.listen((SequenceState? state) async {
     if (state == null) return;
@@ -1979,6 +1934,7 @@ void _setupQueueAndTrackListener() {
         index: currentIndex,
       );
 
+      // === LOG THE SONG PLAY ===
       await _logSongPlay(song, albumName);
     }
   });
@@ -1998,26 +1954,6 @@ void _setupCompletedListener() {
       _forceQueueRebuild();
     }
   });
-}
-
-Future<void> _skipToNext() async {
-  if (_queue.isEmpty) return;
-  final nextIndex = (_currentSongIndex + 1) % _queue.length;
-  await _playSong(
-    _currentAlbum ?? "Queue",
-    nextIndex,
-    fromQueue: true,
-  );
-}
-
-Future<void> _skipToPrevious() async {
-  if (_queue.isEmpty) return;
-  final prevIndex = (_currentSongIndex - 1 + _queue.length) % _queue.length;
-  await _playSong(
-    _currentAlbum ?? "Queue",
-    prevIndex,
-    fromQueue: true,
-  );
 }
 
 Future<void> _skipNext() async {
@@ -2249,27 +2185,6 @@ Future<bool> _isContentUnlocked(String? albumName) async {
       } catch (_) {}
     }
     return Colors.greenAccent;
-  }
-
-  Widget _buildControlButton({required IconData icon, Color? color, double size = 28, VoidCallback? onPressed}) {
-    return IconButton(
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(),
-      iconSize: size,
-      icon: Icon(icon, color: color ?? Colors.white.withOpacity(0.85)),
-      onPressed: onPressed,
-    );
-  }
-
-  Widget _buildPlayPauseButton(bool isPlaying, Color themeColor) {
-    return IconButton(
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(),
-      iconSize: 64,
-      icon: Icon(isPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill,
-          color: isPlaying ? themeColor : Colors.white.withOpacity(0.9)),
-      onPressed: () => isPlaying ? _globalPlayer.pause() : _globalPlayer.play(),
-    );
   }
 
 @override
@@ -2625,8 +2540,8 @@ Widget _buildMainAlbumPage(double screenHeight) {
               final index = e.key;
               final albumName = e.value;
               final albumTheme = _getAlbumThemeColor(albumName);
-              const baseTop = 190.0;
-              const spacing = 67.0;
+              const baseTop = 250.0;
+              const spacing = 70.0;
               final itemTop = baseTop + (index * spacing);
 
               final horizontalOffset = _albumHorizontalOffset[albumName] ?? 0.0;
@@ -2759,14 +2674,18 @@ Expanded(
   child: RefreshIndicator(
     onRefresh: () async {
       print("🔄 Pull-to-refresh triggered on $albumName album");
+      
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
+      
+      await _loadGlobalUnlockStatus();   // ← Add this
       
       if (await _isContentUnlocked(albumName)) {
         _unlockedAlbums.add(albumName);
       }
       
       await Future.delayed(const Duration(milliseconds: 600));
+      
       if (mounted) {
         setState(() {
           print("🔄 Strong rebuild after pull-to-refresh for $albumName");
@@ -3015,32 +2934,6 @@ void _saveQueueAsPlaylist() {
     ),
   );
 }
-
-  void _showAddToPlaylistMenu(Map<String, dynamic> song, String albumName) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            title: const Text("Add to Playlist"),
-            leading: const Icon(Icons.playlist_add),
-          ),
-          ..._playlists.map((pl) => ListTile(
-            title: Text(pl["name"]),
-            onTap: () {
-              _addSongToPlaylist(pl["id"], song, albumName);
-              Navigator.pop(context);
-            },
-          )),
-          ListTile(
-            title: const Text("Cancel"),
-            onTap: () => Navigator.pop(context),
-          ),
-        ],
-      ),
-    );
-  }
 
 Widget _buildPlaylistsPage() {
   return Scaffold(
@@ -3430,17 +3323,6 @@ Widget _buildPlaylistsPage() {
       ],
     ),
   );
-}
-
-void _resetQueueState() {
-  setState(() {
-    _queue.clear();
-    _currentAlbum = null;
-    _currentPlaylistId = null;
-    _currentSongIndex = 0;
-    _isQueueMode = false;
-  });
-  _forceQueueRebuild();
 }
 
 void _resetQueueAndPlayer() {
