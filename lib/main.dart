@@ -736,6 +736,12 @@ void _playPlaylist(String playlistId) {
   );
 }
 
+void safeSetState(VoidCallback fn) {
+  if (mounted) {
+    setState(fn);
+  }
+}
+
 Future<void> _logSongPlay(
   Map<String, dynamic> song, 
   String albumName, 
@@ -2941,12 +2947,15 @@ Widget _buildPlaylistsPage() {
       backgroundColor: Colors.black,
       elevation: 0,
       actions: [
-        // === NEW: Small Album Selector Button ===
         IconButton(
           icon: const Icon(Icons.album_outlined, color: Colors.white70, size: 26),
           tooltip: "Select Album",
-          onPressed: () => _showAlbumSelector(),
-        ), 
+          onPressed: () {
+            if (mounted) {
+              _showAlbumSelector();
+            }
+          },
+        ),
         if (_queue.isNotEmpty) ...[
           IconButton(
             icon: const Icon(Icons.playlist_remove, color: Colors.redAccent),
@@ -4100,11 +4109,10 @@ void _showAlbumStory(String startingAlbumName) {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    // See Songs
-                    // === See Songs Button ===
                     // See Songs Button
                     ElevatedButton.icon(
                       onPressed: () {
+                        if (!mounted) return;
                         Navigator.pop(context); // Close story modal
                         _showFirstSongStory(albumName);
                       },
@@ -4186,6 +4194,8 @@ void _showFirstSongStory(String albumName) {
 }
 
 void _showAlbumSelector() {
+  if (!mounted) return;
+
   showDialog(
     context: context,
     builder: (context) => AlertDialog(
@@ -4193,11 +4203,11 @@ void _showAlbumSelector() {
       title: const Text("Select Album", style: TextStyle(color: Colors.white)),
       content: SizedBox(
         width: double.maxFinite,
-        height: 560,                    // Increased height for safety
+        height: 560,
         child: GridView.builder(
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
-            childAspectRatio: 0.72,      // Better aspect ratio
+            childAspectRatio: 0.72,
             crossAxisSpacing: 12,
             mainAxisSpacing: 16,
           ),
@@ -4211,20 +4221,20 @@ void _showAlbumSelector() {
             return GestureDetector(
               onTap: () {
                 Navigator.pop(context); // Close selector
-                Navigator.pop(context); // Close current story
+                Navigator.pop(context); // Close current story if open
                 Future.delayed(const Duration(milliseconds: 150), () {
-                  _showAlbumStory(albumName);
+                  if (mounted) {
+                    _showAlbumStory(albumName);
+                  }
                 });
               },
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  // Album Art
                   ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: SizedBox(
-                      height: 132,
+                      height: 135,
                       width: double.infinity,
                       child: artUrl.isNotEmpty
                           ? CachedNetworkImage(
@@ -4245,8 +4255,7 @@ void _showAlbumSelector() {
                             ),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  // Album Title with Google Font
+                  const SizedBox(height: 10),
                   Text(
                     displayName,
                     style: _getAlbumFont(albumName).copyWith(fontSize: 14.5),
@@ -4267,8 +4276,9 @@ void _showAlbumSelector() {
   );
 }
 
-// 2. Add entire album to queue
 void _addAlbumToQueue(String albumName) {
+  if (!mounted) return;
+
   final album = _albums[albumName];
   if (album == null) return;
 
@@ -4278,14 +4288,23 @@ void _addAlbumToQueue(String albumName) {
     return songMap;
   }).toList();
 
+  final bool wasEmpty = _queue.isEmpty;
+
   setState(() {
     _queue.addAll(albumSongs);
   });
 
-  Navigator.pop(context); // Close story
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(content: Text("Added $albumName to queue (${albumSongs.length} songs)")),
   );
+
+  if (wasEmpty && _queue.isNotEmpty) {
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        _playSong(albumName, 0, fromQueue: true);
+      }
+    });
+  }
 }
 
 // 3. Navigate to album detail page
