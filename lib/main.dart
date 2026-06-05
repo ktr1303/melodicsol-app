@@ -218,53 +218,53 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   };
 
   final Map<String, TextStyle> _albumFonts = {
-    "Base": GoogleFonts.playwriteArGuides(
+    "Base": GoogleFonts.walterTurncoat(
       fontSize: 26,
       fontWeight: FontWeight.w900,
-      color: const Color.fromARGB(255, 5, 135, 221),
+      color: const Color.fromARGB(255, 255, 0, 0),
     ),
-    "Track": GoogleFonts.bungeeTint(
-      fontSize: 22,
+    "Track": GoogleFonts.honk(
+      fontSize: 34,
       fontWeight: FontWeight.w700,
-      color: Colors.white,
+      color: const Color.fromARGB(255, 247, 107, 0),
     ),
     "609": GoogleFonts.syncopate(
-      fontSize: 32,
+      fontSize: 30,
       fontWeight: FontWeight.w700,
-      color: const Color.fromARGB(255, 0, 0, 0),
+      color: const Color.fromARGB(255, 216, 181, 5),
     ),
     "Asraya": GoogleFonts.jollyLodger(
       fontSize: 36,
       fontWeight: FontWeight.w700,
-      color: const Color.fromARGB(255, 35, 0, 234),
+      color: const Color.fromARGB(255, 1, 88, 40),
     ),
-    "CENTRAL": GoogleFonts.honk(
-      fontSize: 32,
-      fontWeight: FontWeight.w700,
-      color: const Color.fromARGB(255, 178, 172, 172),
-    ),
-    "Live": GoogleFonts.knewave(
-      fontSize: 34,
-      fontWeight: FontWeight.w700,
-      color: const Color.fromARGB(255, 255, 0, 0),
-    ),
-    "Sol": GoogleFonts.rubikBurned(
-      fontSize: 36,
-      fontWeight: FontWeight.w700,
-      color: const Color.fromARGB(255, 255, 255, 255),
-    ),
-    "Melodic": GoogleFonts.bungeeSpice(
+    "CENTRAL": GoogleFonts.bitcountSingle(
       fontSize: 24,
       fontWeight: FontWeight.w700,
-      color: const Color.fromARGB(255, 191, 219, 13),
+      color: const Color.fromARGB(255, 5, 186, 236),
+    ),
+    "LIVE": GoogleFonts.rubikPuddles(
+      fontSize: 30,
+      fontWeight: FontWeight.w700,
+      color: const Color.fromARGB(255, 58, 4, 139),
+    ),
+    "SOL": GoogleFonts.rampartOne(
+      fontSize: 30,
+      fontWeight: FontWeight.w700,
+      color: const Color.fromARGB(255, 193, 6, 240),
+    ),
+    "?": GoogleFonts.rock3d(
+      fontSize: 24,
+      fontWeight: FontWeight.w700,
+      color: const Color.fromARGB(255, 0, 0, 0),
     ),
   };
 
   // Display names shown on the main spine page
 final Map<String, String> _albumDisplayNames = {
-  "melodic": "Melodic",
-  "sol": "Sol",
-  "live": "Live",
+  "melodic": "?",
+  "sol": "SOL",
+  "live": "LIVE",
   "central": "CENTRAL",
   "asraya": "Asraya",
   "609": "609",
@@ -274,14 +274,14 @@ final Map<String, String> _albumDisplayNames = {
 
 // Individual horizontal offset for each album (positive = right, negative = left)
 final Map<String, double> _albumHorizontalOffset = {
-  "Melodic": -6.0,
-  "Sol": 20.0,
-  "live": 43.0,
-  "Central": 30.0,
-  "Aṣraya": -6.0,
-  "609": -25.0,
-  "Track": -10.0,
-  "Base": 30,
+  "Melodic": -17,
+  "Sol": -13,
+  "live": 15,
+  "Central": 40,
+  "Asraya": 25,
+  "609": 0,
+  "Track": -25.0,
+  "Base": 40,
   // Add or adjust any album here
 };
 
@@ -1226,9 +1226,9 @@ Future<void> _showMainAlbumTutorial() async {
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       content: const Text(
-        "Tap Albums = Explore\n"
+        "Tap Albums\n"
         "\n"
-        "Swipe left = queue page\n"
+        "Swipe left = music\n"
         "Swipe right = internet",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
@@ -1261,9 +1261,9 @@ Future<void> _showAlbumDetailTutorial() async {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       content: const Text(
         "Tap\n"
-        " songs = 🤘\n"
-        " art = stories\n"
-        " title = Albums\n"        
+        " Songs\n"
+        " Art\n"
+        " Titles\n"        
         "\n"
         "Long Press\n"
         "• Plynxt,queue,stories,etc..\n"
@@ -1298,11 +1298,10 @@ Future<void> _showQueueTutorial() async {
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         content: const Text(
-          "This Queue Is Awesome.\n\n"
           "INSTANT MUSIC\n"
           "• Play Free Songs!!!\n\n"
-          "Long Press:\n"
-          "• View Song Story etc...\n",
+          "Long Press\n"
+          "• song stories playlists etc...\n",
           style: TextStyle(fontSize: 16, height: 1.4),
         ),
       actions: [
@@ -2540,8 +2539,8 @@ Widget _buildMainAlbumPage(double screenHeight) {
               final index = e.key;
               final albumName = e.value;
               final albumTheme = _getAlbumThemeColor(albumName);
-              const baseTop = 250.0;
-              const spacing = 70.0;
+              const baseTop = 150.0;
+              const spacing = 87.0;
               final itemTop = baseTop + (index * spacing);
 
               final horizontalOffset = _albumHorizontalOffset[albumName] ?? 0.0;
@@ -2582,7 +2581,7 @@ Widget _buildMainAlbumPage(double screenHeight) {
                             height: 52,
                             alignment: Alignment.center,
                                   child: Text(
-                              _albumDisplayNames[albumName] ?? albumName,   // ← Show nice name
+                              _getAlbumDisplayName(albumName),   // ← Show nice name
                               style: _getAlbumFont(albumName),              // ← Use internal key for font
                               textAlign: TextAlign.center,
                             ),
@@ -2942,6 +2941,12 @@ Widget _buildPlaylistsPage() {
       backgroundColor: Colors.black,
       elevation: 0,
       actions: [
+        // === NEW: Small Album Selector Button ===
+        IconButton(
+          icon: const Icon(Icons.album_outlined, color: Colors.white70, size: 26),
+          tooltip: "Select Album",
+          onPressed: () => _showAlbumSelector(),
+        ), 
         if (_queue.isNotEmpty) ...[
           IconButton(
             icon: const Icon(Icons.playlist_remove, color: Colors.redAccent),
@@ -4296,38 +4301,25 @@ void _navigateToAlbumDetail(String albumName) {
   _pageController.jumpToPage(1); // Album Detail Page
 }
 
-void _showFullScreenImage(String imageUrl, String albumName) {
+void _showFullScreenImage(String imageUrl, String title) {
+  if (!mounted) return;
+
   showDialog(
     context: context,
+    barrierColor: Colors.black.withOpacity(0.95),
     builder: (context) => Dialog(
-      backgroundColor: Colors.black,
+      backgroundColor: Colors.transparent,
       insetPadding: EdgeInsets.zero,
-      child: Stack(
-        children: [
-          // Full screen zoomable image
-          InteractiveViewer(
-            minScale: 0.5,
-            maxScale: 4.0,
-            child: Image.network(
-              imageUrl,
-              fit: BoxFit.contain,
-              width: double.infinity,
-              height: double.infinity,
-              errorBuilder: (context, error, stackTrace) => const Center(
-                child: Icon(Icons.broken_image, size: 100, color: Colors.white38),
-              ),
-            ),
+      child: GestureDetector(
+        onTap: () => Navigator.pop(context),
+        child: InteractiveViewer(
+          child: CachedNetworkImage(
+            imageUrl: imageUrl,
+            fit: BoxFit.contain,
+            placeholder: (_, __) => const Center(child: CircularProgressIndicator()),
+            errorWidget: (_, __, ___) => const Icon(Icons.broken_image, size: 100, color: Colors.white38),
           ),
-          // Close button only
-          Positioned(
-            top: 40,
-            left: 20,
-            child: IconButton(
-              icon: const Icon(Icons.close, color: Colors.white, size: 32),
-              onPressed: () => Navigator.pop(context),
-            ),
-          ),
-        ],
+        ),
       ),
     ),
   );
@@ -4731,26 +4723,6 @@ Future<void> _showAdminPanel() async {
                       ],
                     ),
                   )),
-
-                  const SizedBox(height: 20),
-                  const Divider(color: Colors.white24),
-
-                  const Text("🕒 Recent Plays",
-                       style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-
-                  ...plays.take(12).map((doc) {
-                    final data = doc.data() as Map<String, dynamic>;
-                    final time = DateTime.fromMillisecondsSinceEpoch((data['timestamp'] as num).toInt());
-                    return ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(data['song_title'] ?? 'Unknown', style: const TextStyle(color: Colors.white, fontSize: 15)),
-                      subtitle: Text(data['album_name'] ?? '', style: const TextStyle(color: Colors.white54, fontSize: 13)),
-                      trailing: Text("${time.hour}:${time.minute.toString().padLeft(2, '0')}", 
-                                   style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                    );
-                  }),
                 ],
               ),
             );
@@ -6070,7 +6042,7 @@ Future<void> _purchasePackage(Package package) async {
                     child: Text(
                       "Streaming services like Spotify are keeping up to 70% of revenue from artists streams.",
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 14, color: Colors.white70, height: 1.4),
+                      style: TextStyle(fontSize: 14, color: Color.fromARGB(255, 255, 255, 255), height: 1.4),
                     ),
                   ),
                   const SizedBox(height: 10),
