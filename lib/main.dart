@@ -601,23 +601,22 @@ Future<void> _saveCurrentQueueAsFreeSongs() async {
 Future<void> _playFreeSongsPlaylist() async {
   final prefs = await SharedPreferences.getInstance();
   final saved = prefs.getString('free_songs_playlist');
-  
+
   if (saved != null && saved.isNotEmpty) {
-    final List<dynamic> loaded = jsonDecode(saved);
+    // Optional: Rebuild if email status changed
+    await _createFreeSongsPlaylist();   // This ensures latest email status
+  } else {
+    await _createFreeSongsPlaylist();
+  }
+
+  if (_freeSongsOrdered.isNotEmpty) {
     setState(() {
-      _queue = loaded.cast<Map<String, dynamic>>();
+      _queue = List.from(_freeSongsOrdered);
       _isQueueMode = true;
       _currentAlbum = "Free Songs";
       _currentSongIndex = 0;
     });
     await _playSong("Free Songs", 0, fromQueue: true);
-    print("▶️ Playing Free Songs playlist from saved order");
-  } else {
-    await _createFreeSongsPlaylist();  // Fallback
-    if (_freeSongsOrdered.isNotEmpty) {
-      setState(() => _queue = List.from(_freeSongsOrdered));
-      await _playSong("Free Songs", 0, fromQueue: true);
-    }
   }
 }
 
@@ -940,6 +939,9 @@ Future<void> _handleEmailConfirmationSuccess([String? pendingAlbumName]) async {
   setState(() {
     _hasConfirmedEmail = true;
   });
+
+  // Refresh the free playlist immediately
+  await _createFreeSongsPlaylist();
 
   print("✅ Email confirmation success - forcing full UI refresh");
 
@@ -3723,21 +3725,25 @@ Widget _buildFreeSongsPlaylistTile() {
   );
 }
 
-// ====================== FREE SONGS PLAYLIST (DynamoDB ORDER) ======================
+// ====================== FREE SONGS PLAYLIST (isFree + Conditional emailUnlock) ======================
 Future<void> _createFreeSongsPlaylist() async {
   List<Map<String, dynamic>> freeSongs = [];
 
-  // 1. Collect all free songs
+  print("🔄 Creating Free Songs playlist | hasConfirmedEmail = $_hasConfirmedEmail");
+
   _albums.forEach((albumName, albumData) {
     final songs = albumData['songs'] as List<dynamic>? ?? [];
+
     for (var song in songs) {
       final songMap = Map<String, dynamic>.from(song as Map);
 
-      final bool isFree = 
-          (songMap['isFree'] as bool? ?? false) ||
-          (songMap['emailUnlock'] as bool? ?? false && (_hasConfirmedEmail ?? false));
+      final bool isFreeSong = (songMap['isFree'] as bool? ?? false);
+      final bool isEmailUnlock = (songMap['emailUnlock'] as bool? ?? false);
 
-      if (isFree) {
+      final bool shouldInclude = isFreeSong || 
+          (isEmailUnlock && (_hasConfirmedEmail ?? false));
+
+      if (shouldInclude) {
         freeSongs.add({
           'title': songMap['title'] ?? songMap['Title'] ?? 'Unknown Song',
           'albumName': albumName,
@@ -3751,12 +3757,12 @@ Future<void> _createFreeSongsPlaylist() async {
 
   if (freeSongs.isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("No free songs found")),
+      const SnackBar(content: Text("No free or unlocked songs found")),
     );
     return;
   }
 
-  // 2. Apply DynamoDB order (if available)
+  // Apply DynamoDB order if available
   if (_freeSongsOrderFromDB.isNotEmpty) {
     freeSongs.sort((a, b) {
       final titleA = (a['title'] as String).trim().toLowerCase();
@@ -3769,12 +3775,9 @@ Future<void> _createFreeSongsPlaylist() async {
       if (idxB == -1) return -1;
       return idxA.compareTo(idxB);
     });
-    print("✅ Applied DynamoDB free songs order");
-  } else {
-    print("⚠️ No DynamoDB order found — using collection order");
   }
 
-  // 3. Save persistently
+  // Save persistently
   final prefs = await SharedPreferences.getInstance();
   await prefs.setString('free_songs_playlist', jsonEncode(freeSongs));
   await prefs.setBool('hasCreatedFreePlaylist', true);
@@ -3783,14 +3786,15 @@ Future<void> _createFreeSongsPlaylist() async {
     _freeSongsOrdered = List.from(freeSongs);
   });
 
+  final emailNote = (_hasConfirmedEmail ?? false) ? " (including email-unlocked)" : " (truly free only)";
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
-      content: Text("✅ Free Songs order loaded • ${_freeSongsOrdered.length} tracks"),
+      content: Text("✅ Free Songs playlist ready • ${freeSongs.length} tracks$emailNote"),
       backgroundColor: Colors.green,
     ),
   );
 
-  print("✅ Free Songs playlist ready with ${_freeSongsOrdered.length} tracks");
+  print("✅ Free Songs playlist created with ${freeSongs.length} tracks | Email confirmed: ${_hasConfirmedEmail}");
 }
 
 void _showCreatePlaylistDialog() {
