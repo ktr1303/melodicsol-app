@@ -2104,32 +2104,28 @@ Future<void> _fetchAlbums() async {
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body) as Map<String, dynamic>? ?? {};
 
-        // NEW: Extract freeSongsOrder (add this)
-        if (data.containsKey('freeSongsOrder')) {
-          _freeSongsOrderFromDB = (data['freeSongsOrder'] as List<dynamic>? ?? [])
-              .map((e) => e.toString().trim())
-              .toList();
-          print("✅ Loaded ${_freeSongsOrderFromDB.length} free songs order from DynamoDB");
-        } else {
-          _freeSongsOrderFromDB = [];
-        }
-
-
-      
-      // NEW: Extract free songs custom order from DynamoDB/API
+      // === Extract freeSongsOrder (config) BEFORE processing albums ===
+      List<String> freeSongsOrder = [];
       if (data.containsKey('freeSongsOrder')) {
-        _freeSongsOrderFromDB = (data['freeSongsOrder'] as List<dynamic>? ?? [])
+        freeSongsOrder = (data['freeSongsOrder'] as List<dynamic>? ?? [])
             .map((e) => e.toString().trim())
             .toList();
-        print("✅ Loaded freeSongsOrder from DynamoDB: ${_freeSongsOrderFromDB.length} tracks");
+        print("✅ Loaded ${freeSongsOrder.length} free songs order from DynamoDB");
       }
 
+      // === Filter out config keys and only keep real albums ===
+      final albumData = Map<String, dynamic>.from(data);
+      albumData.remove('freeSongsOrder');   // Remove the config key
+
       setState(() {
-        _albums = data.map((key, value) {  // Note: this assumes albums are under top-level keys; adjust if wrapped
-          if (value is! Map<String, dynamic>) {
+        _freeSongsOrderFromDB = freeSongsOrder;
+
+        _albums = albumData.map((key, value) {
+          if (value is! Map<String, dynamic> || key == 'freeSongsOrder') {
             return MapEntry(key, {'artUrl': '', 'songs': [], 'themeColor': '#4CAF50', 'order': 999});
           }
-          // ... (keep your existing song processing and canPurchaseIndividually logic exactly as-is)
+
+          // Existing song processing
           final songs = value['songs'] as List? ?? [];
           for (var song in songs) {
             if (song is Map) {
@@ -2137,6 +2133,7 @@ Future<void> _fetchAlbums() async {
               song['url'] ??= '';
             }
           }
+
           value['themeColor'] ??= '#4CAF50';
           value['rotatingArtUrl'] ??= value['artUrl'] ?? '';
 
@@ -2147,7 +2144,7 @@ Future<void> _fetchAlbums() async {
           return MapEntry(key, value);
         });
 
-        // Your existing individuallyPurchasableAlbums logic...
+        // Individual purchase albums
         final List<String> individuallyPurchasableAlbums = ['live', 'Sol', 'Melodic'];
         for (var album in individuallyPurchasableAlbums) {
           if (_albums.containsKey(album)) {
@@ -2157,7 +2154,7 @@ Future<void> _fetchAlbums() async {
 
         _isLoading = false;
 
-        // Create glow controllers...
+        // Glow controllers for real albums only
         for (var albumName in _albums.keys) {
           if (!_albumGlowControllers.containsKey(albumName)) {
             final baseDuration = 1400 + (albumName.hashCode % 2200);
@@ -2763,14 +2760,17 @@ return Column(
 
     // Album Title
 // Album Title - Now Clickable
-GestureDetector(
-  onTap: _showAlbumSelectorPopup,
-  child: Text(
-    _albumDisplayNames[albumName] ?? albumName,
-    style: _getAlbumFont(albumName).copyWith(fontSize: 28),
-    textAlign: TextAlign.center,
+  GestureDetector(
+    onTap: _showAlbumSelectorPopup,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Text(
+        _albumDisplayNames[albumName] ?? albumName,
+        style: _getAlbumFont(albumName).copyWith(fontSize: 28),
+        textAlign: TextAlign.center,
+      ),
+    ),
   ),
-),
     const SizedBox(height: 12),
 
     // === SONG LIST WITH STRONG PULL-TO-REFRESH ===
@@ -2923,42 +2923,44 @@ void _showAlbumSelectorPopup() {
         "Select Album",
         style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
       ),
-      content: SizedBox(
-        width: double.maxFinite,
-        height: 420,
-        child: ListView.builder(
-          itemCount: _albums.keys.length,
-          itemBuilder: (context, index) {
-            final albumKey = _albums.keys.toList()[index];
-            final displayName = _albumDisplayNames[albumKey] ?? albumKey;
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.65,  // Responsive height
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: _albums.keys.map((albumKey) {
+              final displayName = _albumDisplayNames[albumKey] ?? albumKey;
 
-            return ListTile(
-              contentPadding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-              leading: ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: CachedNetworkImage(
-                  imageUrl: _albums[albumKey]?['artUrl'] ?? '',
-                  width: 48,
-                  height: 48,
-                  fit: BoxFit.cover,
-                  errorWidget: (_, __, ___) => const Icon(Icons.album, color: Colors.white38),
+              return ListTile(
+                contentPadding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: CachedNetworkImage(
+                    imageUrl: _albums[albumKey]?['artUrl'] ?? '',
+                    width: 48,
+                    height: 48,
+                    fit: BoxFit.cover,
+                    errorWidget: (_, __, ___) => const Icon(Icons.album, color: Colors.white38),
+                  ),
                 ),
-              ),
-              title: Text(
-                displayName,
-                style: _getAlbumFont(albumKey).copyWith(
-                  fontSize: 18,
-                  color: Colors.white,
+                title: Text(
+                  displayName,
+                  style: _getAlbumFont(albumKey).copyWith(
+                    fontSize: 18,
+                    color: Colors.white,
+                  ),
                 ),
-              ),
-              onTap: () {
-                Navigator.pop(context); // Close popup
-                setState(() {
-                  _selectedAlbum = albumKey;
-                });
-              },
-            );
-          },
+                onTap: () {
+                  Navigator.pop(context);
+                  setState(() {
+                    _selectedAlbum = albumKey;
+                  });
+                },
+              );
+            }).toList(),
+          ),
         ),
       ),
       actions: [
