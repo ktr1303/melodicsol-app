@@ -640,7 +640,6 @@ Future<void> _saveCurrentQueueAsPlaylist() async {
     return;
   }
 
-  // Optional: Let user name the playlist (simple dialog)
   final TextEditingController nameController = TextEditingController(
     text: "My Playlist ${_playlists.length + 1}",
   );
@@ -649,20 +648,19 @@ Future<void> _saveCurrentQueueAsPlaylist() async {
     context: context,
     builder: (context) => AlertDialog(
       backgroundColor: Colors.grey[900],
-      title: const Text("Save Playlist"),
+      title: const Text("Save Playlist", style: TextStyle(color: Colors.white)),
       content: TextField(
         controller: nameController,
         decoration: const InputDecoration(
           labelText: "Playlist Name",
           hintText: "e.g. Road Trip Mix",
+          labelStyle: TextStyle(color: Colors.white70),
         ),
+        style: const TextStyle(color: Colors.white),
         autofocus: true,
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text("Cancel"),
-        ),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
         TextButton(
           onPressed: () => Navigator.pop(context, nameController.text.trim()),
           child: const Text("Save", style: TextStyle(color: Colors.greenAccent)),
@@ -673,27 +671,25 @@ Future<void> _saveCurrentQueueAsPlaylist() async {
 
   if (playlistName == null || playlistName.isEmpty) return;
 
-  // Save to SharedPreferences (or Firestore later)
-  final prefs = await SharedPreferences.getInstance();
-  final List<Map<String, dynamic>> queueCopy = List.from(_queue);
+  final newPlaylist = {
+    "id": DateTime.now().millisecondsSinceEpoch.toString(),
+    "name": playlistName,
+    "songs": _queue.map((song) => Map<String, dynamic>.from(song)).toList(),
+    "createdAt": DateTime.now().toIso8601String(),
+  };
 
-  _playlists.add({
-    'id': DateTime.now().millisecondsSinceEpoch.toString(),
-    'name': playlistName,
-    'songs': queueCopy,
-    'createdAt': DateTime.now().toIso8601String(),
+  setState(() {
+    _playlists.add(newPlaylist);
   });
 
-  await prefs.setString('saved_playlists', jsonEncode(_playlists));
+  await _savePlaylists();   // Use existing shared save method
 
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
-      content: Text("✅ Saved as '$playlistName' • ${_queue.length} songs"),
+      content: Text("✅ Saved '$playlistName' • ${_queue.length} songs"),
       backgroundColor: Colors.green,
     ),
   );
-
-  setState(() {}); // Refresh saved playlists section
 }
 
 Future<void> _playFreeSongsPlaylist() async {
@@ -718,43 +714,30 @@ Future<void> _playFreeSongsPlaylist() async {
   }
 }
 
-Future<void> _savePlaylists() async {
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setString('playlists', jsonEncode(_playlists));
-  print("✅ Playlists saved (${_playlists.length} playlists)");
+Future<void> _loadPlaylists() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final String? saved = prefs.getString('saved_playlists');
+    
+    if (saved != null && saved.isNotEmpty) {
+      final List<dynamic> decoded = jsonDecode(saved);
+      setState(() {
+        _playlists = decoded.cast<Map<String, dynamic>>();
+      });
+      print("✅ Loaded ${_playlists.length} saved playlists");
+    }
+  } catch (e) {
+    print("❌ Error loading playlists: $e");
+  }
 }
 
-// Updated - Now properly async
-Future<void> _loadPlaylists() async {
-  final prefs = await SharedPreferences.getInstance();
-  final String? jsonString = prefs.getString('playlists');
-
-  if (jsonString != null && jsonString.isNotEmpty) {
-    try {
-      final List<dynamic> decoded = jsonDecode(jsonString);
-      setState(() {
-        _playlists = decoded.map((item) {
-          final playlist = Map<String, dynamic>.from(item as Map);
-          // Ensure songs have consistent structure
-          if (playlist['songs'] != null) {
-            playlist['songs'] = (playlist['songs'] as List).map((song) {
-              final s = Map<String, dynamic>.from(song as Map);
-              s['title'] = s['title'] ?? s['Title'] ?? 'Unknown Song';
-              s['albumName'] = s['albumName'] ?? s['Album'] ?? 'Unknown Album';
-              return s;
-            }).toList();
-          }
-          return playlist;
-        }).toList();
-      });
-      print("✅ Loaded ${_playlists.length} playlists from storage");
-    } catch (e) {
-      print("❌ Error loading playlists: $e");
-      _playlists = [];
-    }
-  } else {
-    _playlists = [];
-    print("📂 No saved playlists found");
+Future<void> _savePlaylists() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('saved_playlists', jsonEncode(_playlists));
+    print("✅ Saved ${_playlists.length} playlists to storage");
+  } catch (e) {
+    print("❌ Error saving playlists: $e");
   }
 }
 
@@ -2003,8 +1986,15 @@ Future<void> _handleSongCompletion() async {
     await _globalPlayer.stop();
   }
 }
+void _showLoadPlaylistDialog() async {
+  await _loadPlaylists();   // ← Force refresh
 
-void _showLoadPlaylistDialog() {
+  if (_playlists.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("No saved playlists yet")),
+    );
+    return;
+  }
   showDialog(
     context: context,
     builder: (context) {
