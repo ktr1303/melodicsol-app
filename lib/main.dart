@@ -197,6 +197,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool get _shouldShowPlayer => _selectedIndex == 2 && _queue.isNotEmpty;
   bool _isShuffleEnabled = false;
   LoopMode _currentLoopMode = LoopMode.off;
+  List<String> _freeSongsOrderFromDB = [];
+  List<Map<String, dynamic>> _freeSongsOrdered = [];
 
   Future<bool> hasEntitlement(String entitlementId) async {
   try {
@@ -597,32 +599,26 @@ Future<void> _saveCurrentQueueAsFreeSongs() async {
 }
 
 Future<void> _playFreeSongsPlaylist() async {
-  final freeSongs = await _loadFreeSongsPlaylist();
-  if (freeSongs.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("No free songs saved yet")),
-    );
-    return;
-  }
-
-  setState(() {
-    _queue = List<Map<String, dynamic>>.from(freeSongs);
-    _currentAlbum = "Free Songs";
-    _isQueueMode = true;
-  });
-
-  _forceQueueRebuild();
-
-  if (_queue.isNotEmpty) {
+  final prefs = await SharedPreferences.getInstance();
+  final saved = prefs.getString('free_songs_playlist');
+  
+  if (saved != null && saved.isNotEmpty) {
+    final List<dynamic> loaded = jsonDecode(saved);
+    setState(() {
+      _queue = loaded.cast<Map<String, dynamic>>();
+      _isQueueMode = true;
+      _currentAlbum = "Free Songs";
+      _currentSongIndex = 0;
+    });
     await _playSong("Free Songs", 0, fromQueue: true);
+    print("▶️ Playing Free Songs playlist from saved order");
+  } else {
+    await _createFreeSongsPlaylist();  // Fallback
+    if (_freeSongsOrdered.isNotEmpty) {
+      setState(() => _queue = List.from(_freeSongsOrdered));
+      await _playSong("Free Songs", 0, fromQueue: true);
+    }
   }
-
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text("🎵 Playing Free Songs • ${freeSongs.length} tracks"),
-      backgroundColor: Colors.green,
-    ),
-  );
 }
 
 Future<void> _savePlaylists() async {
@@ -2100,83 +2096,86 @@ void _refreshQueueUI() {
 
   IconData _getLoopIcon() => _loopMode == LoopMode.off ? Icons.repeat : _loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat_on;
 
-  Future<void> _fetchAlbums() async {
-    try {
-      final response = await http.get(Uri.parse('https://qg6eie62sc.execute-api.us-east-2.amazonaws.com/Prod'));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>? ?? {};
-        setState(() {
-          _albums = data.map((key, value) {
-            if (value is! Map<String, dynamic>) {
-              return MapEntry(key, {
-                'artUrl': '',
-                'rotatingArtUrl': '',
-                'songs': [],
-                'themeColor': '#4CAF50',
-                'order': 999,
-                'canPurchaseIndividually': false,   // ← Default false
-              });
-            }
+Future<void> _fetchAlbums() async {
+  try {
+    final response = await http.get(Uri.parse('https://qg6eie62sc.execute-api.us-east-2.amazonaws.com/Prod'));
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>? ?? {};
 
-            final songs = value['songs'] as List? ?? [];
-            for (var song in songs) {
-              if (song is Map) {
-                song['Title'] ??= song['title'] ?? 'Untitled';
-                song['url'] ??= '';
-              }
-            }
+        // NEW: Extract freeSongsOrder (add this)
+        if (data.containsKey('freeSongsOrder')) {
+          _freeSongsOrderFromDB = (data['freeSongsOrder'] as List<dynamic>? ?? [])
+              .map((e) => e.toString().trim())
+              .toList();
+          print("✅ Loaded ${_freeSongsOrderFromDB.length} free songs order from DynamoDB");
+        } else {
+          _freeSongsOrderFromDB = [];
+        }
 
-            value['themeColor'] ??= '#4CAF50';
-            value['rotatingArtUrl'] ??= value['artUrl'] ?? '';
 
-            dynamic raw = value['order'];
-            value['order'] = (raw is num) ? raw.toInt() : (raw is String ? int.tryParse(raw) ?? 999 : 999);
-
-            // Add this line for each album
-            value['canPurchaseIndividually'] ??= false;   // ← Set true/false per album here
-
-            return MapEntry(key, value);
-          });
-
-                    final List<String> individuallyPurchasableAlbums = [
-            'live',      // change these to your exact album keys
-            'Sol',
-            'Melodic',
-            // Add or remove albums here as needed
-          ];
-
-          for (var album in individuallyPurchasableAlbums) {
-            if (_albums.containsKey(album)) {
-              _albums[album]!['canPurchaseIndividually'] = true;
-            }
-          }
-          print("🎯 Available album keys in _albums: ${_albums.keys.toList()}");
-          print("🎯 Marked for \$17 purchase: $individuallyPurchasableAlbums");
-          _isLoading = false;
-
-          // === HARD-CODED: Which albums can be bought individually for $17 ===
-
-          // Create truly independent glow controller for each album
-          for (var albumName in _albums.keys) {
-            if (!_albumGlowControllers.containsKey(albumName)) {
-              // Different speed and phase per album
-              final baseDuration = 1400 + (albumName.hashCode % 2200);
-              final controller = AnimationController(
-                duration: Duration(milliseconds: baseDuration),
-                vsync: this,
-              )..repeat(reverse: true);
-              _albumGlowControllers[albumName] = controller;
-            }
-          }
-        });
+      
+      // NEW: Extract free songs custom order from DynamoDB/API
+      if (data.containsKey('freeSongsOrder')) {
+        _freeSongsOrderFromDB = (data['freeSongsOrder'] as List<dynamic>? ?? [])
+            .map((e) => e.toString().trim())
+            .toList();
+        print("✅ Loaded freeSongsOrder from DynamoDB: ${_freeSongsOrderFromDB.length} tracks");
       }
-    } catch (e) {
+
       setState(() {
-        _errorMessage = 'Error loading albums';
+        _albums = data.map((key, value) {  // Note: this assumes albums are under top-level keys; adjust if wrapped
+          if (value is! Map<String, dynamic>) {
+            return MapEntry(key, {'artUrl': '', 'songs': [], 'themeColor': '#4CAF50', 'order': 999});
+          }
+          // ... (keep your existing song processing and canPurchaseIndividually logic exactly as-is)
+          final songs = value['songs'] as List? ?? [];
+          for (var song in songs) {
+            if (song is Map) {
+              song['Title'] ??= song['title'] ?? 'Untitled';
+              song['url'] ??= '';
+            }
+          }
+          value['themeColor'] ??= '#4CAF50';
+          value['rotatingArtUrl'] ??= value['artUrl'] ?? '';
+
+          dynamic raw = value['order'];
+          value['order'] = (raw is num) ? raw.toInt() : (raw is String ? int.tryParse(raw) ?? 999 : 999);
+          value['canPurchaseIndividually'] ??= false;
+
+          return MapEntry(key, value);
+        });
+
+        // Your existing individuallyPurchasableAlbums logic...
+        final List<String> individuallyPurchasableAlbums = ['live', 'Sol', 'Melodic'];
+        for (var album in individuallyPurchasableAlbums) {
+          if (_albums.containsKey(album)) {
+            _albums[album]!['canPurchaseIndividually'] = true;
+          }
+        }
+
         _isLoading = false;
+
+        // Create glow controllers...
+        for (var albumName in _albums.keys) {
+          if (!_albumGlowControllers.containsKey(albumName)) {
+            final baseDuration = 1400 + (albumName.hashCode % 2200);
+            final controller = AnimationController(
+              duration: Duration(milliseconds: baseDuration),
+              vsync: this,
+            )..repeat(reverse: true);
+            _albumGlowControllers[albumName] = controller;
+          }
+        }
       });
     }
+  } catch (e) {
+    setState(() {
+      _errorMessage = 'Error loading albums';
+      _isLoading = false;
+    });
+    print("❌ _fetchAlbums error: $e");
   }
+}
 
 Future<bool> _isContentUnlocked(String? albumName) async {
   if (albumName == null) return false;
@@ -3689,7 +3688,10 @@ void _deletePlaylist(int index) {
 Widget _buildFreeSongsPlaylistTile() {
   return GestureDetector(
     onTap: () async {
-      await _playFreeSongsPlaylist();   // Now uses robust loading
+      await _playFreeSongsPlaylist();  // Uses saved order
+    },
+    onLongPress: () async {  // Long-press refreshes from DynamoDB
+      await _createFreeSongsPlaylist();
     },
     child: Container(
       width: double.infinity,
@@ -3709,7 +3711,8 @@ Widget _buildFreeSongsPlaylistTile() {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text("Free Songs", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                Text("All free tracks • Play instantly", style: TextStyle(fontSize: 13, color: Colors.white70)),
+                Text("All free tracks • Long-press to refresh from catalog", 
+                     style: TextStyle(fontSize: 13, color: Colors.white70)),
               ],
             ),
           ),
@@ -3720,14 +3723,13 @@ Widget _buildFreeSongsPlaylistTile() {
   );
 }
 
-// ====================== IMPROVED FREE SONGS PLAYLIST ======================
+// ====================== FREE SONGS PLAYLIST (DynamoDB ORDER) ======================
 Future<void> _createFreeSongsPlaylist() async {
   List<Map<String, dynamic>> freeSongs = [];
 
-  // Scan all albums for songs marked as isFree = true
+  // 1. Collect all free songs
   _albums.forEach((albumName, albumData) {
     final songs = albumData['songs'] as List<dynamic>? ?? [];
-
     for (var song in songs) {
       final songMap = Map<String, dynamic>.from(song as Map);
 
@@ -3749,24 +3751,46 @@ Future<void> _createFreeSongsPlaylist() async {
 
   if (freeSongs.isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("No free songs found in catalog")),
+      const SnackBar(content: Text("No free songs found")),
     );
     return;
   }
 
-  // Save with preserved order
+  // 2. Apply DynamoDB order (if available)
+  if (_freeSongsOrderFromDB.isNotEmpty) {
+    freeSongs.sort((a, b) {
+      final titleA = (a['title'] as String).trim().toLowerCase();
+      final titleB = (b['title'] as String).trim().toLowerCase();
+      final idxA = _freeSongsOrderFromDB.indexWhere((t) => t.toLowerCase() == titleA);
+      final idxB = _freeSongsOrderFromDB.indexWhere((t) => t.toLowerCase() == titleB);
+      
+      if (idxA == -1 && idxB == -1) return 0;
+      if (idxA == -1) return 1;
+      if (idxB == -1) return -1;
+      return idxA.compareTo(idxB);
+    });
+    print("✅ Applied DynamoDB free songs order");
+  } else {
+    print("⚠️ No DynamoDB order found — using collection order");
+  }
+
+  // 3. Save persistently
   final prefs = await SharedPreferences.getInstance();
   await prefs.setString('free_songs_playlist', jsonEncode(freeSongs));
   await prefs.setBool('hasCreatedFreePlaylist', true);
 
+  setState(() {
+    _freeSongsOrdered = List.from(freeSongs);
+  });
+
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
-      content: Text("✅ Free Songs playlist created • ${freeSongs.length} tracks"),
+      content: Text("✅ Free Songs order loaded • ${_freeSongsOrdered.length} tracks"),
       backgroundColor: Colors.green,
     ),
   );
 
-  print("✅ Free Songs playlist saved with ${freeSongs.length} tracks");
+  print("✅ Free Songs playlist ready with ${_freeSongsOrdered.length} tracks");
 }
 
 void _showCreatePlaylistDialog() {
