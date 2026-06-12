@@ -2800,7 +2800,7 @@ Expanded(
     color: Colors.greenAccent,
     backgroundColor: Colors.black87,
     child: ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 120),
       itemCount: songs.length,
       itemBuilder: (context, index) {
         final song = songs[index] as Map<String, dynamic>;
@@ -3381,7 +3381,7 @@ Widget _buildPlaylistsPage() {
 
         // Saved Playlists Section
         Container(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 229), // Increased to stay above mini-player
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 260), // Increased to stay above mini-player
           decoration: const BoxDecoration(
             color: Colors.black87,
             border: Border(top: BorderSide(color: Colors.white24)),
@@ -4041,6 +4041,7 @@ Widget _buildSocialPage() {
           ],
         ),
       ),
+      const SizedBox(height: 40),
 
       // Debug Button - Fixed Position (MUST be inside Stack)
       if (kDebugMode)
