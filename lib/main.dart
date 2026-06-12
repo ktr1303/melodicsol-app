@@ -631,7 +631,6 @@ Future<void> _saveCurrentQueueAsFreeSongs() async {
     const SnackBar(content: Text("✅ Free Songs order saved"), backgroundColor: Colors.green),
   );
 }
-// ====================== SAVE CURRENT QUEUE AS PLAYLIST ======================
 Future<void> _saveCurrentQueueAsPlaylist() async {
   if (_queue.isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -654,7 +653,6 @@ Future<void> _saveCurrentQueueAsPlaylist() async {
         decoration: const InputDecoration(
           labelText: "Playlist Name",
           hintText: "e.g. Road Trip Mix",
-          labelStyle: TextStyle(color: Colors.white70),
         ),
         style: const TextStyle(color: Colors.white),
         autofocus: true,
@@ -682,7 +680,7 @@ Future<void> _saveCurrentQueueAsPlaylist() async {
     _playlists.add(newPlaylist);
   });
 
-  await _savePlaylists();   // Use existing shared save method
+  await _savePlaylists();
 
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
@@ -1986,8 +1984,9 @@ Future<void> _handleSongCompletion() async {
     await _globalPlayer.stop();
   }
 }
+
 void _showLoadPlaylistDialog() async {
-  await _loadPlaylists();   // ← Force refresh
+  await _loadPlaylists();   // Force refresh from storage
 
   if (_playlists.isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1995,88 +1994,67 @@ void _showLoadPlaylistDialog() async {
     );
     return;
   }
+
   showDialog(
     context: context,
     builder: (context) {
-      return FutureBuilder<SharedPreferences>(
-        future: SharedPreferences.getInstance(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      return AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: const Text("Your Playlists", style: TextStyle(color: Colors.white)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: _playlists.length,
+            itemBuilder: (context, index) {
+              final playlist = _playlists[index];
+              final name = playlist["name"] ?? "Unnamed Playlist";
+              final songCount = (playlist["songs"] as List? ?? []).length;
 
-          final prefs = snapshot.data!;
-          final String? jsonString = prefs.getString('playlists');
-
-          List<dynamic> loadedPlaylists = [];
-          if (jsonString != null && jsonString.isNotEmpty) {
-            try {
-              loadedPlaylists = jsonDecode(jsonString);
-              print("📂 Loaded ${loadedPlaylists.length} playlists for dialog");
-            } catch (e) {
-              print("❌ Error decoding playlists: $e");
-            }
-          } else {
-            print("📂 No saved playlists found in storage");
-          }
-
-          return AlertDialog(
-            backgroundColor: Colors.grey[900],
-            title: const Text("Your Playlists", style: TextStyle(color: Colors.white)),
-            content: loadedPlaylists.isEmpty
-                ? const Text("No saved playlists yet.", style: TextStyle(color: Colors.white70))
-                : SizedBox(
-                    width: double.maxFinite,
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: loadedPlaylists.length,
-                      itemBuilder: (context, index) {
-                        final playlist = Map<String, dynamic>.from(loadedPlaylists[index] as Map);
-                        final name = playlist["name"] ?? "Unnamed Playlist";
-                        final id = playlist["id"] as String?;
-
-                        return ListTile(
-                          title: Text(name, style: const TextStyle(color: Colors.white)),
-                          subtitle: Text("${(playlist["songs"] as List? ?? []).length} songs",
-                              style: const TextStyle(color: Colors.white54)),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.redAccent),
-                            onPressed: () async {
-                              final confirm = await showDialog<bool>(
-                                context: context,
-                                builder: (c) => AlertDialog(
-                                  title: const Text("Delete Playlist?"),
-                                  actions: [
-                                    TextButton(onPressed: () => Navigator.pop(c, false), child: const Text("Cancel")),
-                                    TextButton(onPressed: () => Navigator.pop(c, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
-                                  ],
-                                ),
-                              );
-
-                              if (confirm == true && id != null) {
-                                final updated = List<dynamic>.from(loadedPlaylists);
-                                updated.removeAt(index);
-                                await prefs.setString('playlists', jsonEncode(updated));
-                                Navigator.pop(context);
-                                _showLoadPlaylistDialog(); // Refresh dialog
-                              }
-                            },
+              return ListTile(
+                title: Text(name, style: const TextStyle(color: Colors.white)),
+                subtitle: Text("$songCount songs", style: const TextStyle(color: Colors.white54)),
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete, color: Colors.redAccent),
+                  onPressed: () async {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (c) => AlertDialog(
+                        title: const Text("Delete Playlist?"),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text("Cancel")),
+                          TextButton(
+                            onPressed: () => Navigator.pop(c, true),
+                            child: const Text("Delete", style: TextStyle(color: Colors.red)),
                           ),
-                          onTap: () {
-                            if (id != null) {
-                              Navigator.pop(context);
-                              _playPlaylist(id);
-                            }
-                          },
-                        );
-                      },
-                    ),
-                  ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(context), child: const Text("Close")),
-            ],
-          );
-        },
+                        ],
+                      ),
+                    );
+
+                    if (confirm == true) {
+                      setState(() {
+                        _playlists.removeAt(index);
+                      });
+                      await _savePlaylists();
+                      Navigator.pop(context);
+                      _showLoadPlaylistDialog(); // Refresh
+                    }
+                  },
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _playPlaylist(playlist["id"]);
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Close"),
+          ),
+        ],
       );
     },
   );
