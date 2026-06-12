@@ -26,6 +26,8 @@ import 'package:firebase_dynamic_links/firebase_dynamic_links.dart';
 import 'email_verification_screen.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:youtube_player_flutter/youtube_player_flutter.dart';
+
 
 
 
@@ -193,6 +195,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _isQueueTutorialShowing = false;
   Set<String> _unlockedAlbums = {}; // Global unlocked albums
   bool get _shouldShowPlayer => _selectedIndex == 2 && _queue.isNotEmpty;
+  bool _isShuffleEnabled = false;
+  LoopMode _currentLoopMode = LoopMode.off;
 
   Future<bool> hasEntitlement(String entitlementId) async {
   try {
@@ -325,7 +329,7 @@ Future<void> _loadGlobalUnlockStatus() async {
 @override
 void initState() {
   super.initState();
-  _nowPlayingNotifier = ValueNotifier(NowPlayingInfo(title: "Play song or swipe left for queue"));
+  _nowPlayingNotifier = ValueNotifier(NowPlayingInfo(title: "Play song"));
   _nowPlayingNotifier.addListener(() {
     if (mounted) setState(() {});   // forces full rebuild when title changes
   });
@@ -381,6 +385,18 @@ void initState() {
         if (mounted) {
           Navigator.popUntil(context, (route) => route.isFirst); // Return to main spine
         }
+      }
+    });
+      // Listen to shuffle and loop changes
+    _globalPlayer.shuffleModeEnabledStream.listen((enabled) {
+      if (mounted) {
+        setState(() => _isShuffleEnabled = enabled);
+      }
+    });
+
+    _globalPlayer.loopModeStream.listen((mode) {
+      if (mounted) {
+        setState(() => _currentLoopMode = mode);
       }
     });
   }
@@ -530,6 +546,7 @@ TextStyle _getAlbumFont(String albumKey) {
   );
 }
 
+
 void _onQueueReorder(int oldIndex, int newIndex) {
   if (oldIndex < newIndex) newIndex -= 1;
 
@@ -646,6 +663,41 @@ Future<void> _loadPlaylists() async {
     _playlists = [];
     print("📂 No saved playlists found");
   }
+}
+
+Future<void> _toggleShuffle() async {
+  setState(() {
+    _isShuffleEnabled = !_isShuffleEnabled;
+  });
+  await _globalPlayer.setShuffleModeEnabled(_isShuffleEnabled);
+  print("🔀 Shuffle ${_isShuffleEnabled ? 'Enabled' : 'Disabled'}");
+}
+
+Future<void> _cycleLoopMode() async {
+  LoopMode nextMode;
+  String label;
+
+  switch (_currentLoopMode) {
+    case LoopMode.off:
+      nextMode = LoopMode.all;
+      label = "Loop All";
+      break;
+    case LoopMode.all:
+      nextMode = LoopMode.one;
+      label = "Loop One";
+      break;
+    case LoopMode.one:
+      nextMode = LoopMode.off;
+      label = "Loop Off";
+      break;
+  }
+
+  setState(() {
+    _currentLoopMode = nextMode;
+  });
+
+  await _globalPlayer.setLoopMode(nextMode);
+  print("🔁 Loop mode: $label");
 }
 
 void _createNewPlaylist(String name) async {
@@ -1232,10 +1284,10 @@ Future<void> _showMainAlbumTutorial() async {
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       content: const Text(
-        "Tap Albums\n"
+        "Tap  🦴\n"
         "\n"
-        "Swipe left = music\n"
-        "Swipe right = internet",
+        "Swipe 👉 = 🎶\n"
+        "Swipe 👈 = 🌍",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
       actions: [
@@ -1245,7 +1297,7 @@ Future<void> _showMainAlbumTutorial() async {
             Navigator.pop(context);
             _isTutorialShowing = false;
           },
-          child: const Text("Yes", style: TextStyle(fontSize: 16)),
+          child: const Text("Go≫🎧🎶", style: TextStyle(fontSize: 16)),
         ),
       ],
     ),
@@ -1266,13 +1318,11 @@ Future<void> _showAlbumDetailTutorial() async {
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       content: const Text(
-        "Tap\n"
-        " Songs\n"
-        " Art\n"
-        " Titles\n"        
+        "      Tap \n" 
+        "🎶🎧 & 🎨👀\n"        
         "\n"
-        "Long Press\n"
-        "• Plynxt,queue,stories,etc..\n"
+        "Long Press \n" 
+        "📜-▶-💾-etc.. \n"
         "",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
@@ -1283,7 +1333,7 @@ Future<void> _showAlbumDetailTutorial() async {
             Navigator.pop(context);
             _isTutorialShowing = false;
           },
-          child: const Text("Play 🤘", style: TextStyle(fontSize: 16)),
+          child: const Text("✔️", style: TextStyle(fontSize: 16)),
         ),
       ],
     ),
@@ -1304,10 +1354,10 @@ Future<void> _showQueueTutorial() async {
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         content: const Text(
-          "INSTANT MUSIC\n"
-          "• Play Free Songs!!!\n\n"
+          "INSTANT 🎶\n"
+          "•Tap ▶ Free Songs!!!\n\n"
           "Long Press\n"
-          "• song stories playlists etc...\n",
+          "• 📜🎵💾etc...\n",
           style: TextStyle(fontSize: 16, height: 1.4),
         ),
       actions: [
@@ -1317,7 +1367,7 @@ Future<void> _showQueueTutorial() async {
             Navigator.pop(context);
             _isTutorialShowing = false;
           },
-          child: const Text("Music 🤘", style: TextStyle(fontSize: 16)),
+          child: const Text("☑️", style: TextStyle(fontSize: 16)),
         ),
       ],
     ),
@@ -1515,6 +1565,57 @@ void _showQueueSongOptions(Map<String, dynamic> queueItem, int queueIndex) {
           onTap: () => Navigator.pop(context),
         ),
       ],
+    ),
+  );
+}
+
+void _playYouTubeVideo(String videoUrl, String title) {
+  if (!mounted) return;
+
+  final videoId = YoutubePlayer.convertUrlToId(videoUrl) ?? '';
+
+  if (videoId.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Invalid YouTube URL")),
+    );
+    return;
+  }
+
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => Scaffold(
+        appBar: AppBar(
+          title: Text(title),
+          backgroundColor: Colors.black,
+        ),
+        body: YoutubePlayerBuilder(
+          player: YoutubePlayer(
+            controller: YoutubePlayerController(
+              initialVideoId: videoId,
+              flags: const YoutubePlayerFlags(
+                autoPlay: true,
+                mute: false,
+                disableDragSeek: false,
+                loop: false,
+              ),
+            ),
+          ),
+          builder: (context, player) => Column(
+            children: [
+              player,
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  title,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     ),
   );
 }
@@ -1993,8 +2094,6 @@ void _refreshQueueUI() {
       _globalPlayer.setLoopMode(_loopMode);
     });
   }
-
-  void _toggleShuffle() => setState(() => _isShuffled = !_isShuffled);
 
   String _formatDuration(Duration d) =>
       "${d.inMinutes.remainder(60).toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}";
@@ -2950,11 +3049,7 @@ Widget _buildPlaylistsPage() {
         IconButton(
           icon: const Icon(Icons.album_outlined, color: Colors.white70, size: 26),
           tooltip: "Select Album",
-          onPressed: () {
-            if (mounted) {
-              _showAlbumSelector();
-            }
-          },
+          onPressed: _showAlbumSelector,   // Direct reference (cleanest)
         ),
         if (_queue.isNotEmpty) ...[
           IconButton(
@@ -2989,7 +3084,7 @@ Widget _buildPlaylistsPage() {
                       Text("Queue is empty", style: TextStyle(fontSize: 22, color: Colors.white70)),
                       SizedBox(height: 8),
                       Text(
-                        "Long-press a song from an album → 'Add to Queue'",
+                        "Click Album Icon in top right corner to browse or → 'Add to Queue'",
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.white54),
                       ),
@@ -3457,12 +3552,13 @@ Widget _buildFullPlayer() {
                 color: albumTheme,
                 onPressed: _skipPrevious,
               ),
+              // Shuffle Button
               IconButton(
-                icon: Icon(Icons.shuffle, size: 28, color: _globalPlayer.shuffleModeEnabled ? albumTheme : Colors.white54),
-                onPressed: () async {
-                  await _globalPlayer.setShuffleModeEnabled(!_globalPlayer.shuffleModeEnabled);
-                  setState(() {});
-                },
+                icon: Icon(
+                  Icons.shuffle,
+                  color: _isShuffleEnabled ? Colors.greenAccent : Colors.white70,
+                ),
+                onPressed: _toggleShuffle,
               ),
               IconButton(
                 icon: Icon(
@@ -3478,21 +3574,15 @@ Widget _buildFullPlayer() {
                   }
                 },
               ),
+              // Loop Button
               IconButton(
                 icon: Icon(
-                  _globalPlayer.loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat,
-                  size: 28,
-                  color: _globalPlayer.loopMode != LoopMode.off ? albumTheme : Colors.white54,
+                  _currentLoopMode == LoopMode.one 
+                      ? Icons.repeat_one 
+                      : Icons.repeat,
+                  color: _currentLoopMode != LoopMode.off ? Colors.greenAccent : Colors.white70,
                 ),
-                onPressed: () {
-                  if (_globalPlayer.loopMode == LoopMode.off) {
-                    _globalPlayer.setLoopMode(LoopMode.all);
-                  } else if (_globalPlayer.loopMode == LoopMode.all) {
-                    _globalPlayer.setLoopMode(LoopMode.one);
-                  } else {
-                    _globalPlayer.setLoopMode(LoopMode.off);
-                  }
-                },
+                onPressed: _cycleLoopMode,
               ),
               IconButton(
                 icon: const Icon(Icons.skip_next, size: 32),
@@ -4157,6 +4247,20 @@ void _showAlbumStory(String startingAlbumName) {
                       ),
                     ),
                   ),
+                // === WATCH VIDEO BUTTON (Only if videoUrl exists) ===
+                if (album['videoUrl'] != null && (album['videoUrl'] as String).isNotEmpty)
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _playYouTubeVideo(album['videoUrl'] as String, displayName);
+                    },
+                    icon: const Icon(Icons.play_circle_outline, color: Colors.white),
+                    label: const Text("Watch Video"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.redAccent,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
               ],
             ),
           );
@@ -4220,9 +4324,10 @@ void _showAlbumSelector() {
 
             return GestureDetector(
               onTap: () {
-                Navigator.pop(context); // Close selector
-                Navigator.pop(context); // Close current story if open
-                Future.delayed(const Duration(milliseconds: 150), () {
+                Navigator.pop(context); // Close selector safely
+
+                // Navigate to Album Story
+                Future.delayed(const Duration(milliseconds: 200), () {
                   if (mounted) {
                     _showAlbumStory(albumName);
                   }
@@ -4277,27 +4382,46 @@ void _showAlbumSelector() {
 }
 
 void _addAlbumToQueue(String albumName) {
-  if (!mounted) return;
-
   final album = _albums[albumName];
   if (album == null) return;
 
-  final albumSongs = (album['songs'] as List<dynamic>? ?? []).map((s) {
+  final allSongs = album['songs'] as List<dynamic>? ?? [];
+
+  // === FILTER TO ONLY FREE / UNLOCKED SONGS ===
+  final unlockedSongs = allSongs.where((s) {
+    final songData = s as Map<String, dynamic>;
+    final isFree = songData['isFree'] as bool? ?? false;
+    final emailUnlock = songData['emailUnlock'] as bool? ?? false;
+    final isUnlockedByEmail = emailUnlock && (_hasConfirmedEmail ?? false);
+
+    return isFree || isUnlockedByEmail || _unlockedAlbums.contains(albumName) || _hasOpenAccess;
+  }).map((s) {
     final songMap = Map<String, dynamic>.from(s as Map);
     songMap['albumName'] = albumName;
     return songMap;
   }).toList();
 
+  if (unlockedSongs.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("No unlocked songs in this album")),
+    );
+    return;
+  }
+
   final bool wasEmpty = _queue.isEmpty;
 
   setState(() {
-    _queue.addAll(albumSongs);
+    _queue.addAll(unlockedSongs);
   });
 
   ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text("Added $albumName to queue (${albumSongs.length} songs)")),
+    SnackBar(
+      content: Text("Added ${unlockedSongs.length} unlocked songs from $albumName to queue"),
+      backgroundColor: Colors.greenAccent,
+    ),
   );
 
+  // Auto-play if queue was empty
   if (wasEmpty && _queue.isNotEmpty) {
     Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) {
@@ -5105,6 +5229,25 @@ void _showSongStory(String albumName, int startingSongIndex) {
                     ],
                   ),
                 ),
+                // === WATCH VIDEO BUTTON (Only if videoUrl exists) ===
+                if (song['videoUrl'] != null && (song['videoUrl'] as String).isNotEmpty)
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _playYouTubeVideo(
+                          song['videoUrl'] as String,
+                          title,
+                        );
+                      },
+                      icon: const Icon(Icons.play_circle_outline),
+                      label: const Text("Watch Video"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.redAccent,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
 
                 // Buy Album Button
                 if (_albums[albumName]?['canPurchaseIndividually'] == true)
@@ -5422,7 +5565,7 @@ Future<void> _checkAutoLogin() async {
                           ),
                         ),
                         child: const Text(
-                          "Login / Sign Up",
+                          "Sign In 🎵",
                           style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600),
                         ),
                       ),
@@ -5437,7 +5580,7 @@ Future<void> _checkAutoLogin() async {
                           );
                         },
                         child: const Text(
-                          "Skip for now",
+                          "Go ⪼ 🎧🎶",
                           style: TextStyle(fontSize: 18, color: Colors.white70),
                         ),
                       ),
@@ -5817,7 +5960,7 @@ Future<void> _submitToHighLevel() async {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  "Create Your Account",
+                  "Create Your Account ___Get Free Music___",
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
                 ),
                 const SizedBox(height: 12),
@@ -5889,7 +6032,7 @@ Future<void> _submitToHighLevel() async {
                         controller: _zipController,
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(
-                          labelText: "Zip Code (for live shows)",
+                          labelText: "Enter Zip (for live shows)",
                           isDense: true,
                         ),
                         validator: (v) {
@@ -6166,7 +6309,7 @@ Future<void> _purchasePackage(Package package) async {
     if (isSpecificAlbum) {
       return [_buildBullet("Buy this album")];
     } else if (identifier.toLowerCase().contains("lifetime")) {
-      return [_buildBullet("Catalog + ALL NEW FUTURE RELEASES")];
+      return [_buildBullet("Current Catalog + ALL NEW FUTURE RELEASES")];
     } else {
       return [_buildBullet("Opens All Current Albums on App")];
     }
