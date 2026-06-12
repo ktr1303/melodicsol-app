@@ -550,21 +550,55 @@ TextStyle _getAlbumFont(String albumKey) {
 
 
 void _onQueueReorder(int oldIndex, int newIndex) {
-  if (oldIndex < newIndex) newIndex -= 1;
-
-  setState(() {
-    final movedItem = _queue.removeAt(oldIndex);
-    _queue.insert(newIndex, movedItem);
-  });
-
-  try {
-    _globalPlayer.moveAudioSource(oldIndex, newIndex);
-  } catch (e) {
-    print("Player move failed: $e");
+  if (oldIndex < newIndex) {
+    newIndex -= 1;
   }
 
-  _forceQueueRebuild();
-  print("🔄 Queue reordered: $oldIndex → $newIndex");
+  final movedItem = _queue.removeAt(oldIndex);
+  _queue.insert(newIndex, movedItem);
+
+  // Preserve current playing index
+  int newCurrentIndex = _currentSongIndex;
+  if (_currentSongIndex == oldIndex) {
+    newCurrentIndex = newIndex;
+  } else if (oldIndex < _currentSongIndex && newIndex <= _currentSongIndex) {
+    newCurrentIndex = _currentSongIndex - 1;
+  } else if (oldIndex > _currentSongIndex && newIndex > _currentSongIndex) {
+    // No change needed
+  }
+
+  setState(() {
+    _currentSongIndex = newCurrentIndex;
+  });
+
+  // === FULL REBUILD OF PLAYER SOURCE (Most Reliable) ===
+  try {
+    final audioSources = _queue.map((song) {
+      return AudioSource.uri(
+        Uri.parse((song['url'] as String?) ?? ''),
+        tag: MediaItem(
+          id: song['url'] ?? 'unknown',
+          title: (song['title'] ?? song['Title'] ?? 'Unknown') as String,
+          artUri: Uri.tryParse((song['artUrl'] ?? song['songArtUrl'] ?? '') as String),
+        ),
+      );
+    }).toList();
+
+    _globalPlayer.setAudioSource(
+      ConcatenatingAudioSource(children: audioSources),
+      initialIndex: newCurrentIndex,
+      initialPosition: Duration.zero,
+    ).then((_) {
+      print("✅ Queue reordered and player source rebuilt successfully");
+    });
+  } catch (e) {
+    print("❌ Failed to rebuild player after reorder: $e");
+    // Fallback: just update UI
+  }
+
+  _forceQueueRebuild(); // Your existing helper
+
+  print("🔄 Queue reordered: $oldIndex → $newIndex | New current index: $newCurrentIndex");
 }
 
 // ====================== ROBUST PLAYLIST HELPERS ======================
@@ -596,6 +630,70 @@ Future<void> _saveCurrentQueueAsFreeSongs() async {
   ScaffoldMessenger.of(context).showSnackBar(
     const SnackBar(content: Text("✅ Free Songs order saved"), backgroundColor: Colors.green),
   );
+}
+// ====================== SAVE CURRENT QUEUE AS PLAYLIST ======================
+Future<void> _saveCurrentQueueAsPlaylist() async {
+  if (_queue.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Queue is empty — nothing to save")),
+    );
+    return;
+  }
+
+  // Optional: Let user name the playlist (simple dialog)
+  final TextEditingController nameController = TextEditingController(
+    text: "My Playlist ${_playlists.length + 1}",
+  );
+
+  final String? playlistName = await showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: Colors.grey[900],
+      title: const Text("Save Playlist"),
+      content: TextField(
+        controller: nameController,
+        decoration: const InputDecoration(
+          labelText: "Playlist Name",
+          hintText: "e.g. Road Trip Mix",
+        ),
+        autofocus: true,
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text("Cancel"),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, nameController.text.trim()),
+          child: const Text("Save", style: TextStyle(color: Colors.greenAccent)),
+        ),
+      ],
+    ),
+  );
+
+  if (playlistName == null || playlistName.isEmpty) return;
+
+  // Save to SharedPreferences (or Firestore later)
+  final prefs = await SharedPreferences.getInstance();
+  final List<Map<String, dynamic>> queueCopy = List.from(_queue);
+
+  _playlists.add({
+    'id': DateTime.now().millisecondsSinceEpoch.toString(),
+    'name': playlistName,
+    'songs': queueCopy,
+    'createdAt': DateTime.now().toIso8601String(),
+  });
+
+  await prefs.setString('saved_playlists', jsonEncode(_playlists));
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text("✅ Saved as '$playlistName' • ${_queue.length} songs"),
+      backgroundColor: Colors.green,
+    ),
+  );
+
+  setState(() {}); // Refresh saved playlists section
 }
 
 Future<void> _playFreeSongsPlaylist() async {
@@ -1159,8 +1257,7 @@ Future<void> _playSong(
 
 void _forceQueueRebuild() {
   if (mounted) {
-    setState(() {});
-    print("🔄 Forced queue rebuild | New size: ${_queue.length}");
+    setState(() {}); // Trigger full rebuild
   }
 }
 
@@ -3049,6 +3146,12 @@ Widget _buildPlaylistsPage() {
       backgroundColor: Colors.black,
       elevation: 0,
       actions: [
+        // === NEW: Save Current Queue as Playlist ===
+        IconButton(
+          icon: const Icon(Icons.save_alt, color: Colors.greenAccent, size: 26),
+          tooltip: "Save Current Queue as Playlist",
+          onPressed: _saveCurrentQueueAsPlaylist,   // We'll define this below
+        ),
         IconButton(
           icon: const Icon(Icons.album_outlined, color: Colors.white70, size: 26),
           tooltip: "Select Album",
@@ -3116,7 +3219,7 @@ Widget _buildPlaylistsPage() {
                         final isCurrentlyPlaying = _isQueueMode && index == _currentSongIndex;
 
                         return ReorderableDragStartListener(
-                          key: ValueKey('queue_item_$index'),
+                          key: ValueKey('queue_list_${_queue.length}_${DateTime.now().millisecondsSinceEpoch}'), // More unique,
                           index: index,
                           child: ListTile(
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
