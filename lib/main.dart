@@ -199,6 +199,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   LoopMode _currentLoopMode = LoopMode.off;
   List<String> _freeSongsOrderFromDB = [];
   List<Map<String, dynamic>> _freeSongsOrdered = [];
+  bool _hasFullAccess = false;
 
   Future<bool> hasEntitlement(String entitlementId) async {
   try {
@@ -259,7 +260,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       fontWeight: FontWeight.w700,
       color: const Color.fromARGB(255, 193, 6, 240),
     ),
-    "?": GoogleFonts.rock3d(
+    "1.0": GoogleFonts.rock3d(
       fontSize: 24,
       fontWeight: FontWeight.w700,
       color: const Color.fromARGB(255, 0, 0, 0),
@@ -268,7 +269,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   // Display names shown on the main spine page
 final Map<String, String> _albumDisplayNames = {
-  "melodic": "?",
+  "melodic": "1.0",
   "sol": "SOL",
   "live": "LIVE",
   "central": "CENTRAL",
@@ -977,7 +978,7 @@ Future<Map<String, dynamic>> _getPlayStats() async {
   }
 }
 
-  Future<void> _loadSavedUnlocks() async {
+Future<void> _loadSavedUnlocks() async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.reload();
 
@@ -991,7 +992,11 @@ Future<Map<String, dynamic>> _getPlayStats() async {
     }
   }
 
-  print("🔄 Loaded ${_unlockedAlbums.length} saved album unlocks");
+  // Also restore full access
+  _hasFullAccess = prefs.getBool('hasFullAccess') ?? false;
+  _hasConfirmedEmail = prefs.getBool('hasConfirmedEmail') ?? false;
+
+  print("🔄 Loaded ${_unlockedAlbums.length} saved album unlocks + Full Access: $_hasFullAccess");
 }
 
 void _showUserInfoScreen({String? pendingAlbumName, int? pendingSongIndex}) {
@@ -1343,7 +1348,7 @@ Future<void> _syncCurrentIndexToAlbum() async {
   }
 }
 
-// ==================== CLEAN TUTORIALS (3 only) ====================
+// ==================== CLEAN TUTORIALS (Show Once Only) ====================
 bool _isTutorialShowing = false;
 
 // 1. Main Albums Page Tutorial
@@ -1360,16 +1365,13 @@ Future<void> _showMainAlbumTutorial() async {
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       content: const Text(
-        "Tap  🦴\n"
-        "\n"
-        "Swipe 👉 = 🎶\n"
-        "Swipe 👈 = 🌍",
+        "Tap  🦴\n\nSwipe 👉 = 🎶\nSwipe 👈 = 🌍",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
       actions: [
         TextButton(
-          onPressed: () {
-            prefs.setBool('hasSeenMainAlbumTutorial', true);
+          onPressed: () async {
+            await prefs.setBool('hasSeenMainAlbumTutorial', true);
             Navigator.pop(context);
             _isTutorialShowing = false;
           },
@@ -1399,13 +1401,14 @@ Future<void> _showAlbumDetailTutorial() async {
         "\n"
         "Long Press \n" 
         "📜-▶-💾-etc.. \n"
-        "",
+        "Swipe 👉 = 🎶\n"
+         "Swipe 👈 = 🌍",
         style: TextStyle(fontSize: 16, height: 1.4),
       ),
       actions: [
         TextButton(
-          onPressed: () {
-            prefs.setBool('hasSeenAlbumDetailTutorial', true);
+          onPressed: () async {
+            await prefs.setBool('hasSeenAlbumDetailTutorial', true);
             Navigator.pop(context);
             _isTutorialShowing = false;
           },
@@ -1429,17 +1432,17 @@ Future<void> _showQueueTutorial() async {
     barrierDismissible: false,
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        content: const Text(
-          "INSTANT 🎶\n"
+      content: const Text(
+         "INSTANT 🎶\n"
           "•Tap ▶ Free Songs!!!\n\n"
           "Long Press\n"
           "• 📜🎵💾etc...\n",
-          style: TextStyle(fontSize: 16, height: 1.4),
-        ),
+        style: TextStyle(fontSize: 16, height: 1.4),
+      ),
       actions: [
         TextButton(
-          onPressed: () {
-            prefs.setBool('hasSeenQueueTutorial', true);
+          onPressed: () async {
+            await prefs.setBool('hasSeenQueueTutorial', true);
             Navigator.pop(context);
             _isTutorialShowing = false;
           },
@@ -2745,12 +2748,13 @@ Widget _buildMainAlbumPage(double screenHeight) {
                               _showAlbumDetailTutorial();
                             });
                           },
+                          onLongPress: () => _showAlbumLongPressMenu(albumName),   // ← NEW
                           child: Container(
                             height: 52,
                             alignment: Alignment.center,
-                                  child: Text(
-                              _getAlbumDisplayName(albumName),   // ← Show nice name
-                              style: _getAlbumFont(albumName),              // ← Use internal key for font
+                            child: Text(
+                              _getAlbumDisplayName(albumName),
+                              style: _getAlbumFont(albumName),
                               textAlign: TextAlign.center,
                             ),
                           ),
@@ -3032,6 +3036,110 @@ void _showAlbumSelectorPopup() {
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text("Cancel", style: TextStyle(color: Colors.white70)),
+        ),
+      ],
+    ),
+  );
+}
+
+// ====================== ALBUM LONG-PRESS MENU ======================
+void _showAlbumLongPressMenu(String albumName) {
+  final albumData = _albums[albumName];
+  final displayName = _albumDisplayNames[albumName] ?? albumName;
+
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.grey[900],
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (context) {
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                displayName,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              const SizedBox(height: 8),
+              const Divider(color: Colors.white24),
+              ListTile(
+                leading: const Icon(Icons.book_outlined, color: Colors.greenAccent, size: 28),
+                title: const Text("Show Album Story", style: TextStyle(color: Colors.white, fontSize: 17)),
+                subtitle: const Text("View artwork + story", style: TextStyle(color: Colors.white54)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showAlbumStory(albumName);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.queue_music, color: Colors.white70, size: 28),
+                title: const Text("Show Songs", style: TextStyle(color: Colors.white, fontSize: 17)),
+                subtitle: const Text("Browse tracks & artwork", style: TextStyle(color: Colors.white54)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showAlbumSongsMenu(albumName);
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+void _showAlbumSongsMenu(String albumName) {
+  final albumData = _albums[albumName];
+  if (albumData == null) return;
+
+  final songs = albumData['songs'] as List<dynamic>? ?? [];
+  final displayName = _albumDisplayNames[albumName] ?? albumName;
+
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: Colors.grey[900],
+      title: Text("$displayName — Songs", style: const TextStyle(color: Colors.white)),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: MediaQuery.of(context).size.height * 0.65,
+        child: ListView.builder(
+          itemCount: songs.length,
+          itemBuilder: (context, index) {
+            final song = songs[index] as Map<String, dynamic>;
+            final title = song['Title'] ?? song['title'] ?? 'Unknown Song';
+            final artUrl = song['artUrl'] ?? song['songArtUrl'] ?? '';
+
+            return ListTile(
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: CachedNetworkImage(
+                  imageUrl: artUrl,
+                  width: 56,
+                  height: 56,
+                  fit: BoxFit.cover,
+                  errorWidget: (_, __, ___) => const Icon(Icons.music_note, color: Colors.white38, size: 56),
+                ),
+              ),
+              title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 16)),
+              subtitle: Text(albumName, style: const TextStyle(color: Colors.white54)),
+              onTap: () {
+                Navigator.pop(context); // Close the songs menu
+                _showSongStory(albumName, index); // ← Opens Song Story
+              },
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text("Close", style: TextStyle(color: Colors.white70)),
         ),
       ],
     ),
@@ -4112,7 +4220,7 @@ Widget _buildSocialPage() {
           ],
         ),
       ),
-      const SizedBox(height: 40),
+      const SizedBox(height: 60),
 
       // Debug Button - Fixed Position (MUST be inside Stack)
       if (kDebugMode)
@@ -4653,38 +4761,70 @@ void _showMelodicSolBio() {
   );
 }
 
-  Future<void> _redeemPromoCode(String code) async {
-    final prefs = await SharedPreferences.getInstance();
+Future<void> _redeemPromoCode(String code) async {
+  final trimmedCode = code.trim().toUpperCase();
+  final prefs = await SharedPreferences.getInstance();
 
-    if (code == "LOCKALL") {
-      await prefs.setBool('lockall_active', true);
-      await prefs.setBool('hasLifetimeAccess', false);
-      await prefs.setBool('hasCatalogAccess', false);
-      setState(() => _hasOpenAccess = false);
+  if (trimmedCode == "SOLFULL") {
+    // Unlock everything
+    setState(() {
+      _hasFullAccess = true;
+      _hasConfirmedEmail = true;
+    });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("🔒 LOCKALL Activated"), backgroundColor: Colors.red),
-      );
-      print("🔒 LOCKALL → All paid access RESET");
-      return;
-    }
+    await prefs.setBool('hasFullAccess', true);
+    await prefs.setBool('hasConfirmedEmail', true);
 
-    if (code == "SOLFULL") {
-      await prefs.setBool('hasLifetimeAccess', true);
-      await prefs.setBool('lockall_active', false);
-      setState(() => _hasOpenAccess = true);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("✅ SOLFULL - Lifetime Access Granted"), backgroundColor: Colors.green),
-      );
-      print("✅ SOLFULL Lifetime Unlock Applied");
-      return;
+    // Unlock all individually purchasable albums
+    for (String album in _individuallyPurchasableAlbums) {
+      await prefs.setBool('unlocked_$album', true);
+      _unlockedAlbums.add(album);
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("🎉 SOLFULL activated! All content unlocked."),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 3),
+      ),
+    );
+  } 
+  else if (_individuallyPurchasableAlbums.contains(trimmedCode.toLowerCase()) || 
+           trimmedCode == "SOL" || trimmedCode == "MELODIC" || trimmedCode == "LIVE") {
+    
+    String albumKey = trimmedCode.toLowerCase() == "sol" ? "Sol" : 
+                     trimmedCode.toLowerCase() == "melodic" ? "Melodic" : 
+                     trimmedCode.toLowerCase() == "live" ? "live" : trimmedCode;
+
+    if (_albums.containsKey(albumKey)) {
+      await prefs.setBool('unlocked_$albumKey', true);
+      setState(() {
+        _unlockedAlbums.add(albumKey);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("✅ Album '$albumKey' unlocked successfully!"),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Album not found for this code")),
+      );
+    }
+  } 
+  else {
+    ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("Invalid promo code")),
     );
+    return;
   }
+
+  await _loadSavedUnlocks();        // Refresh state
+  await _createFreeSongsPlaylist(); // Refresh free songs if needed
+  setState(() {});                  // UI refresh
+}
 
 void _showExpandedDebugPanel() {
   if (!kDebugMode) return;
