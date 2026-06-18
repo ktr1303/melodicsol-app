@@ -203,7 +203,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   // Visualize page state
   bool _showVisualizerPage = false;                    // If you want to control visibility
   int _visualizerCurrentSongIndex = 0;
-  bool _showFullControlsOnVisualizer = true;           // Toggle between full player & minimal
+  bool _showFullControlsOnVisualizer = true;     
+ late PageController _visualizerPageController;   // Toggle between full player & minimal
+ late VideoPlayerController _visualizerVideoController;
+ bool _isVideoVisualizerReady = false;
 
 late YoutubePlayerController _visualizerYoutubeController;
 
@@ -415,6 +418,10 @@ void initState() {
         }
       }
     });
+  _visualizerVideoController = VideoPlayerController.networkUrl(Uri.parse(''))
+  ..setLooping(true)
+  ..setVolume(0.0);   // muted  
+  _visualizerPageController = PageController(initialPage: _visualizerCurrentSongIndex);  
   _pageController = PageController(initialPage: 1);
   _boneStaggerController = AnimationController(
       duration: const Duration(milliseconds: 1800), vsync: this)
@@ -2040,6 +2047,8 @@ void dispose() {
   _visualizerController.dispose();
   _livePulseController.dispose();
   _deepLinkSubscription?.cancel();
+  _visualizerPageController.dispose();
+ _visualizerVideoController.dispose(); 
 
   for (var controller in _albumGlowControllers.values) {
     controller.dispose();
@@ -2061,6 +2070,29 @@ Future<void> _handleSongCompletion() async {
   } else {
     // End of album
     await _globalPlayer.stop();
+  }
+}
+
+Future<void> _loadVisualizerVideo(String? videoUrl) async {
+  if (videoUrl == null || videoUrl.isEmpty) {
+    setState(() => _isVideoVisualizerReady = false);
+    return;
+  }
+
+  try {
+    await _visualizerVideoController.pause();
+    await _visualizerVideoController.dispose();
+    _visualizerVideoController = VideoPlayerController.networkUrl(Uri.parse(videoUrl))
+      ..setLooping(true)
+      ..setVolume(0.0);
+
+    await _visualizerVideoController.initialize();
+    await _visualizerVideoController.play();
+    setState(() => _isVideoVisualizerReady = true);
+    print("✅ Video visualizer loaded: $videoUrl");
+  } catch (e) {
+    print("❌ Failed to load video visualizer: $e");
+    setState(() => _isVideoVisualizerReady = false);
   }
 }
 
@@ -2454,13 +2486,16 @@ Widget build(BuildContext context) {
     body: Stack(
       children: [
         // Main Page Navigation
-        PageView(
-          controller: _pageController,
-          onPageChanged: (index) {
-            setState(() {
-              _selectedIndex = index;
-            });
-          },
+          PageView(
+            controller: _pageController,
+            physics: _selectedIndex == 3 
+                ? const NeverScrollableScrollPhysics()   // ← Disable outer swiping on Visualize page
+                : const ClampingScrollPhysics(),
+            onPageChanged: (index) {
+              setState(() {
+                _selectedIndex = index;
+              });
+            },
           children: [
             _buildSocialPage(),
             _buildMainAlbumPage(screenHeight),
@@ -3735,43 +3770,60 @@ Widget _buildVisualizerPage() {
   if (albumSongs.isEmpty) {
     return const Scaffold(
       backgroundColor: Colors.black,
-      body: Center(child: Text("No songs available", style: TextStyle(color: Colors.white))),
+      body: Center(
+        child: Text(
+          "No songs in album",
+          style: TextStyle(color: Colors.white, fontSize: 18),
+        ),
+      ),
     );
   }
 
-  print("🚀 _buildVisualizerPage() called with ${albumSongs.length} songs | Index: $_visualizerCurrentSongIndex");
+  print("🚀 Visualize page built | Songs: ${albumSongs.length} | Current Index: $_visualizerCurrentSongIndex");
 
   return Scaffold(
     backgroundColor: Colors.black,
     body: Stack(
       children: [
-        // Background Visualizer (static art for now)
+        // Inner Song Swiper
         PageView.builder(
-          controller: PageController(initialPage: _visualizerCurrentSongIndex),
+          controller: _visualizerPageController,
+          physics: const ClampingScrollPhysics(),
           itemCount: albumSongs.length,
           onPageChanged: (index) {
-            setState(() {
-              _visualizerCurrentSongIndex = index;
-            });
+            print("✅ INNER SWIPE → Index $index");
+            setState(() => _visualizerCurrentSongIndex = index);
             _playSpecificSongFromAlbum(index);
-            print("➡️ Swiped to song index $index");
+            _loadVisualizerForSong(albumSongs[index]); // YouTube version
           },
           itemBuilder: (context, index) {
             final song = albumSongs[index];
+            final visualizerUrl = _getVisualizerUrlForSong(song);
             final artUrl = (song['artUrl'] ?? song['songArtUrl'] ?? '') as String;
-            return _buildFallbackSongArt(artUrl);
+
+            if (visualizerUrl != null && visualizerUrl.isNotEmpty) {
+              return YoutubePlayer(
+                controller: _visualizerYoutubeController,
+                showVideoProgressIndicator: false,
+              );
+            } else {
+              return _buildFallbackSongArt(artUrl);
+            }
           },
         ),
 
         // Tap area to toggle player controls
-        GestureDetector(
-          onTap: () {
-            setState(() => _showFullControlsOnVisualizer = !_showFullControlsOnVisualizer);
-          },
-          child: Container(color: Colors.transparent),
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: () {
+              setState(() => _showFullControlsOnVisualizer = !_showFullControlsOnVisualizer);
+            },
+            behavior: HitTestBehavior.translucent,
+            child: const SizedBox(),
+          ),
         ),
 
-        // Player at bottom
+        // Transparent Player at bottom
         Positioned(
           left: 0,
           right: 0,
@@ -3779,13 +3831,17 @@ Widget _buildVisualizerPage() {
           child: _buildTransparentVisualizerPlayer(),
         ),
 
-        // Back button
+        // Back to Queue button
         Positioned(
           top: 40,
           left: 16,
           child: FloatingActionButton.small(
             backgroundColor: Colors.black.withOpacity(0.7),
-            onPressed: () => _pageController.animateToPage(2, duration: const Duration(milliseconds: 300), curve: Curves.easeOut),
+            onPressed: () => _pageController.animateToPage(
+              2,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+            ),
             child: const Icon(Icons.queue_music, color: Colors.white),
           ),
         ),
