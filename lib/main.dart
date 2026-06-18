@@ -200,6 +200,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   List<String> _freeSongsOrderFromDB = [];
   List<Map<String, dynamic>> _freeSongsOrdered = [];
   bool _hasFullAccess = false;
+  // Visualize page state
+  bool _showVisualizerPage = false;                    // If you want to control visibility
+  int _visualizerCurrentSongIndex = 0;
+  bool _showFullControlsOnVisualizer = true;           // Toggle between full player & minimal
+
+late YoutubePlayerController _visualizerYoutubeController;
 
   Future<bool> hasEntitlement(String entitlementId) async {
   try {
@@ -214,6 +220,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late AppLinks _appLinks;
   StreamSubscription? _deepLinkSubscription;
 
+  List<String> _getSortedAlbumKeys() {
+  return _albums.keys.toList()
+    ..sort((a, b) => (_albums[b]?['order'] as int? ?? 999)
+        .compareTo(_albums[a]?['order'] as int? ?? 999));
+}
+
   // Independent glow controllers per album
   final Map<String, AnimationController> _albumGlowControllers = {};
 
@@ -223,6 +235,50 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     "story": "Melodicsol is a multi-instrumental and multi-dimensional powerhouse, crafting a free spirit blend of rock, jazz, funk, pop, and psychedelia that emboldens listeners to find freedom and independence within. A self-taught guitar maestro, he conjures expansive and diverse sonic landscapes through soaring guitar/bass melodies, captivating drum set rhythms combined with life-exploring narratives, delivering a truly unique and one-of-a-kind spontaneous rock aesthetic for the mind, body, and sol.",
     "themeColor": Colors.greenAccent,     // or any color you like
   };
+
+String? _getVisualizerUrlForSong(Map<String, dynamic> song) {
+  String? url = song['visualizerUrl'] as String?;
+  if (url == null || url.isEmpty) return null;
+  
+  url = url.trim();
+  
+  // Convert Shorts URL to standard watch URL for better compatibility
+  if (url.contains('/shorts/')) {
+    final id = url.split('/shorts/').last.split('?').first;
+    return 'https://www.youtube.com/watch?v=$id';
+  }
+  
+  return url;
+}
+/// Returns the songs of the current album in the same order as the main spine grid
+List<Map<String, dynamic>> _getCurrentAlbumSongsSorted() {
+  if (_currentAlbum == null || !_albums.containsKey(_currentAlbum)) {
+    return [];
+  }
+  
+  final albumData = _albums[_currentAlbum]!;
+  final songs = (albumData['songs'] as List<dynamic>? ?? [])
+      .map((s) => Map<String, dynamic>.from(s as Map))
+      .toList();
+
+  // Sort by the same logic as the spine (higher 'order' first in visual, but we keep original order from DB)
+  // For now we return them in the order they appear in DynamoDB (you can adjust if needed)
+  return songs;
+}
+
+/// Finds the index of the current playing song inside its album's sorted song list
+int _getCurrentSongIndexInAlbum() {
+  if (_currentAlbum == null) return 0;
+  
+  final albumSongs = _getCurrentAlbumSongsSorted();
+  for (int i = 0; i < albumSongs.length; i++) {
+    final songTitle = (albumSongs[i]['Title'] ?? albumSongs[i]['title'] ?? '') as String;
+    if (songTitle == _currentSongTitle) {
+      return i;
+    }
+  }
+  return 0;
+}  
 
   final Map<String, TextStyle> _albumFonts = {
     "Base": GoogleFonts.walterTurncoat(
@@ -253,15 +309,15 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     "LIVE": GoogleFonts.rubikPuddles(
       fontSize: 30,
       fontWeight: FontWeight.w700,
-      color: const Color.fromARGB(255, 58, 4, 139),
+      color: const Color.fromARGB(255, 102, 10, 242),
     ),
     "SOL": GoogleFonts.rampartOne(
       fontSize: 30,
       fontWeight: FontWeight.w700,
       color: const Color.fromARGB(255, 193, 6, 240),
     ),
-    "1.0": GoogleFonts.rock3d(
-      fontSize: 24,
+    "1.0": GoogleFonts.audiowide(
+      fontSize: 20,
       fontWeight: FontWeight.w700,
       color: const Color.fromARGB(255, 0, 0, 0),
     ),
@@ -282,8 +338,8 @@ final Map<String, String> _albumDisplayNames = {
 // Individual horizontal offset for each album (positive = right, negative = left)
 final Map<String, double> _albumHorizontalOffset = {
   "Melodic": -17,
-  "Sol": -13,
-  "live": 15,
+  "Sol": 15,
+  "live": -13,
   "Central": 40,
   "Asraya": 25,
   "609": 0,
@@ -340,6 +396,25 @@ void initState() {
   _setupQueueAndTrackListener();
   _setupCompletedListener();
   _startLivestreamStatusChecker();
+  _visualizerYoutubeController = YoutubePlayerController(
+  initialVideoId: '',
+  flags: const YoutubePlayerFlags(
+    autoPlay: true,
+    mute: true,
+    loop: true,
+    hideControls: true,        // We hide built-in controls — we use our own
+    disableDragSeek: false,
+  ),
+  );
+  // After creating _visualizerYoutubeController in initState()
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_showVisualizerPage && _currentAlbum != null) {
+        final songs = _getCurrentAlbumSongsSorted();
+        if (songs.isNotEmpty) {
+          _loadVisualizerForSong(songs[_visualizerCurrentSongIndex]);
+        }
+      }
+    });
   _pageController = PageController(initialPage: 1);
   _boneStaggerController = AnimationController(
       duration: const Duration(milliseconds: 1800), vsync: this)
@@ -1954,6 +2029,7 @@ void dispose() {
   _sequenceSubscription?.cancel();
   _processingSubscription?.cancel();        // keep if you still declare it
   _playbackEventSubscription?.cancel();     // safe to keep even if unused
+  _visualizerYoutubeController.dispose();
 
   _globalPlayer.dispose();
   _boneStaggerController.dispose();
@@ -2199,6 +2275,7 @@ Future<void> _fetchAlbums() async {
             if (song is Map) {
               song['Title'] ??= song['title'] ?? 'Untitled';
               song['url'] ??= '';
+              song['visualizerUrl'] ??= song['visualizerUrl'] ?? '';   // ← ADD THIS LINE
             }
           }
 
@@ -2388,6 +2465,7 @@ Widget build(BuildContext context) {
             _buildSocialPage(),
             _buildMainAlbumPage(screenHeight),
             _buildPlaylistsPage(),
+            _buildVisualizerPage(),   // ← NEW: Index 3
           ],
         ),
 
@@ -2827,20 +2905,19 @@ return Column(
       ),
     ),
 
-    // Album Title
-// Album Title - Now Clickable
-  GestureDetector(
-    onTap: _showAlbumSelectorPopup,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Text(
-        _albumDisplayNames[albumName] ?? albumName,
-        style: _getAlbumFont(albumName).copyWith(fontSize: 28),
-        textAlign: TextAlign.center,
-      ),
+// Album Title - Clickable + Correct Display Name from map
+GestureDetector(
+  onTap: _showAlbumSelectorPopup,
+  child: Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8.0),
+    child: Text(
+      _getAlbumDisplayName(albumName),        // ← Use the helper instead of direct map access
+      style: _getAlbumFont(albumName),
+      textAlign: TextAlign.center,
     ),
   ),
-    const SizedBox(height: 12),
+),
+const SizedBox(height: 12),
 
     // === SONG LIST WITH STRONG PULL-TO-REFRESH ===
 // === SONG LIST WITH STRONG PULL-TO-REFRESH ===
@@ -2987,44 +3064,61 @@ void _showAlbumSelectorPopup() {
   showDialog(
     context: context,
     builder: (context) => AlertDialog(
-      backgroundColor: Colors.grey[900],
+      backgroundColor: const Color.fromARGB(255, 0, 0, 0),
       title: const Text(
         "Select Album",
         style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
       ),
       content: ConstrainedBox(
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.65,  // Responsive height
+          maxHeight: MediaQuery.of(context).size.height * 0.65,
         ),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: _albums.keys.map((albumKey) {
-              final displayName = _albumDisplayNames[albumKey] ?? albumKey;
+            children: _getSortedAlbumKeys().map((albumKey) {   // ← Sorted like main spine
+              final displayName = _getAlbumDisplayName(albumKey);
+              final albumData = _albums[albumKey] ?? {};
 
               return ListTile(
-                contentPadding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
                 leading: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: CachedNetworkImage(
-                    imageUrl: _albums[albumKey]?['artUrl'] ?? '',
-                    width: 48,
-                    height: 48,
-                    fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) => const Icon(Icons.album, color: Colors.white38),
+                  borderRadius: BorderRadius.circular(8),
+                  child: RotationTransition(
+                    turns: _vinylController,
+                    child: Container(
+                      width: 58,
+                      height: 58,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: _getAlbumThemeColor(albumKey).withOpacity(0.6),
+                            blurRadius: 12,
+                          ),
+                        ],
+                      ),
+                      child: ClipOval(
+                        child: CachedNetworkImage(
+                          imageUrl: albumData['rotatingArtUrl'] as String? ??
+                                   albumData['artUrl'] as String? ?? '',
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => const CircularProgressIndicator(color: Colors.greenAccent),
+                          errorWidget: (_, __, ___) => const Icon(Icons.album, color: Colors.white38, size: 58),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
                 title: Text(
                   displayName,
-                  style: _getAlbumFont(albumKey).copyWith(
-                    fontSize: 18,
-                    color: Colors.white,
-                  ),
+                  style: _getAlbumFont(albumKey).copyWith(fontSize: 19),
                 ),
                 onTap: () {
                   Navigator.pop(context);
                   setState(() {
                     _selectedAlbum = albumKey;
+                    _currentViewedAlbum = albumKey;
                   });
                 },
               );
@@ -3634,6 +3728,197 @@ void _resetQueueAndPlayer() {
 
   _forceQueueRebuild();
   print("🔄 Queue & Player fully reset");
+}
+
+Widget _buildVisualizerPage() {
+  final albumSongs = _getCurrentAlbumSongsSorted();
+  if (albumSongs.isEmpty) {
+    return const Scaffold(
+      backgroundColor: Colors.black,
+      body: Center(child: Text("No songs available", style: TextStyle(color: Colors.white))),
+    );
+  }
+
+  print("🚀 _buildVisualizerPage() called with ${albumSongs.length} songs | Index: $_visualizerCurrentSongIndex");
+
+  return Scaffold(
+    backgroundColor: Colors.black,
+    body: Stack(
+      children: [
+        // Background Visualizer (static art for now)
+        PageView.builder(
+          controller: PageController(initialPage: _visualizerCurrentSongIndex),
+          itemCount: albumSongs.length,
+          onPageChanged: (index) {
+            setState(() {
+              _visualizerCurrentSongIndex = index;
+            });
+            _playSpecificSongFromAlbum(index);
+            print("➡️ Swiped to song index $index");
+          },
+          itemBuilder: (context, index) {
+            final song = albumSongs[index];
+            final artUrl = (song['artUrl'] ?? song['songArtUrl'] ?? '') as String;
+            return _buildFallbackSongArt(artUrl);
+          },
+        ),
+
+        // Tap area to toggle player controls
+        GestureDetector(
+          onTap: () {
+            setState(() => _showFullControlsOnVisualizer = !_showFullControlsOnVisualizer);
+          },
+          child: Container(color: Colors.transparent),
+        ),
+
+        // Player at bottom
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: _buildTransparentVisualizerPlayer(),
+        ),
+
+        // Back button
+        Positioned(
+          top: 40,
+          left: 16,
+          child: FloatingActionButton.small(
+            backgroundColor: Colors.black.withOpacity(0.7),
+            onPressed: () => _pageController.animateToPage(2, duration: const Duration(milliseconds: 300), curve: Curves.easeOut),
+            child: const Icon(Icons.queue_music, color: Colors.white),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> _loadVisualizerForSong(Map<String, dynamic> song) async {
+  final rawUrl = song['visualizerUrl'] as String? ?? '';
+  final visualizerUrl = _getVisualizerUrlForSong(song);
+  final title = (song['Title'] ?? song['title'] ?? '') as String;
+
+  print("🎥 VISUALIZER LOAD → Title: $title | Raw: '$rawUrl' | Cleaned: '$visualizerUrl'");
+
+  if (visualizerUrl != null && visualizerUrl.isNotEmpty) {
+    final videoId = YoutubePlayer.convertUrlToId(visualizerUrl) ?? '';
+    print("🎥 → Extracted ID: '$videoId'");
+
+    if (videoId.isNotEmpty) {
+      _visualizerYoutubeController.load(videoId);
+      print("✅ Visualizer loaded successfully");
+    } else {
+      print("❌ Could not extract video ID");
+    }
+  } else {
+    print("ℹ️ No visualizer URL → fallback to static art");
+  }
+}
+
+Widget _buildTransparentVisualizerPlayer() {
+  final albumTheme = _getAlbumThemeColor(_currentAlbum ?? "Central");
+
+  return AnimatedOpacity(
+    opacity: _showFullControlsOnVisualizer ? 1.0 : 0.85,
+    duration: const Duration(milliseconds: 250),
+    child: Container(
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.35), // Very transparent
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Mini Art + Title + Album
+            Row(
+              children: [
+                if (_currentSongArtUrl != null && _currentSongArtUrl!.isNotEmpty)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: CachedNetworkImage(
+                      imageUrl: _currentSongArtUrl!,
+                      width: 48,
+                      height: 48,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _currentSongTitle.isEmpty ? "Nothing playing" : _currentSongTitle,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        _currentAlbum ?? "Unknown Album",
+                        style: TextStyle(fontSize: 13, color: albumTheme.withOpacity(0.9)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            // Time Bar (always visible)
+            // ... (copy your existing StreamBuilder progress bar from _buildFullPlayer)
+
+            if (_showFullControlsOnVisualizer) ...[
+              const SizedBox(height: 12),
+              // Full Controls Row (copy your existing controls from _buildFullPlayer)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  IconButton(icon: const Icon(Icons.skip_previous, size: 32), color: albumTheme, onPressed: _skipPrevious),
+                  IconButton(
+                    icon: Icon(Icons.shuffle, color: _isShuffleEnabled ? Colors.greenAccent : Colors.white70),
+                    onPressed: _toggleShuffle,
+                  ),
+                  IconButton(
+                    icon: Icon(_globalPlayer.playing ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 48),
+                    color: albumTheme,
+                    onPressed: () async {
+                      if (_globalPlayer.playing) await _globalPlayer.pause();
+                      else await _globalPlayer.play();
+                    },
+                  ),
+                  IconButton(
+                    icon: Icon(_currentLoopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat,
+                        color: _currentLoopMode != LoopMode.off ? Colors.greenAccent : Colors.white70),
+                    onPressed: _cycleLoopMode,
+                  ),
+                  IconButton(icon: const Icon(Icons.skip_next, size: 32), color: albumTheme, onPressed: _skipNext),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+// Helper for fallback art
+Widget _buildFallbackSongArt(String artUrl) {
+  return artUrl.isNotEmpty
+      ? CachedNetworkImage(
+          imageUrl: artUrl,
+          fit: BoxFit.cover,
+          placeholder: (_, __) => Container(color: Colors.grey[900]),
+          errorWidget: (_, __, ___) => Container(
+            color: Colors.grey[900],
+            child: const Icon(Icons.music_note, size: 120, color: Colors.white38),
+          ),
+        )
+      : Container(color: Colors.black);
 }
 
 /// Persistent Full Player - Used on BOTH Album Detail and Queue pages
@@ -4292,7 +4577,8 @@ String _getAlbumStory(String albumName) {
 }
 
 void _showAlbumStory(String startingAlbumName) {
-  final albumsList = _albums.keys.toList();
+  final albumsList = _getSortedAlbumKeys();  // ← Uses same order as main spine grid
+
   int initialIndex = albumsList.indexOf(startingAlbumName);
   if (initialIndex == -1) initialIndex = 0;
 
@@ -4338,7 +4624,6 @@ void _showAlbumStory(String startingAlbumName) {
                   ),
                 ),
                 const SizedBox(height: 8),
-
                 // Back to Songlist Button
                 Align(
                   alignment: Alignment.centerLeft,
@@ -4353,7 +4638,6 @@ void _showAlbumStory(String startingAlbumName) {
                   ),
                 ),
                 const SizedBox(height: 16),
-
                 // Clickable Album Art
                 GestureDetector(
                   onTap: () {
@@ -4381,23 +4665,20 @@ void _showAlbumStory(String startingAlbumName) {
                   ),
                 ),
                 const SizedBox(height: 20),
-
-                // === CLICKABLE ALBUM TITLE → Opens Album Selector ===
+                // Clickable Album Title
                 GestureDetector(
                   onTap: () => _showAlbumSelector(),
                   child: Text(
                     displayName,
-                    style: _getAlbumFont(albumName).copyWith(fontSize: 28),
+                    style: _getAlbumFont(albumName),
                     textAlign: TextAlign.center,
                   ),
                 ),
                 const SizedBox(height: 24),
-
-                // === NEW ACTION BUTTONS ===
+                // Action Buttons
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // Add Album to Queue
                     ElevatedButton.icon(
                       onPressed: () => _addAlbumToQueue(albumName),
                       icon: const Icon(Icons.playlist_add),
@@ -4409,11 +4690,10 @@ void _showAlbumStory(String startingAlbumName) {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    // See Songs Button
                     ElevatedButton.icon(
                       onPressed: () {
                         if (!mounted) return;
-                        Navigator.pop(context); // Close story modal
+                        Navigator.pop(context);
                         _showFirstSongStory(albumName);
                       },
                       icon: const Icon(Icons.music_note),
@@ -4427,7 +4707,6 @@ void _showAlbumStory(String startingAlbumName) {
                   ],
                 ),
                 const SizedBox(height: 32),
-
                 // Story Text
                 Text(
                   story,
@@ -4435,7 +4714,6 @@ void _showAlbumStory(String startingAlbumName) {
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 40),
-
                 // Buy Button
                 if (canPurchaseIndividually)
                   Padding(
@@ -4457,7 +4735,7 @@ void _showAlbumStory(String startingAlbumName) {
                       ),
                     ),
                   ),
-                // === WATCH VIDEO BUTTON (Only if videoUrl exists) ===
+                // Watch Video Button
                 if (album['videoUrl'] != null && (album['videoUrl'] as String).isNotEmpty)
                   ElevatedButton.icon(
                     onPressed: () {
@@ -4509,11 +4787,10 @@ void _showFirstSongStory(String albumName) {
 
 void _showAlbumSelector() {
   if (!mounted) return;
-
   showDialog(
     context: context,
     builder: (context) => AlertDialog(
-      backgroundColor: Colors.grey[900],
+      backgroundColor: const Color.fromARGB(255, 0, 0, 0),
       title: const Text("Select Album", style: TextStyle(color: Colors.white)),
       content: SizedBox(
         width: double.maxFinite,
@@ -4525,18 +4802,16 @@ void _showAlbumSelector() {
             crossAxisSpacing: 12,
             mainAxisSpacing: 16,
           ),
-          itemCount: _albums.length,
+          itemCount: _getSortedAlbumKeys().length,
           itemBuilder: (context, index) {
-            final albumName = _albums.keys.elementAt(index);
+            final albumName = _getSortedAlbumKeys()[index];   // ← Sorted like main spine
             final album = _albums[albumName]!;
-            final artUrl = album['artUrl'] as String? ?? '';
+            final rotatingArtUrl = album['rotatingArtUrl'] as String? ?? album['artUrl'] as String? ?? '';
             final displayName = _getAlbumDisplayName(albumName);
 
             return GestureDetector(
               onTap: () {
-                Navigator.pop(context); // Close selector safely
-
-                // Navigate to Album Story
+                Navigator.pop(context);
                 Future.delayed(const Duration(milliseconds: 200), () {
                   if (mounted) {
                     _showAlbumStory(albumName);
@@ -4551,23 +4826,26 @@ void _showAlbumSelector() {
                     child: SizedBox(
                       height: 135,
                       width: double.infinity,
-                      child: artUrl.isNotEmpty
-                          ? CachedNetworkImage(
-                              imageUrl: artUrl,
-                              fit: BoxFit.cover,
-                              placeholder: (_, __) => Container(
+                      child: RotationTransition(
+                        turns: _vinylController,
+                        child: rotatingArtUrl.isNotEmpty
+                            ? CachedNetworkImage(
+                                imageUrl: rotatingArtUrl,
+                                fit: BoxFit.cover,
+                                placeholder: (_, __) => Container(
+                                  color: Colors.grey[800],
+                                  child: const Center(child: CircularProgressIndicator()),
+                                ),
+                                errorWidget: (_, __, ___) => Container(
+                                  color: Colors.grey[800],
+                                  child: const Icon(Icons.broken_image, size: 50, color: Colors.white38),
+                                ),
+                              )
+                            : Container(
                                 color: Colors.grey[800],
-                                child: const Center(child: CircularProgressIndicator()),
+                                child: const Icon(Icons.album, size: 55, color: Colors.white38),
                               ),
-                              errorWidget: (_, __, ___) => Container(
-                                color: Colors.grey[800],
-                                child: const Icon(Icons.broken_image, size: 50, color: Colors.white38),
-                              ),
-                            )
-                          : Container(
-                              color: Colors.grey[800],
-                              child: const Icon(Icons.album, size: 55, color: Colors.white38),
-                            ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -4585,7 +4863,7 @@ void _showAlbumSelector() {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Close")),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Back")),
       ],
     ),
   );
@@ -4638,6 +4916,50 @@ void _addAlbumToQueue(String albumName) {
         _playSong(albumName, 0, fromQueue: true);
       }
     });
+  }
+}
+
+/// Plays a specific song from the current album and rebuilds queue accordingly
+Future<void> _playSpecificSongFromAlbum(int songIndexInAlbum) async {
+  final albumSongs = _getCurrentAlbumSongsSorted();
+  if (songIndexInAlbum < 0 || songIndexInAlbum >= albumSongs.length) return;
+
+  final songToPlay = albumSongs[songIndexInAlbum];
+
+  setState(() {
+    _currentAlbum = _currentAlbum; // Ensure it's set
+    _currentSongIndex = songIndexInAlbum;
+    _currentSongTitle = (songToPlay['Title'] ?? songToPlay['title'] ?? 'Unknown') as String;
+    _currentSongArtUrl = (songToPlay['artUrl'] ?? songToPlay['songArtUrl'] ?? '') as String?;
+    _isQueueMode = true;
+  });
+
+  // Rebuild queue with this album's songs in correct order
+  _queue = List<Map<String, dynamic>>.from(albumSongs);
+
+  // Set audio source and play the selected song
+  try {
+    final audioSources = _queue.map((song) {
+      return AudioSource.uri(
+        Uri.parse((song['url'] ?? song['URL'] ?? '') as String),
+        tag: MediaItem(
+          id: (song['url'] ?? '') as String,
+          title: (song['Title'] ?? song['title'] ?? 'Unknown') as String,
+          artUri: Uri.tryParse((song['artUrl'] ?? song['songArtUrl'] ?? '') as String),
+        ),
+      );
+    }).toList();
+
+    await _globalPlayer.setAudioSource(
+      ConcatenatingAudioSource(children: audioSources),
+      initialIndex: songIndexInAlbum,
+      initialPosition: Duration.zero,
+    );
+
+    await _globalPlayer.play();
+    print("🎵 Switched to song index $songIndexInAlbum in album");
+  } catch (e) {
+    print("❌ Error playing song from album: $e");
   }
 }
 
