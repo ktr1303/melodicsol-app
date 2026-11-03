@@ -60,7 +60,8 @@ dependencies:
   cloud_firestore: ^5.4.4
   firebase_analytics: ^11.3.0
   flutter_markdown: ^0.6.23
-  
+  youtube_player_flutter: ^9.1.0
+
 # ... other firebase packages you already have
      # For foreground + custom handling
  
@@ -94,11 +95,11 @@ flutter:
     - assets/spine_video.mp4
     - assets/logo.png
     - assets/spine.png
+    - assets/melodicsol_home.mp4
   # -To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
-
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
 

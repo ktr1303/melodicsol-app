@@ -136,6 +136,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late AnimationController _visualizerController;
   late PageController _pageController;
   late AnimationController _boneStaggerController;
+  late VideoPlayerController _spineVideoController;
+  bool _spineVideoInitialized = false;
 
   
   List<Map<String, dynamic>> _queue = [];
@@ -207,6 +209,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
  late PageController _visualizerPageController;   // Toggle between full player & minimal
  late VideoPlayerController _visualizerVideoController;
  bool _isVideoVisualizerReady = false;
+ bool _showSpineGrid = false;
 
 late YoutubePlayerController _visualizerYoutubeController;
 
@@ -399,16 +402,9 @@ void initState() {
   _setupQueueAndTrackListener();
   _setupCompletedListener();
   _startLivestreamStatusChecker();
-  _visualizerYoutubeController = YoutubePlayerController(
-  initialVideoId: '',
-  flags: const YoutubePlayerFlags(
-    autoPlay: true,
-    mute: true,
-    loop: true,
-    hideControls: true,        // We hide built-in controls — we use our own
-    disableDragSeek: false,
-  ),
-  );
+  _visualizerVideoController = VideoPlayerController.networkUrl(Uri.parse(''))
+  ..setLooping(true)
+  ..setVolume(0.0);   // muted 
   // After creating _visualizerYoutubeController in initState()
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_showVisualizerPage && _currentAlbum != null) {
@@ -418,9 +414,19 @@ void initState() {
         }
       }
     });
-  _visualizerVideoController = VideoPlayerController.networkUrl(Uri.parse(''))
-  ..setLooping(true)
-  ..setVolume(0.0);   // muted  
+
+        _spineVideoController = VideoPlayerController.asset(
+      'assets/spine_video.mp4',
+      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+    )..initialize().then((_) {
+      setState(() => _spineVideoInitialized = true);
+      _spineVideoController.setLooping(true);
+      _spineVideoController.setVolume(0.0);
+      _spineVideoController.play();
+    }).catchError((error) {
+      print("Spine video failed to load: $error");
+    });
+ 
   _visualizerPageController = PageController(initialPage: _visualizerCurrentSongIndex);  
   _pageController = PageController(initialPage: 1);
   _boneStaggerController = AnimationController(
@@ -569,7 +575,7 @@ Future<void> _handleDeepLink(Uri? uri) async {
   _checkLivestreamStatus();
 
   _videoController = VideoPlayerController.asset(
-    'assets/spine_video.mp4',
+    'assets/melodicsol_home.mp4',
     videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
   )..initialize().then((_) {
       setState(() => _videoInitialized = true);
@@ -2048,7 +2054,8 @@ void dispose() {
   _livePulseController.dispose();
   _deepLinkSubscription?.cancel();
   _visualizerPageController.dispose();
- _visualizerVideoController.dispose(); 
+ _visualizerVideoController.dispose();
+ _spineVideoController.dispose(); 
 
   for (var controller in _albumGlowControllers.values) {
     controller.dispose();
@@ -2075,24 +2082,24 @@ Future<void> _handleSongCompletion() async {
 
 Future<void> _loadVisualizerVideo(String? videoUrl) async {
   if (videoUrl == null || videoUrl.isEmpty) {
-    setState(() => _isVideoVisualizerReady = false);
+    print("ℹ️ No visualizer video URL");
     return;
   }
 
   try {
     await _visualizerVideoController.pause();
     await _visualizerVideoController.dispose();
+
     _visualizerVideoController = VideoPlayerController.networkUrl(Uri.parse(videoUrl))
       ..setLooping(true)
       ..setVolume(0.0);
 
     await _visualizerVideoController.initialize();
     await _visualizerVideoController.play();
-    setState(() => _isVideoVisualizerReady = true);
-    print("✅ Video visualizer loaded: $videoUrl");
+
+    print("✅ S3 Video loaded successfully: $videoUrl");
   } catch (e) {
-    print("❌ Failed to load video visualizer: $e");
-    setState(() => _isVideoVisualizerReady = false);
+    print("❌ Failed to load S3 video: $e");
   }
 }
 
@@ -2498,7 +2505,9 @@ Widget build(BuildContext context) {
             },
           children: [
             _buildSocialPage(),
-            _buildMainAlbumPage(screenHeight),
+            _showSpineGrid
+             ? _buildMainAlbumPage(screenHeight)
+             : _buildVideoHomePage(),
             _buildPlaylistsPage(),
             _buildVisualizerPage(),   // ← NEW: Index 3
           ],
@@ -2707,6 +2716,63 @@ Future<void> _purchaseIndividualAlbum(String albumName) async {
   }
 }
 
+Widget _buildVideoHomePage() {
+  // Temporary: reuse the existing spine video until you drop in the new Melodic Sol video
+  return Stack(
+    fit: StackFit.expand,
+    children: [
+      // Background video (swap the asset path later)
+      FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox(
+          width: _videoController.value.size.width,
+          height: _videoController.value.size.height,
+          child: VideoPlayer(_videoController),
+        ),
+      ),
+
+      // Hotspot 1: open the "live" album
+      Positioned(
+        left: MediaQuery.of(context).size.width * 0.15,
+        top: MediaQuery.of(context).size.height * 0.35,
+        width: MediaQuery.of(context).size.width * 0.3,
+        height: MediaQuery.of(context).size.height * 0.2,
+        child: GestureDetector(
+          onTap: () {
+            setState(() {
+              _selectedAlbum = "live";
+              _currentViewedAlbum = "live";
+              _showSpineGrid = false;
+            });
+          },
+          child: Container(
+            color: Colors.transparent, // change to Colors.red.withOpacity(0.3) while you position it
+          ),
+        ),
+      ),
+
+      // Hotspot 2: open the full spine grid
+      Positioned(
+        left: MediaQuery.of(context).size.width * 0.55,
+        top: MediaQuery.of(context).size.height * 0.35,
+        width: MediaQuery.of(context).size.width * 0.3,
+        height: MediaQuery.of(context).size.height * 0.2,
+        child: GestureDetector(
+          onTap: () {
+            setState(() {
+              _showSpineGrid = true;
+              _selectedAlbum = null; // clear any open album
+            });
+          },
+          child: Container(
+            color: Colors.transparent, // change to Colors.blue.withOpacity(0.3) while positioning
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
 Widget _buildMainAlbumPage(double screenHeight) {
   final logoGlowColor = _getLogoGlowColor();
   final isPlaying = _globalPlayer.playing;
@@ -2726,23 +2792,30 @@ Widget _buildMainAlbumPage(double screenHeight) {
 // 1. Spine Video Background - Smaller & Centered
 // 1. Spine Video Background - Smaller & Better Positioned
             Positioned(
-              top: 0,                    // ← Move video down a bit (adjust as needed)
+              top: 0,
               left: 0,
               right: 0,
-              height: 1080,                // ← Control exact height of the video (this is key)
+              height: 1080,
               child: ClipRect(
-                child: _videoError != null || !_videoInitialized
+                child: !_spineVideoInitialized || !_spineVideoController.value.isInitialized
                     ? Image.asset('assets/spine.png', fit: BoxFit.cover)
-                    : (_videoController.value.isInitialized
-                        ? FittedBox(
-                            fit: BoxFit.cover,           // Better than fill for video
-                            child: SizedBox(
-                              width: _videoController.value.size.width,
-                              height: _videoController.value.size.height,
-                              child: VideoPlayer(_videoController),
-                            ),
-                          )
-                        : Image.asset('assets/spine.png', fit: BoxFit.cover)),
+                    : FittedBox(
+                        fit: BoxFit.cover,
+                        child: SizedBox(
+                          width: _spineVideoController.value.size.width,
+                          height: _spineVideoController.value.size.height,
+                          child: VideoPlayer(_spineVideoController),
+                        ),
+                      ),
+              ),
+            ),
+            // Near the top of the spine page widget tree
+            Positioned(
+              top: 40,
+              left: 16,
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white70),
+                onPressed: () => setState(() => _showSpineGrid = false),
               ),
             ),
 
@@ -3770,12 +3843,7 @@ Widget _buildVisualizerPage() {
   if (albumSongs.isEmpty) {
     return const Scaffold(
       backgroundColor: Colors.black,
-      body: Center(
-        child: Text(
-          "No songs in album",
-          style: TextStyle(color: Colors.white, fontSize: 18),
-        ),
-      ),
+      body: Center(child: Text("No songs in album", style: TextStyle(color: Colors.white, fontSize: 18))),
     );
   }
 
@@ -3785,63 +3853,53 @@ Widget _buildVisualizerPage() {
     backgroundColor: Colors.black,
     body: Stack(
       children: [
-        // Inner Song Swiper
+        // Video / Art Swiper
         PageView.builder(
           controller: _visualizerPageController,
           physics: const ClampingScrollPhysics(),
           itemCount: albumSongs.length,
           onPageChanged: (index) {
-            print("✅ INNER SWIPE → Index $index");
+            print("✅ SWIPE → Index $index");
             setState(() => _visualizerCurrentSongIndex = index);
             _playSpecificSongFromAlbum(index);
-            _loadVisualizerForSong(albumSongs[index]); // YouTube version
+            _loadVisualizerVideo(_getVisualizerUrlForSong(albumSongs[index]));
           },
           itemBuilder: (context, index) {
             final song = albumSongs[index];
             final visualizerUrl = _getVisualizerUrlForSong(song);
             final artUrl = (song['artUrl'] ?? song['songArtUrl'] ?? '') as String;
 
-            if (visualizerUrl != null && visualizerUrl.isNotEmpty) {
-              return YoutubePlayer(
-                controller: _visualizerYoutubeController,
-                showVideoProgressIndicator: false,
-              );
+            if (visualizerUrl != null && visualizerUrl.isNotEmpty && _visualizerVideoController.value.isInitialized) {
+              return VideoPlayer(_visualizerVideoController);
             } else {
               return _buildFallbackSongArt(artUrl);
             }
           },
         ),
 
-        // Tap area to toggle player controls
+        // Tap to toggle controls
         Positioned.fill(
           child: GestureDetector(
-            onTap: () {
-              setState(() => _showFullControlsOnVisualizer = !_showFullControlsOnVisualizer);
-            },
+            onTap: () => setState(() => _showFullControlsOnVisualizer = !_showFullControlsOnVisualizer),
             behavior: HitTestBehavior.translucent,
             child: const SizedBox(),
           ),
         ),
 
-        // Transparent Player at bottom
+        // Player
         Positioned(
           left: 0,
           right: 0,
           bottom: 0,
           child: _buildTransparentVisualizerPlayer(),
         ),
-
-        // Back to Queue button
+        // Back button
         Positioned(
           top: 40,
           left: 16,
           child: FloatingActionButton.small(
             backgroundColor: Colors.black.withOpacity(0.7),
-            onPressed: () => _pageController.animateToPage(
-              2,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOut,
-            ),
+            onPressed: () => _pageController.animateToPage(2, duration: const Duration(milliseconds: 300), curve: Curves.easeOut),
             child: const Icon(Icons.queue_music, color: Colors.white),
           ),
         ),
@@ -3871,6 +3929,7 @@ Future<void> _loadVisualizerForSong(Map<String, dynamic> song) async {
     print("ℹ️ No visualizer URL → fallback to static art");
   }
 }
+
 
 Widget _buildTransparentVisualizerPlayer() {
   final albumTheme = _getAlbumThemeColor(_currentAlbum ?? "Central");
