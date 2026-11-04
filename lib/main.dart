@@ -210,6 +210,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
  late VideoPlayerController _visualizerVideoController;
  bool _isVideoVisualizerReady = false;
  bool _showSpineGrid = false;
+ bool _showLivestreamPage = false;
+ String _livestreamBackgroundUrl = "";   // will come from Firestore / DynamoDB
+ String _nextLivestreamText = "Next livestream: TBA";
+ bool _showLiveRecordingsPage = false;
 
 late YoutubePlayerController _visualizerYoutubeController;
 
@@ -2505,9 +2509,11 @@ Widget build(BuildContext context) {
             },
           children: [
             _buildSocialPage(),
-            _showSpineGrid
-             ? _buildMainAlbumPage(screenHeight)
-             : _buildVideoHomePage(),
+_showLivestreamPage
+    ? _buildLivestreamPage()
+    : _showSpineGrid
+        ? _buildMainAlbumPage(screenHeight)
+        : _buildVideoHomePage(),
             _buildPlaylistsPage(),
             _buildVisualizerPage(),   // ← NEW: Index 3
           ],
@@ -2716,12 +2722,82 @@ Future<void> _purchaseIndividualAlbum(String albumName) async {
   }
 }
 
-Widget _buildVideoHomePage() {
-  // Temporary: reuse the existing spine video until you drop in the new Melodic Sol video
+Widget _buildLivestreamPage() {
   return Stack(
     fit: StackFit.expand,
     children: [
-      // Background video (swap the asset path later)
+      // Background image (S3 / DynamoDB / Firestore URL)
+      _livestreamBackgroundUrl.isNotEmpty
+          ? CachedNetworkImage(
+              imageUrl: _livestreamBackgroundUrl,
+              fit: BoxFit.cover,
+              placeholder: (context, url) => Container(color: Colors.black),
+              errorWidget: (context, url, error) => Container(color: Colors.black),
+            )
+          : Container(color: Colors.black),
+
+      // Back button
+      Positioned(
+        top: 40,
+        left: 16,
+        child: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white70),
+          onPressed: () => setState(() => _showLivestreamPage = false),
+        ),
+      ),
+
+      // Existing LIVE NOW flashing logic
+      if (_isLivestreamActive)
+        Positioned(
+          top: MediaQuery.of(context).size.height * 0.35,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: AnimatedBuilder(
+              animation: _livePulseController,
+              builder: (context, child) {
+                final pulse = 0.6 + 0.4 * _livePulseController.value;
+                return GestureDetector(
+                  onTap: () => _launchUrl(_livestreamUrl),
+                  child: Text(
+                    "LIVE NOW",
+                    style: TextStyle(
+                      fontSize: 42,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red.withOpacity(pulse),
+                      letterSpacing: 4,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+
+      // Next livestream text at the bottom
+      Positioned(
+        bottom: 60,
+        left: 24,
+        right: 24,
+        child: Text(
+          _nextLivestreamText,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 18,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+Widget _buildVideoHomePage() {
+  return Stack(
+    fit: StackFit.expand,
+    children: [
+      // Background video
       FittedBox(
         fit: BoxFit.cover,
         child: SizedBox(
@@ -2731,45 +2807,222 @@ Widget _buildVideoHomePage() {
         ),
       ),
 
-      // Hotspot 1: open the "live" album
+      // Hotspot 1: LIVE album
       Positioned(
-        left: MediaQuery.of(context).size.width * 0.15,
-        top: MediaQuery.of(context).size.height * 0.35,
-        width: MediaQuery.of(context).size.width * 0.3,
-        height: MediaQuery.of(context).size.height * 0.2,
+        left: MediaQuery.of(context).size.width * 0.10,
+        top: MediaQuery.of(context).size.height * 0.30,
+        width: MediaQuery.of(context).size.width * 0.25,
+        height: MediaQuery.of(context).size.height * 0.18,
         child: GestureDetector(
-          onTap: () {
-            setState(() {
-              _selectedAlbum = "live";
-              _currentViewedAlbum = "live";
-              _showSpineGrid = false;
-            });
-          },
-          child: Container(
-            color: Colors.transparent, // change to Colors.red.withOpacity(0.3) while you position it
-          ),
+        onTap: () {
+          setState(() {
+            _showLiveRecordingsPage = true;
+            _showSpineGrid = false;
+            _showLivestreamPage = false;
+            _selectedAlbum = null;
+          });
+        },
+          child: Container(color: Colors.red.withOpacity(0.35)), // temporary visible
         ),
       ),
 
-      // Hotspot 2: open the full spine grid
+      // Hotspot 2: old albums / spine grid
       Positioned(
-        left: MediaQuery.of(context).size.width * 0.55,
-        top: MediaQuery.of(context).size.height * 0.35,
-        width: MediaQuery.of(context).size.width * 0.3,
-        height: MediaQuery.of(context).size.height * 0.2,
+        left: MediaQuery.of(context).size.width * 0.40,
+        top: MediaQuery.of(context).size.height * 0.30,
+        width: MediaQuery.of(context).size.width * 0.25,
+        height: MediaQuery.of(context).size.height * 0.18,
         child: GestureDetector(
           onTap: () {
             setState(() {
               _showSpineGrid = true;
-              _selectedAlbum = null; // clear any open album
+              _showLivestreamPage = false;
+              _selectedAlbum = null;
             });
           },
-          child: Container(
-            color: Colors.transparent, // change to Colors.blue.withOpacity(0.3) while positioning
-          ),
+          child: Container(color: Colors.blue.withOpacity(0.35)), // temporary visible
+        ),
+      ),
+
+      // Hotspot 3: new livestream page
+      Positioned(
+        left: MediaQuery.of(context).size.width * 0.70,
+        top: MediaQuery.of(context).size.height * 0.30,
+        width: MediaQuery.of(context).size.width * 0.25,
+        height: MediaQuery.of(context).size.height * 0.18,
+        child: GestureDetector(
+          onTap: () {
+            setState(() {
+              _showLivestreamPage = true;
+              _showSpineGrid = false;
+              _selectedAlbum = null;
+            });
+          },
+          child: Container(color: Colors.green.withOpacity(0.35)), // temporary visible
         ),
       ),
     ],
+  );
+}
+
+Widget _buildLiveRecordingsPage() {
+  // Collect every album whose key contains "live" (case-insensitive)
+  // Right now this will be just the existing "live" album; future live albums appear automatically
+  final liveAlbumKeys = _albums.keys
+      .where((key) => key.toLowerCase().contains('live'))
+      .toList()
+    ..sort((a, b) => (_albums[b]?['order'] as int? ?? 999)
+        .compareTo(_albums[a]?['order'] as int? ?? 999));
+
+  return Scaffold(
+    backgroundColor: Colors.black,
+    body: Stack(
+      children: [
+        // Optional subtle background
+        Container(color: Colors.black),
+
+        // Back button
+        Positioned(
+          top: 40,
+          left: 16,
+          child: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white70),
+            onPressed: () => setState(() => _showLiveRecordingsPage = false),
+          ),
+        ),
+
+        // Title
+        const Positioned(
+          top: 48,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: Text(
+              "LIVE RECORDINGS",
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 2,
+              ),
+            ),
+          ),
+        ),
+
+        // List of live albums / songs
+        Positioned.fill(
+          top: 110,
+          child: liveAlbumKeys.isEmpty
+              ? const Center(
+                  child: Text(
+                    "No live recordings yet",
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+                  itemCount: liveAlbumKeys.length,
+                  itemBuilder: (context, albumIndex) {
+                    final albumKey = liveAlbumKeys[albumIndex];
+                    final albumData = _albums[albumKey] ?? {};
+                    final songs = (albumData['songs'] as List<dynamic>? ?? []);
+                    final artUrl = albumData['artUrl'] as String? ?? "";
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Album header
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Row(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: artUrl.isNotEmpty
+                                    ? CachedNetworkImage(
+                                        imageUrl: artUrl,
+                                        width: 64,
+                                        height: 64,
+                                        fit: BoxFit.cover,
+                                      )
+                                    : Container(
+                                        width: 64,
+                                        height: 64,
+                                        color: Colors.grey[900],
+                                        child: const Icon(Icons.album, color: Colors.white38),
+                                      ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  _getAlbumDisplayName(albumKey),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Songs in this live album
+                        ...songs.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          final song = entry.value as Map<String, dynamic>;
+                          final title = song['Title'] as String? ?? "Unknown";
+                          final songArt = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? artUrl;
+
+                          return ListTile(
+                            leading: ClipRRect(
+                              borderRadius: BorderRadius.circular(6),
+                              child: songArt.isNotEmpty
+                                  ? CachedNetworkImage(
+                                      imageUrl: songArt,
+                                      width: 48,
+                                      height: 48,
+                                      fit: BoxFit.cover,
+                                    )
+                                  : const Icon(Icons.music_note, color: Colors.white38),
+                            ),
+                            title: Text(
+                              title,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            onTap: () async {
+                              // Re-use the exact same play logic the rest of the app uses
+                              setState(() {
+                                _queue = songs.map((s) {
+                                  final m = Map<String, dynamic>.from(s as Map);
+                                  m['albumName'] = albumKey;
+                                  return m;
+                                }).toList();
+                                _currentAlbum = albumKey;
+                                _selectedAlbum = albumKey;
+                                _currentSongIndex = index;
+                              });
+
+                              await _playSong(
+                                albumKey,
+                                index,
+                                fromQueue: false,
+                                respectUnlocks: true,
+                                directUrl: song['url'] as String?,
+                                titleToPlay: title,
+                                artUrl: songArt,
+                              );
+                            },
+                          );
+                        }),
+                        const SizedBox(height: 16),
+                      ],
+                    );
+                  },
+                ),
+        ),
+      ],
+    ),
   );
 }
 
