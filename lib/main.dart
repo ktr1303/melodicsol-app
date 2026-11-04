@@ -193,8 +193,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   bool _showVisualizer = false;
   int _visualizerStyle = 0; // 0=Waveform, 1=Circular, 2=Frequency, 3=Mirror, 4=Pulse Rings
   bool _combineModes = false;
-  String? _currentViewedAlbum;   // ← Add this  
-  bool _isQueueTutorialShowing = false;
+  String? _currentViewedAlbum;   // ← Add this 
   Set<String> _unlockedAlbums = {}; // Global unlocked albums
   bool get _shouldShowPlayer => _selectedIndex == 2 && _queue.isNotEmpty;
   bool _isShuffleEnabled = false;
@@ -211,7 +210,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
  bool _isVideoVisualizerReady = false;
  bool _showSpineGrid = false;
  bool _showLivestreamPage = false;
- String _livestreamBackgroundUrl = "";   // will come from Firestore / DynamoDB
+ String _livestreamBackgroundUrl = "https://dhufx08tsdp2a.cloudfront.net/livestreamtvapp.png";   // will come from Firestore / DynamoDB
  String _nextLivestreamText = "Next livestream: TBA";
  bool _showLiveRecordingsPage = false;
 
@@ -439,7 +438,6 @@ void initState() {
   // Sync background notification controls with your app logic
     _fetchAlbums().then((_) {
     _createFreeSongsPlaylist();     // ← This will now read isFree correctly
-    _showMainAlbumTutorial();
     WidgetsBinding.instance.addPostFrameCallback((_) {
     _loadPlaylists();
     });
@@ -543,24 +541,6 @@ Future<void> _handleDeepLink(Uri? uri) async {
   _setupNotifications();*/
 
   WidgetsBinding.instance.addPostFrameCallback((_) async {
-   
-
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('hasSeenMainAlbumTutorial');
-      await prefs.remove('hasSeenAlbumDetailTutorial');
-      await prefs.remove('hasSeenQueueTutorial');
-    });
-
-    // Trigger queue tutorial the first time user swipes to the queue page
-    _pageController.addListener(() {
-      if (_pageController.hasClients) {
-        final currentPage = _pageController.page?.round() ?? 0;
-        if (currentPage == 2) { // 2 = queue page
-          _showQueueTutorial();
-        }
-      }
-    });
 
     SharedPreferences.getInstance().then((prefs) {
       final hasLifetime = prefs.getBool('hasLifetimeAccess') ?? false;
@@ -1438,111 +1418,6 @@ Future<void> _syncCurrentIndexToAlbum() async {
   } else {
     print('⚠️ Current song title not found — but in queue mode, ignoring reset');
   }
-}
-
-// ==================== CLEAN TUTORIALS (Show Once Only) ====================
-bool _isTutorialShowing = false;
-
-// 1. Main Albums Page Tutorial
-Future<void> _showMainAlbumTutorial() async {
-  final prefs = await SharedPreferences.getInstance();
-  if (prefs.getBool('hasSeenMainAlbumTutorial') ?? false) return;
-
-  if (_isTutorialShowing) return;
-  _isTutorialShowing = true;
-
-  await showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      content: const Text(
-        "Tap  🦴\n\nSwipe 👉 = 🎶\nSwipe 👈 = 🌍",
-        style: TextStyle(fontSize: 16, height: 1.4),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () async {
-            await prefs.setBool('hasSeenMainAlbumTutorial', true);
-            Navigator.pop(context);
-            _isTutorialShowing = false;
-          },
-          child: const Text("Go≫🎧🎶", style: TextStyle(fontSize: 16)),
-        ),
-      ],
-    ),
-  );
-}
-
-// 2. Album Detail Page Tutorial
-Future<void> _showAlbumDetailTutorial() async {
-  final prefs = await SharedPreferences.getInstance();
-  if (prefs.getBool('hasSeenAlbumDetailTutorial') ?? false) return;
-
-  if (_isTutorialShowing) return;
-  _isTutorialShowing = true;
-
-  await showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      content: const Text(
-        "      Tap \n" 
-        "🎶🎧 & 🎨👀\n"        
-        "\n"
-        "Long Press \n" 
-        "📜-▶-💾-etc.. \n"
-        "Swipe 👉 = 🎶\n"
-         "Swipe 👈 = 🌍",
-        style: TextStyle(fontSize: 16, height: 1.4),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () async {
-            await prefs.setBool('hasSeenAlbumDetailTutorial', true);
-            Navigator.pop(context);
-            _isTutorialShowing = false;
-          },
-          child: const Text("✔️", style: TextStyle(fontSize: 16)),
-        ),
-      ],
-    ),
-  );
-}
-
-// 3. Queue / Playlist Page Tutorial
-Future<void> _showQueueTutorial() async {
-  final prefs = await SharedPreferences.getInstance();
-  if (prefs.getBool('hasSeenQueueTutorial') ?? false) return;
-
-  if (_isTutorialShowing) return;
-  _isTutorialShowing = true;
-
-  await showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      content: const Text(
-         "INSTANT 🎶\n"
-          "•Tap ▶ Free Songs!!!\n\n"
-          "Long Press\n"
-          "• 📜🎵💾etc...\n",
-        style: TextStyle(fontSize: 16, height: 1.4),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () async {
-            await prefs.setBool('hasSeenQueueTutorial', true);
-            Navigator.pop(context);
-            _isTutorialShowing = false;
-          },
-          child: const Text("☑️", style: TextStyle(fontSize: 16)),
-        ),
-      ],
-    ),
-  );
 }
 
 // ==================== LIVESTREAM REMOTE CONTROL ====================
@@ -2511,6 +2386,8 @@ Widget build(BuildContext context) {
             _buildSocialPage(),
 _showLivestreamPage
     ? _buildLivestreamPage()
+    : _showLiveRecordingsPage
+    ? _buildLiveRecordingsPage()
     : _showSpineGrid
         ? _buildMainAlbumPage(screenHeight)
         : _buildVideoHomePage(),
@@ -2973,8 +2850,10 @@ Widget _buildLiveRecordingsPage() {
                           final song = entry.value as Map<String, dynamic>;
                           final title = song['Title'] as String? ?? "Unknown";
                           final songArt = song['artUrl'] as String? ?? song['songArtUrl'] as String? ?? artUrl;
+                          final bool isCurrent = _currentAlbum == albumKey && _currentSongIndex == index;
 
                           return ListTile(
+                            tileColor: isCurrent ? Colors.greenAccent.withOpacity(0.25) : null,
                             leading: ClipRRect(
                               borderRadius: BorderRadius.circular(6),
                               child: songArt.isNotEmpty
@@ -2988,8 +2867,14 @@ Widget _buildLiveRecordingsPage() {
                             ),
                             title: Text(
                               title,
-                              style: const TextStyle(color: Colors.white),
+                              style: TextStyle(
+                                color: isCurrent ? Colors.greenAccent : Colors.white,
+                                fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                              ),
                             ),
+                            trailing: (isCurrent && _globalPlayer.playing)
+                                ? const Icon(Icons.equalizer, color: Colors.greenAccent, size: 20)
+                                : null,
                             onTap: () async {
                               // Re-use the exact same play logic the rest of the app uses
                               setState(() {
@@ -3184,7 +3069,6 @@ Widget _buildMainAlbumPage(double screenHeight) {
                               _currentViewedAlbum = albumName;
                             });
                             WidgetsBinding.instance.addPostFrameCallback((_) {
-                              _showAlbumDetailTutorial();
                             });
                           },
                           onLongPress: () => _showAlbumLongPressMenu(albumName),   // ← NEW
@@ -6467,43 +6351,18 @@ Future<void> _checkAutoLogin() async {
               ),
             ),
 
-          // Main Welcome Content
-          if (!_isCheckingAutoLogin)
-            SafeArea(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 40),
+                  /// Main Welcome Content
+        if (!_isCheckingAutoLogin)
+          SafeArea(
+            child: Stack(
+              children: [
+                // Centered Go button
+                Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const SizedBox(height: 60),
                       Image.asset('assets/logo.png', height: 150, fit: BoxFit.contain),
                       const SizedBox(height: 80),
-
-                      ElevatedButton(
-                        onPressed: () {
-                          showDialog(
-                            context: context,
-                            barrierColor: Colors.transparent,
-                            builder: (context) => const UserInfoScreen(),
-                          );
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: Colors.black,
-                          padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 18),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(30),
-                          ),
-                        ),
-                        child: const Text(
-                          "Sign In 🎵",
-                          style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600),
-                        ),
-                      ),
-
-                      const SizedBox(height: 24),
-
                       TextButton(
                         onPressed: () {
                           Navigator.pushReplacement(
@@ -6512,15 +6371,39 @@ Future<void> _checkAutoLogin() async {
                           );
                         },
                         child: const Text(
-                          "Go ⪼ 🎧🎶",
-                          style: TextStyle(fontSize: 18, color: Colors.white70),
+                          " ▶️ ",
+                          style: TextStyle(fontSize: 22, color: Colors.white, fontWeight: FontWeight.w500),
                         ),
                       ),
                     ],
                   ),
                 ),
-              ),
+
+                // Subtle Sign In button – bottom right
+                Positioned(
+                  bottom: 24,
+                  right: 20,
+                  child: TextButton(
+                    onPressed: () {
+                      showDialog(
+                        context: context,
+                        barrierColor: Colors.transparent,
+                        builder: (context) => const UserInfoScreen(),
+                      );
+                    },
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white54,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    child: const Text(
+                      "Sign In",
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w400),
+                    ),
+                  ),
+                ),
+              ],
             ),
+          ),
         ],
       ),
     );
