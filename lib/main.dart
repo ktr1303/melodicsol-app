@@ -154,7 +154,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   // Listeners
   StreamSubscription? _processingSubscription;
   StreamSubscription? _sequenceSubscription;
-
+  Key _visualizerPageKey = UniqueKey();
 
   bool _ignoreProcessingListener = false;
   bool _ignorePendingTitle = false;
@@ -432,7 +432,16 @@ void initState() {
       print("Spine video failed to load: $error");
     });
  
-  _visualizerPageController = PageController(initialPage: _visualizerCurrentSongIndex);  
+  _visualizerPageController = PageController(initialPage: _visualizerCurrentSongIndex);
+  // Pause/resume video when audio pauses/resumes
+_globalPlayer.playingStream.listen((playing) {
+  if (!_visualizerVideoController.value.isInitialized) return;
+  if (playing) {
+    _visualizerVideoController.play();
+  } else {
+    _visualizerVideoController.pause();
+  }
+});  
   _pageController = PageController(initialPage: 1);
   _boneStaggerController = AnimationController(
       duration: const Duration(milliseconds: 1800), vsync: this)
@@ -2156,9 +2165,12 @@ void _syncVisualizerToCurrentSong() {
 
   setState(() => _visualizerCurrentSongIndex = targetIndex);
 
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    if (!mounted || !_visualizerPageController.hasClients) return;
-    _visualizerPageController.jumpToPage(targetIndex);
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    if (!mounted) return;
+    await Future.delayed(const Duration(milliseconds: 80));
+    if (_visualizerPageController.hasClients) {
+      _visualizerPageController.jumpToPage(targetIndex);
+    }
     _loadVisualizerForSong(songs[targetIndex]);
   });
 }
@@ -2401,12 +2413,16 @@ Widget build(BuildContext context) {
                       onPageChanged: (index) {
                         setState(() => _selectedIndex = index);
                         if (index == 3 && _currentAlbum != null) {
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) async {
                             if (!mounted) return;
                             final songs = _getCurrentAlbumSongsSorted();
                             if (songs.isEmpty) return;
                             final target = _currentSongIndex.clamp(0, songs.length - 1);
+
                             setState(() => _visualizerCurrentSongIndex = target);
+
+                            // Give the PageView a moment to exist, then jump
+                            await Future.delayed(const Duration(milliseconds: 80));
                             if (_visualizerPageController.hasClients) {
                               _visualizerPageController.jumpToPage(target);
                             }
@@ -4041,7 +4057,12 @@ Widget _buildVisualizerPage() {
       body: Center(child: Text("No songs in album", style: TextStyle(color: Colors.white, fontSize: 18))),
     );
   }
-
+  // Ensure controller starts on the correct page
+if (!_visualizerPageController.hasClients ||
+    _visualizerPageController.initialPage != _visualizerCurrentSongIndex) {
+  _visualizerPageController.dispose();
+  _visualizerPageController = PageController(initialPage: _visualizerCurrentSongIndex);
+}
   // ... rest of the method stays the same
   return Scaffold(
     backgroundColor: Colors.black,
@@ -4049,13 +4070,15 @@ Widget _buildVisualizerPage() {
       children: [
         // Video / Art Swiper
         PageView.builder(
+          key: _visualizerPageKey,
           controller: _visualizerPageController,
           physics: const ClampingScrollPhysics(),
           itemCount: albumSongs.length,
-          onPageChanged: (index) {
-            setState(() => _visualizerCurrentSongIndex = index);
-            _playSpecificSongFromAlbum(index);
-            _loadVisualizerForSong(albumSongs[index]);   // this must run after the index is set
+            onPageChanged: (index) {
+            setState(() => _selectedIndex = index);
+            if (index == 3 && _currentAlbum != null) {
+              _syncVisualizerToCurrentSong();
+            }
           },
           itemBuilder: (context, index) {
             final song = albumSongs[index];
@@ -4162,6 +4185,8 @@ Future<void> _loadVisualizerForSong(Map<String, dynamic> song) async {
 
     if (_globalPlayer.playing) {
       await _visualizerVideoController.play();
+    } else {
+      await _visualizerVideoController.pause();
     }
 
     // Dispose the old controller only after the new one is ready
@@ -4175,6 +4200,25 @@ Future<void> _loadVisualizerForSong(Map<String, dynamic> song) async {
     _visualizerVideoController = oldController; // restore previous so we don't leave a dead controller
     if (mounted) setState(() {});
   }
+}
+
+void _resetVisualizerToCurrentSong() {
+  if (_currentAlbum == null) return;
+  final songs = _getCurrentAlbumSongsSorted();
+  if (songs.isEmpty) return;
+
+  final target = _currentSongIndex.clamp(0, songs.length - 1);
+
+  setState(() => _visualizerCurrentSongIndex = target);
+
+  // Recreate the controller so it starts on the correct page
+  _visualizerPageController.dispose();
+  _visualizerPageController = PageController(initialPage: target);
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (!mounted) return;
+    _loadVisualizerForSong(songs[target]);
+  });
 }
 
 
