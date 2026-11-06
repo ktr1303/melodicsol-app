@@ -2129,6 +2129,7 @@ Future<void> _skipNext() async {
   if (_globalPlayer.hasNext) {
     await _globalPlayer.seekToNext();
     print("⏭️ Skip Next triggered");
+    _syncVisualizerToCurrentSong();
   } else {
     print("⏭️ No next track");
   }
@@ -2138,11 +2139,28 @@ Future<void> _skipPrevious() async {
   if (_globalPlayer.hasPrevious) {
     await _globalPlayer.seekToPrevious();
     print("⏮️ Skip Previous triggered");
+    _syncVisualizerToCurrentSong();
   } else {
-    // Optional: restart current song if at beginning
     await _globalPlayer.seek(Duration.zero);
     print("⏮️ Restarted current song");
   }
+}
+
+void _syncVisualizerToCurrentSong() {
+  if (_selectedIndex != 3 || _currentAlbum == null) return;
+
+  final songs = _getCurrentAlbumSongsSorted();
+  if (songs.isEmpty) return;
+
+  final targetIndex = _currentSongIndex.clamp(0, songs.length - 1);
+
+  setState(() => _visualizerCurrentSongIndex = targetIndex);
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (!mounted || !_visualizerPageController.hasClients) return;
+    _visualizerPageController.jumpToPage(targetIndex);
+    _loadVisualizerForSong(songs[targetIndex]);
+  });
 }
 
 void _refreshQueueUI() {
@@ -2381,28 +2399,19 @@ Widget build(BuildContext context) {
                 ? const NeverScrollableScrollPhysics()   // ← Disable outer swiping on Visualize page
                 : const ClampingScrollPhysics(),
                       onPageChanged: (index) {
-                        setState(() {
-                          _selectedIndex = index;
-                        });
-
-                        // When user swipes to the visualizer, sync it to the currently playing song
+                        setState(() => _selectedIndex = index);
                         if (index == 3 && _currentAlbum != null) {
-                          final songs = _getCurrentAlbumSongsSorted();
-                          if (songs.isNotEmpty) {
-                            final targetIndex = _currentSongIndex.clamp(0, songs.length - 1);
-
-                            setState(() {
-                              _visualizerCurrentSongIndex = targetIndex;
-                            });
-
-                            // Jump the visualizer PageView to the right song
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (!mounted) return;
+                            final songs = _getCurrentAlbumSongsSorted();
+                            if (songs.isEmpty) return;
+                            final target = _currentSongIndex.clamp(0, songs.length - 1);
+                            setState(() => _visualizerCurrentSongIndex = target);
                             if (_visualizerPageController.hasClients) {
-                              _visualizerPageController.jumpToPage(targetIndex);
+                              _visualizerPageController.jumpToPage(target);
                             }
-
-                            // Load the correct video
-                            _loadVisualizerForSong(songs[targetIndex]);
-                          }
+                            _loadVisualizerForSong(songs[target]);
+                          });
                         }
                       },
           children: [
@@ -4033,8 +4042,7 @@ Widget _buildVisualizerPage() {
     );
   }
 
-  print("🚀 Visualize page built | Songs: ${albumSongs.length} | Current Index: $_visualizerCurrentSongIndex");
-
+  // ... rest of the method stays the same
   return Scaffold(
     backgroundColor: Colors.black,
     body: Stack(
@@ -4047,14 +4055,21 @@ Widget _buildVisualizerPage() {
           onPageChanged: (index) {
             setState(() => _visualizerCurrentSongIndex = index);
             _playSpecificSongFromAlbum(index);
-            _loadVisualizerForSong(albumSongs[index]);
+            _loadVisualizerForSong(albumSongs[index]);   // this must run after the index is set
           },
           itemBuilder: (context, index) {
             final song = albumSongs[index];
             final videoUrl = (song['videoUrl'] ?? song['visualizerUrl'] ?? '') as String;
             final artUrl = (song['artUrl'] ?? song['songArtUrl'] ?? '') as String;
 
-            if (videoUrl.isNotEmpty && _visualizerVideoController.value.isInitialized) {
+            // Only show the video if this is the currently selected song AND the controller is ready for it
+            final isCurrentSong = index == _visualizerCurrentSongIndex;
+            final hasMatchingVideo = isCurrentSong &&
+                videoUrl.isNotEmpty &&
+                _lastLoadedVideoUrl == videoUrl &&
+                _visualizerVideoController.value.isInitialized;
+
+            if (hasMatchingVideo) {
               return FittedBox(
                 fit: BoxFit.cover,
                 child: SizedBox(
@@ -4100,59 +4115,66 @@ Widget _buildVisualizerPage() {
   );
 }
 
+String? _lastLoadedVideoUrl;
+
 Future<void> _loadVisualizerForSong(Map<String, dynamic> song) async {
   final videoUrl = (song['videoUrl'] ?? song['visualizerUrl'] ?? '') as String;
   final mode = (song['videoMode'] as String?) ?? "loop";
   _currentVideoMode = mode;
 
-  // Cancel previous listener
   await _audioPositionSub?.cancel();
+  _audioPositionSub = null;
 
   if (videoUrl.isEmpty) {
-    // fallback to art only
     if (_visualizerVideoController.value.isInitialized) {
-      await _visualizerVideoController.pause();
+      _visualizerVideoController.pause();
     }
+    if (mounted) setState(() {});
     return;
   }
 
-  // Dispose old controller and create new one
-  await _visualizerVideoController.dispose();
-  _visualizerVideoController = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
-
-  await _visualizerVideoController.initialize();
-  await _visualizerVideoController.setVolume(0.0); // mute video – audio comes from just_audio
-
-  if (mode == "loop") {
-    await _visualizerVideoController.setLooping(true);
-    await _visualizerVideoController.play();
-  } else {
-    // sync mode
-    await _visualizerVideoController.setLooping(false);
-    await _visualizerVideoController.play();
-
-    // Keep video locked to audio position
-    _audioPositionSub = _globalPlayer.positionStream.listen((audioPos) {
-      if (!_visualizerVideoController.value.isInitialized) return;
-      final videoPos = _visualizerVideoController.value.position;
-      final diff = (audioPos - videoPos).inMilliseconds.abs();
-      if (diff > 400) {
-        _visualizerVideoController.seekTo(audioPos);
-      }
-    });
+  // Already showing this video — do nothing
+  if (_lastLoadedVideoUrl == videoUrl && _visualizerVideoController.value.isInitialized) {
+    if (mounted) setState(() {});
+    return;
   }
 
-  // Also follow play/pause
-  _globalPlayer.playingStream.listen((playing) {
-    if (!_visualizerVideoController.value.isInitialized) return;
-    if (playing) {
-      _visualizerVideoController.play();
-    } else {
-      _visualizerVideoController.pause();
-    }
-  });
+  _lastLoadedVideoUrl = videoUrl;
 
-  if (mounted) setState(() {});
+  // Create a brand-new controller instead of disposing the old one while the widget may still hold it
+  final oldController = _visualizerVideoController;
+  _visualizerVideoController = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
+
+  try {
+    await _visualizerVideoController.initialize();
+    await _visualizerVideoController.setVolume(0.0);
+
+    if (mode == "loop") {
+      await _visualizerVideoController.setLooping(true);
+    } else {
+      await _visualizerVideoController.setLooping(false);
+      _audioPositionSub = _globalPlayer.positionStream.listen((audioPos) {
+        if (!_visualizerVideoController.value.isInitialized) return;
+        final diff = (audioPos - _visualizerVideoController.value.position).inMilliseconds.abs();
+        if (diff > 400) _visualizerVideoController.seekTo(audioPos);
+      });
+    }
+
+    if (_globalPlayer.playing) {
+      await _visualizerVideoController.play();
+    }
+
+    // Dispose the old controller only after the new one is ready
+    try { await oldController.dispose(); } catch (_) {}
+
+    if (mounted) setState(() {});
+  } catch (e) {
+    print("❌ Visualizer video failed to load: $e");
+    _lastLoadedVideoUrl = null;
+    try { await _visualizerVideoController.dispose(); } catch (_) {}
+    _visualizerVideoController = oldController; // restore previous so we don't leave a dead controller
+    if (mounted) setState(() {});
+  }
 }
 
 
