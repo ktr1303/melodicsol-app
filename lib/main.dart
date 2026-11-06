@@ -2651,9 +2651,9 @@ Widget _buildLivestreamPage() {
           ),
         ),
 
-      // Next livestream text at the bottom
+      // Next livestream text
       Positioned(
-        bottom: 60,
+        bottom: 110,
         left: 24,
         right: 24,
         child: Text(
@@ -2663,6 +2663,32 @@ Widget _buildLivestreamPage() {
             color: Colors.white70,
             fontSize: 18,
             fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+
+      // Get Notified button (below the text)
+      Positioned(
+        bottom: 40,
+        left: 24,
+        right: 24,
+        child: ElevatedButton(
+          onPressed: () {
+            showDialog(
+              context: context,
+              barrierColor: Colors.black54,
+              builder: (context) => const UserInfoScreen(),
+            );
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.greenAccent,
+            foregroundColor: Colors.black,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+          ),
+          child: const Text(
+            "Get Notified",
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
           ),
         ),
       ),
