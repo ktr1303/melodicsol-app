@@ -213,6 +213,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
  String _livestreamBackgroundUrl = "https://dhufx08tsdp2a.cloudfront.net/livestreamtvapp.png";   // will come from Firestore / DynamoDB
  String _nextLivestreamText = "Next livestream: TBA";
  bool _showLiveRecordingsPage = false;
+ String _currentVideoMode = "loop";
+StreamSubscription? _audioPositionSub;
 
 late YoutubePlayerController _visualizerYoutubeController;
 
@@ -1934,7 +1936,8 @@ void dispose() {
   _deepLinkSubscription?.cancel();
   _visualizerPageController.dispose();
  _visualizerVideoController.dispose();
- _spineVideoController.dispose(); 
+ _spineVideoController.dispose();
+ _audioPositionSub?.cancel(); 
 
   for (var controller in _albumGlowControllers.values) {
     controller.dispose();
@@ -2377,11 +2380,31 @@ Widget build(BuildContext context) {
             physics: _selectedIndex == 3 
                 ? const NeverScrollableScrollPhysics()   // ← Disable outer swiping on Visualize page
                 : const ClampingScrollPhysics(),
-            onPageChanged: (index) {
-              setState(() {
-                _selectedIndex = index;
-              });
-            },
+                      onPageChanged: (index) {
+                        setState(() {
+                          _selectedIndex = index;
+                        });
+
+                        // When user swipes to the visualizer, sync it to the currently playing song
+                        if (index == 3 && _currentAlbum != null) {
+                          final songs = _getCurrentAlbumSongsSorted();
+                          if (songs.isNotEmpty) {
+                            final targetIndex = _currentSongIndex.clamp(0, songs.length - 1);
+
+                            setState(() {
+                              _visualizerCurrentSongIndex = targetIndex;
+                            });
+
+                            // Jump the visualizer PageView to the right song
+                            if (_visualizerPageController.hasClients) {
+                              _visualizerPageController.jumpToPage(targetIndex);
+                            }
+
+                            // Load the correct video
+                            _loadVisualizerForSong(songs[targetIndex]);
+                          }
+                        }
+                      },
           children: [
             _buildSocialPage(),
 _showLivestreamPage
@@ -4022,18 +4045,24 @@ Widget _buildVisualizerPage() {
           physics: const ClampingScrollPhysics(),
           itemCount: albumSongs.length,
           onPageChanged: (index) {
-            print("✅ SWIPE → Index $index");
             setState(() => _visualizerCurrentSongIndex = index);
             _playSpecificSongFromAlbum(index);
-            _loadVisualizerVideo(_getVisualizerUrlForSong(albumSongs[index]));
+            _loadVisualizerForSong(albumSongs[index]);
           },
           itemBuilder: (context, index) {
             final song = albumSongs[index];
-            final visualizerUrl = _getVisualizerUrlForSong(song);
+            final videoUrl = (song['videoUrl'] ?? song['visualizerUrl'] ?? '') as String;
             final artUrl = (song['artUrl'] ?? song['songArtUrl'] ?? '') as String;
 
-            if (visualizerUrl != null && visualizerUrl.isNotEmpty && _visualizerVideoController.value.isInitialized) {
-              return VideoPlayer(_visualizerVideoController);
+            if (videoUrl.isNotEmpty && _visualizerVideoController.value.isInitialized) {
+              return FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: _visualizerVideoController.value.size.width,
+                  height: _visualizerVideoController.value.size.height,
+                  child: VideoPlayer(_visualizerVideoController),
+                ),
+              );
             } else {
               return _buildFallbackSongArt(artUrl);
             }
@@ -4072,25 +4101,58 @@ Widget _buildVisualizerPage() {
 }
 
 Future<void> _loadVisualizerForSong(Map<String, dynamic> song) async {
-  final rawUrl = song['visualizerUrl'] as String? ?? '';
-  final visualizerUrl = _getVisualizerUrlForSong(song);
-  final title = (song['Title'] ?? song['title'] ?? '') as String;
+  final videoUrl = (song['videoUrl'] ?? song['visualizerUrl'] ?? '') as String;
+  final mode = (song['videoMode'] as String?) ?? "loop";
+  _currentVideoMode = mode;
 
-  print("🎥 VISUALIZER LOAD → Title: $title | Raw: '$rawUrl' | Cleaned: '$visualizerUrl'");
+  // Cancel previous listener
+  await _audioPositionSub?.cancel();
 
-  if (visualizerUrl != null && visualizerUrl.isNotEmpty) {
-    final videoId = YoutubePlayer.convertUrlToId(visualizerUrl) ?? '';
-    print("🎥 → Extracted ID: '$videoId'");
-
-    if (videoId.isNotEmpty) {
-      _visualizerYoutubeController.load(videoId);
-      print("✅ Visualizer loaded successfully");
-    } else {
-      print("❌ Could not extract video ID");
+  if (videoUrl.isEmpty) {
+    // fallback to art only
+    if (_visualizerVideoController.value.isInitialized) {
+      await _visualizerVideoController.pause();
     }
-  } else {
-    print("ℹ️ No visualizer URL → fallback to static art");
+    return;
   }
+
+  // Dispose old controller and create new one
+  await _visualizerVideoController.dispose();
+  _visualizerVideoController = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
+
+  await _visualizerVideoController.initialize();
+  await _visualizerVideoController.setVolume(0.0); // mute video – audio comes from just_audio
+
+  if (mode == "loop") {
+    await _visualizerVideoController.setLooping(true);
+    await _visualizerVideoController.play();
+  } else {
+    // sync mode
+    await _visualizerVideoController.setLooping(false);
+    await _visualizerVideoController.play();
+
+    // Keep video locked to audio position
+    _audioPositionSub = _globalPlayer.positionStream.listen((audioPos) {
+      if (!_visualizerVideoController.value.isInitialized) return;
+      final videoPos = _visualizerVideoController.value.position;
+      final diff = (audioPos - videoPos).inMilliseconds.abs();
+      if (diff > 400) {
+        _visualizerVideoController.seekTo(audioPos);
+      }
+    });
+  }
+
+  // Also follow play/pause
+  _globalPlayer.playingStream.listen((playing) {
+    if (!_visualizerVideoController.value.isInitialized) return;
+    if (playing) {
+      _visualizerVideoController.play();
+    } else {
+      _visualizerVideoController.pause();
+    }
+  });
+
+  if (mounted) setState(() {});
 }
 
 
